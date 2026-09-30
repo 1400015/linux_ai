@@ -11,13 +11,15 @@ try:
 except ImportError:
     notify2 = None
 
- gi.require_version('Gtk', '3.0')
- gi.require_version('Gdk', '3.0')
- gi.require_version('GdkPixbuf', '2.0')
- gi.require_version('Notify', '0.7')
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+gi.require_version('GdkPixbuf', '2.0')
+gi.require_version('Notify', '0.7')
 
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
 import logging
+
+from . import dock, file_actions
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -56,6 +58,17 @@ class MainWindow(Gtk.Window):
         # Tornar janela sempre visível
         self.set_keep_above(config_manager.get("app.always_on_top", True))
         self.stick()
+        
+        # Modo ancorado (dock): fixar a uma borda e reservar espaço no ecrã
+        if config_manager.get("app.dock_mode", "float") == "dock":
+            self.set_decorated(False)
+            self.dock_method = dock.apply_dock(
+                self,
+                config_manager.get("app.dock_edge", "right"),
+                config_manager.get("app.width", 400)
+            )
+        else:
+            self.dock_method = None
         
         # Tornar janela redimensionável
         self.set_resizable(True)
@@ -869,6 +882,21 @@ class MainWindow(Gtk.Window):
         themes_btn.connect("clicked", self.on_themes_clicked)
         ui_box.pack_start(themes_btn, False, False, 0)
         
+        # Modo ancorado (dock)
+        dock_check = Gtk.CheckButton(label="Ancorado (reserva espaço no ecrã)")
+        dock_check.set_active(self.config.get("app.dock_mode", "float") == "dock")
+        ui_box.pack_start(dock_check, False, False, 0)
+        
+        dock_edge_label = Gtk.Label(label="Borda do dock:")
+        ui_box.pack_start(dock_edge_label, False, False, 0)
+        
+        dock_edge_combo = Gtk.ComboBoxText()
+        for edge_id, edge_name in [("right", "Direita"), ("left", "Esquerda"),
+                                   ("top", "Topo"), ("bottom", "Fundo")]:
+            dock_edge_combo.append(edge_id, edge_name)
+        dock_edge_combo.set_active_id(self.config.get("app.dock_edge", "right"))
+        ui_box.pack_start(dock_edge_combo, False, False, 0)
+        
         notebook.append_page(ui_box, Gtk.Label(label="Aparência"))
         
         # Separador Temas
@@ -957,6 +985,10 @@ class MainWindow(Gtk.Window):
             self.config.set("features.screen_capture", screen_capture_check.get_active())
             self.config.set("features.ocr_enabled", ocr_check.get_active())
             self.config.set("features.expert_mode", expert_check.get_active())
+            
+            # Guardar modo ancorado
+            self.config.set("app.dock_mode", "dock" if dock_check.get_active() else "float")
+            self.config.set("app.dock_edge", dock_edge_combo.get_active_id() or "right")
             
             # Guardar configurações
             self.config.save()
@@ -1216,6 +1248,15 @@ CPU: {info.get('cpu_cores', 'N/A')} núcleos
             # Adicionar à história
             if not self.cancel_streaming:
                 self.conversation_history.append({"role": "assistant", "content": response_text})
+                
+                # Oferecer escrita de ficheiros em modo especialista
+                if self.expert_mode and response_text:
+                    threading.Thread(
+                        target=file_actions.offer_file_blocks,
+                        args=(self, response_text,
+                              lambda msg: GLib.idle_add(self._add_system_message, msg)),
+                        daemon=True
+                    ).start()
             
             # Atualizar UI
             GLib.idle_add(self._on_message_processed)

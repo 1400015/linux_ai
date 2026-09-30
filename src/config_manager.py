@@ -2,7 +2,7 @@ import json
 import os
 import base64
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, List
 import logging
 
 # Configurar logger
@@ -24,7 +24,10 @@ class ConfigManager:
             "always_on_top": True,
             "auto_start": False,
             "theme": "dark",
-            "encryption_enabled": False
+            "encryption_enabled": False,
+            "dock_mode": "float",
+            "dock_edge": "right",
+            "button_edge": "right"
         },
         "api": {
             "default_provider": "openrouter",

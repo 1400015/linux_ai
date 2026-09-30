@@ -75,6 +75,9 @@ class LinuxAIAssistant:
             logger.info("A criar ícone de system tray")
             self.tray_icon = TrayIcon(self, self.config, self.main_window)
             
+            # Criar botão flutuante permanente
+            self._create_float_button()
+            
             # Mostrar janela se auto_start estiver ativo
             if self.config.get("app.auto_start", False):
                 self.main_window.show()
@@ -115,6 +118,43 @@ class LinuxAIAssistant:
             
         except Exception as e:
             logger.error(f"Erro ao terminar aplicação: {e}", exc_info=True)
+    
+    def _create_float_button(self):
+        """Botão flutuante permanente para mostrar/ocultar a janela principal"""
+        button_window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        button_window.set_default_size(52, 52)
+        button_window.set_decorated(False)
+        button_window.set_skip_taskbar_hint(True)
+        button_window.set_skip_pager_hint(True)
+        button_window.set_keep_above(True)
+        button_window.stick()
+        button_window.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+        button_window.set_opacity(0.75)
+        
+        def toggle_main_window(btn):
+            if self.main_window.get_visible():
+                self.main_window.hide()
+            else:
+                self.main_window.show()
+                self.main_window.present()
+        
+        button = Gtk.Button(label="✦")
+        button.connect("clicked", toggle_main_window)
+        button_window.add(button)
+        
+        edge = self.config.get("app.button_edge", "right")
+        screen = button_window.get_screen()
+        if edge == "left":
+            button_window.move(12, screen.get_height() // 2 - 26)
+        elif edge == "top":
+            button_window.move(screen.get_width() // 2 - 26, 12)
+        elif edge == "bottom":
+            button_window.move(screen.get_width() // 2 - 26, screen.get_height() - 64)
+        else:
+            button_window.move(screen.get_width() - 64, screen.get_height() // 2 - 26)
+        
+        button_window.show_all()
+        self.float_button_window = button_window
 
 
 def main():
