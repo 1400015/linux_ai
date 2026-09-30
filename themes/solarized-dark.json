@@ -1,0 +1,28 @@
+{
+    "name": "Solarized Dark",
+    "description": "Tema Solarized Dark",
+    "colors": {
+        "background": "#002b36",
+        "text": "#839496",
+        "accent": "#268bd2",
+        "secondary": "#073642",
+        "tertiary": "#002b36",
+        "border": "#073642"
+    },
+    "ui": {
+        "font_family": "Monospace",
+        "font_size": 12,
+        "border_radius": 10,
+        "opacity": 0.9
+    },
+    "syntax_highlighting": {
+        "user_message": "#839496",
+        "ai_message": "#859900",
+        "system_message": "#586e75",
+        "code": "#93a1a1",
+        "keyword": "#b58900",
+        "string": "#2aa198",
+        "comment": "#657b83",
+        "number": "#d33682"
+    }
+}

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
-    """Gestor de configuração da aplicação com encriptação opcional"""
+    """Gestor de configuração da aplicação com encriptação opcional e suporte a temas"""
     
     DEFAULT_CONFIG = {
         "app": {
@@ -57,6 +57,12 @@ class ConfigManager:
                     "api_key": "",
                     "base_url": "https://api.groq.com/v1",
                     "model": "llama3-8b-8192",
+                    "timeout": 60
+                },
+                "cohere": {
+                    "api_key": "",
+                    "base_url": "https://api.cohere.ai/v1",
+                    "model": "command",
                     "timeout": 60
                 },
                 "local_llm": {
@@ -146,6 +152,7 @@ class ConfigManager:
         self.config_path = config_path
         self.config = {}
         self._encryption_key = None
+        self._themes_dir = Path(__file__).parent.parent / "themes"
         self._load_config()
         self._validate_config()
     
@@ -360,11 +367,80 @@ class ConfigManager:
     
     def get_theme_colors(self) -> Dict[str, str]:
         """Obter cores do tema"""
-        return {
-            "background": self.get("ui.background_color", "#1e1e1e"),
-            "text": self.get("ui.text_color", "#e0e0e0"),
-            "accent": self.get("ui.accent_color", "#4CAF50")
-        }
+        # Verificar se há tema customizado
+        theme_name = self.get("app.theme", "dark")
+        custom_theme = self._load_theme(theme_name)
+        
+        if custom_theme:
+            return {
+                "background": custom_theme.get("colors", {}).get("background", "#1e1e1e"),
+                "text": custom_theme.get("colors", {}).get("text", "#e0e0e0"),
+                "accent": custom_theme.get("colors", {}).get("accent", "#4CAF50"),
+                "secondary": custom_theme.get("colors", {}).get("secondary", "#2d2d2d"),
+                "tertiary": custom_theme.get("colors", {}).get("tertiary", "#252525")
+            }
+        else:
+            return {
+                "background": self.get("ui.background_color", "#1e1e1e"),
+                "text": self.get("ui.text_color", "#e0e0e0"),
+                "accent": self.get("ui.accent_color", "#4CAF50"),
+                "secondary": "#2d2d2d",
+                "tertiary": "#252525"
+            }
+    
+    def _load_theme(self, theme_name: str) -> Optional[Dict]:
+        """Carregar tema do ficheiro"""
+        try:
+            # Procurar em temas customizados do utilizador
+            user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
+            user_theme_file = user_themes_dir / f"{theme_name}.json"
+            
+            if user_theme_file.exists():
+                with open(user_theme_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            
+            # Procurar em temas da aplicação
+            app_theme_file = self._themes_dir / f"{theme_name}.json"
+            if app_theme_file.exists():
+                with open(app_theme_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            
+            logger.warning(f"Tema não encontrado: {theme_name}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Erro a carregar tema {theme_name}: {e}")
+            return None
+    
+    def get_available_themes(self) -> List[str]:
+        """Obter lista de temas disponíveis"""
+        themes = []
+        
+        # Temas da aplicação
+        if self._themes_dir.exists():
+            for theme_file in self._themes_dir.glob("*.json"):
+                themes.append(theme_file.stem)
+        
+        # Temas do utilizador
+        user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
+        if user_themes_dir.exists():
+            for theme_file in user_themes_dir.glob("*.json"):
+                if theme_file.stem not in themes:
+                    themes.append(theme_file.stem)
+        
+        return sorted(themes)
+    
+    def get_theme_info(self, theme_name: str) -> Optional[Dict]:
+        """Obter informação sobre um tema"""
+        theme = self._load_theme(theme_name)
+        if theme:
+            return {
+                "name": theme.get("name", theme_name),
+                "description": theme.get("description", ""),
+                "colors": theme.get("colors", {}),
+                "ui": theme.get("ui", {})
+            }
+        return None
     
     def enable_encryption(self, enable: bool = True):
         """Ativar/desativar encriptação de API keys"""

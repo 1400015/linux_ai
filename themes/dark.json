@@ -1,0 +1,28 @@
+{
+    "name": "Dark",
+    "description": "Tema escuro padrão",
+    "colors": {
+        "background": "#1e1e1e",
+        "text": "#e0e0e0",
+        "accent": "#4CAF50",
+        "secondary": "#2d2d2d",
+        "tertiary": "#252525",
+        "border": "#3d3d3d"
+    },
+    "ui": {
+        "font_family": "Monospace",
+        "font_size": 12,
+        "border_radius": 10,
+        "opacity": 0.9
+    },
+    "syntax_highlighting": {
+        "user_message": "#e0e0e0",
+        "ai_message": "#a0d0a0",
+        "system_message": "#808080",
+        "code": "#d4d4d4",
+        "keyword": "#569cd6",
+        "string": "#ce9178",
+        "comment": "#6a9955",
+        "number": "#b5cea8"
+    }
+}

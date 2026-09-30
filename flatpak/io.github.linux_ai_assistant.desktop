@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Linux AI Assistant
+Comment=Assistente de IA permanente para Linux
+Exec=flatpak run io.github.linux_ai_assistant
+Icon=io.github.linux_ai_assistant
+Terminal=false
+Categories=Utility;System;
+StartupWMClass=linux-ai-assistant
+StartupNotify=true
+
+[Desktop Action new-window]
+Name=Nova Janela
+Exec=flatpak run io.github.linux_ai_assistant

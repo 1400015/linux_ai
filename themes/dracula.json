@@ -1,0 +1,28 @@
+{
+    "name": "Dracula",
+    "description": "Tema Dracula popular",
+    "colors": {
+        "background": "#282a36",
+        "text": "#f8f8f2",
+        "accent": "#ff79c6",
+        "secondary": "#44475a",
+        "tertiary": "#21222b",
+        "border": "#6272a4"
+    },
+    "ui": {
+        "font_family": "Monospace",
+        "font_size": 12,
+        "border_radius": 10,
+        "opacity": 0.9
+    },
+    "syntax_highlighting": {
+        "user_message": "#f8f8f2",
+        "ai_message": "#50fa7b",
+        "system_message": "#6272a4",
+        "code": "#f1fa8c",
+        "keyword": "#ff79c6",
+        "string": "#f1fa8c",
+        "comment": "#6272a4",
+        "number": "#bd93f9"
+    }
+}

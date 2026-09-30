@@ -156,25 +156,52 @@ class MainWindow(Gtk.Window):
         
         # Obter cores do tema
         colors = self.config.get_theme_colors()
+        theme_info = self.config.get_theme_info(self.config.get("app.theme", "dark"))
+        
+        # Obter cores de syntax highlighting do tema
+        syntax_colors = {}
+        if theme_info and 'syntax_highlighting' in theme_info:
+            syntax_colors = theme_info['syntax_highlighting']
+        
+        # Obter configurações de UI do tema
+        theme_ui = {}
+        if theme_info and 'ui' in theme_info:
+            theme_ui = theme_info['ui']
+        
+        # Usar valores do tema ou defaults
+        bg_color = colors.get('background', '#1e1e1e')
+        text_color = colors.get('text', '#e0e0e0')
+        accent_color = colors.get('accent', '#4CAF50')
+        secondary_color = colors.get('secondary', '#2d2d2d')
+        tertiary_color = colors.get('tertiary', '#252525')
+        
+        font_family = theme_ui.get('font_family', self.config.get('ui.font_family', 'Monospace'))
+        font_size = theme_ui.get('font_size', self.config.get('ui.font_size', 12))
+        border_radius = theme_ui.get('border_radius', self.config.get('ui.border_radius', 10))
+        
+        # Cores de syntax highlighting
+        user_msg_color = syntax_colors.get('user_message', '#e0e0e0')
+        ai_msg_color = syntax_colors.get('ai_message', '#a0d0a0')
+        system_msg_color = syntax_colors.get('system_message', '#808080')
         
         css = f"""
         #main-box {{
-            background-color: {colors['background']};
-            color: {colors['text']};
-            border-radius: 10px;
+            background-color: {bg_color};
+            color: {text_color};
+            border-radius: {border_radius}px;
             padding: 10px;
             margin: 5px;
         }}
         
         #header {{
-            background-color: #2d2d2d;
-            border-radius: 8px 8px 0 0;
+            background-color: {secondary_color};
+            border-radius: {border_radius}px {border_radius}px 0 0;
             padding: 8px;
             margin-bottom: 10px;
         }}
         
         #chat-area {{
-            background-color: #252525;
+            background-color: {tertiary_color};
             border-radius: 5px;
             padding: 10px;
             margin-bottom: 10px;
@@ -182,55 +209,55 @@ class MainWindow(Gtk.Window):
         }}
         
         #input-area {{
-            background-color: #2d2d2d;
+            background-color: {secondary_color};
             border-radius: 5px;
             padding: 10px;
         }}
         
         textview {{
-            font-family: {self.config.get('ui.font_family', 'Monospace')};
-            font-size: {self.config.get('ui.font_size', 12)}pt;
-            background-color: #252525;
-            color: {colors['text']};
+            font-family: {font_family};
+            font-size: {font_size}pt;
+            background-color: {tertiary_color};
+            color: {text_color};
             border: none;
             padding: 5px;
         }}
         
         textview.user-message {{
-            color: #e0e0e0;
-            font-family: {self.config.get('ui.font_family', 'Monospace')};
-            font-size: {self.config.get('ui.font_size', 12)}pt;
+            color: {user_msg_color};
+            font-family: {font_family};
+            font-size: {font_size}pt;
         }}
         
         textview.ai-message {{
-            color: #a0d0a0;
-            font-family: {self.config.get('ui.font_family', 'Monospace')};
-            font-size: {self.config.get('ui.font_size', 12)}pt;
+            color: {ai_msg_color};
+            font-family: {font_family};
+            font-size: {font_size}pt;
         }}
         
         textview.system-message {{
-            color: #808080;
-            font-family: {self.config.get('ui.font_family', 'Monospace')};
-            font-size: {self.config.get('ui.font_size', 11)}pt;
+            color: {system_msg_color};
+            font-family: {font_family};
+            font-size: {font_size}pt;
         }}
         
         button {{
-            background-color: {colors['accent']};
+            background-color: {accent_color};
             color: white;
             border-radius: 5px;
             padding: 5px 10px;
-            font-family: {self.config.get('ui.font_family', 'Monospace')};
+            font-family: {font_family};
             font-size: 10pt;
             border: none;
             min-width: 40px;
         }}
         
         button:hover {{
-            background-color: #45a049;
+            opacity: 0.9;
         }}
         
         button:active {{
-            background-color: #3d8b40;
+            opacity: 0.7;
         }}
         
         button.expert {{
@@ -250,22 +277,22 @@ class MainWindow(Gtk.Window):
         }}
         
         entry {{
-            background-color: #3d3d3d;
-            color: {colors['text']};
+            background-color: {secondary_color};
+            color: {text_color};
             border-radius: 5px;
             padding: 5px;
-            font-family: {self.config.get('ui.font_family', 'Monospace')};
-            font-size: {self.config.get('ui.font_size', 12)}pt;
+            font-family: {font_family};
+            font-size: {font_size}pt;
             border: none;
         }}
         
         entry:focus {{
             outline: none;
-            border: 1px solid {colors['accent']};
+            border: 1px solid {accent_color};
         }}
         
         scrolledwindow {{
-            background-color: #252525;
+            background-color: {tertiary_color};
             border-radius: 5px;
             border: none;
         }}
@@ -287,7 +314,7 @@ class MainWindow(Gtk.Window):
             style_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        logger.debug("Estilo CSS aplicado")
+        logger.debug("Estilo CSS aplicado com tema: " + self.config.get("app.theme", "dark"))
     
     def _create_ui(self):
         """Criar interface da janela"""
@@ -452,6 +479,189 @@ class MainWindow(Gtk.Window):
     
     def on_config_clicked(self, item):
         """Abrir janela de configurações"""
+        self._show_config_dialog()
+    
+    def on_themes_clicked(self, button):
+        """Abrir diálogo de gestão de temas"""
+        self._show_config_dialog()
+        # Selecionar o separador de temas
+        # (Será feito automaticamente quando o diálogo abrir)
+    
+    def on_add_theme_clicked(self, button):
+        """Adicionar novo tema"""
+        dialog = Gtk.Dialog(
+            title="Adicionar Tema",
+            parent=self,
+            flags=0,
+            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        )
+        
+        content = dialog.get_content_area()
+        
+        # Nome do tema
+        name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        name_label = Gtk.Label(label="Nome:")
+        name_entry = Gtk.Entry()
+        name_box.pack_start(name_label, False, False, 0)
+        name_box.pack_start(name_entry, True, True, 0)
+        content.pack_start(name_box, False, False, 0)
+        
+        # Descrição
+        desc_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        desc_label = Gtk.Label(label="Descrição:")
+        desc_entry = Gtk.Entry()
+        desc_box.pack_start(desc_label, False, False, 0)
+        desc_box.pack_start(desc_entry, True, True, 0)
+        content.pack_start(desc_box, False, False, 0)
+        
+        # Cores
+        colors_frame = Gtk.Frame(label="Cores")
+        colors_grid = Gtk.Grid()
+        colors_grid.set_column_spacing(10)
+        colors_grid.set_row_spacing(5)
+        colors_frame.add(colors_grid)
+        content.pack_start(colors_frame, False, False, 0)
+        
+        # Background
+        bg_label = Gtk.Label(label="Background:")
+        bg_entry = Gtk.Entry()
+        bg_entry.set_placeholder_text("#1e1e1e")
+        bg_entry.set_text("#1e1e1e")
+        colors_grid.attach(bg_label, 0, 0, 1, 1)
+        colors_grid.attach(bg_entry, 1, 0, 1, 1)
+        
+        # Text
+        text_label = Gtk.Label(label="Text:")
+        text_entry = Gtk.Entry()
+        text_entry.set_placeholder_text("#e0e0e0")
+        text_entry.set_text("#e0e0e0")
+        colors_grid.attach(text_label, 0, 1, 1, 1)
+        colors_grid.attach(text_entry, 1, 1, 1, 1)
+        
+        # Accent
+        accent_label = Gtk.Label(label="Accent:")
+        accent_entry = Gtk.Entry()
+        accent_entry.set_placeholder_text("#4CAF50")
+        accent_entry.set_text("#4CAF50")
+        colors_grid.attach(accent_label, 0, 2, 1, 1)
+        colors_grid.attach(accent_entry, 1, 2, 1, 1)
+        
+        dialog.show_all()
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            theme_name = name_entry.get_text().strip()
+            if not theme_name:
+                self.show_notification("Linux AI Assistant", "É necessário um nome para o tema")
+                dialog.destroy()
+                return
+            
+            # Criar tema
+            theme = {
+                "name": theme_name,
+                "description": desc_entry.get_text().strip(),
+                "colors": {
+                    "background": bg_entry.get_text().strip(),
+                    "text": text_entry.get_text().strip(),
+                    "accent": accent_entry.get_text().strip(),
+                    "secondary": "#2d2d2d",
+                    "tertiary": "#252525"
+                },
+                "ui": {
+                    "font_family": "Monospace",
+                    "font_size": 12,
+                    "border_radius": 10
+                }
+            }
+            
+            # Guardar tema
+            themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
+            themes_dir.mkdir(parents=True, exist_ok=True)
+            theme_file = themes_dir / f"{theme_name}.json"
+            
+            try:
+                with open(theme_file, 'w', encoding='utf-8') as f:
+                    json.dump(theme, f, indent=2, ensure_ascii=False)
+                
+                self.show_notification("Linux AI Assistant", f"Tema '{theme_name}' criado")
+                self._populate_themes_list()
+                
+            except Exception as e:
+                self.show_notification("Linux AI Assistant", f"Erro a guardar tema: {e}")
+        
+        dialog.destroy()
+    
+    def on_remove_theme_clicked(self, button):
+        """Remover tema selecionado"""
+        selected_row = self.themes_listbox.get_selected_row()
+        if not selected_row:
+            self.show_notification("Linux AI Assistant", "Nenhum tema selecionado")
+            return
+        
+        theme_name = selected_row.get_children()[0].get_text()
+        
+        # Não permitir remover temas pré-definidos
+        predefined_themes = ["dark", "light", "dracula", "solarized-dark"]
+        if theme_name in predefined_themes:
+            self.show_notification("Linux AI Assistant", "Não é possível remover temas pré-definidos")
+            return
+        
+        # Confirmar remoção
+        dialog = Gtk.MessageDialog(
+            parent=self,
+            flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Remover tema '{theme_name}'?"
+        )
+        
+        response = dialog.run()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.YES:
+            themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
+            theme_file = themes_dir / f"{theme_name}.json"
+            
+            try:
+                if theme_file.exists():
+                    theme_file.unlink()
+                    self.show_notification("Linux AI Assistant", f"Tema '{theme_name}' removido")
+                    self._populate_themes_list()
+            except Exception as e:
+                self.show_notification("Linux AI Assistant", f"Erro a remover tema: {e}")
+    
+    def _populate_themes_list(self):
+        """Preencher a lista de temas"""
+        # Limpar lista
+        for child in self.themes_listbox.get_children():
+            self.themes_listbox.remove(child)
+        
+        # Obter temas disponíveis
+        available_themes = self.config.get_available_themes()
+        
+        for theme_name in available_themes:
+            theme_info = self.config.get_theme_info(theme_name)
+            display_name = theme_info.get("name", theme_name) if theme_info else theme_name
+            description = theme_info.get("description", "") if theme_info else ""
+            
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            
+            name_label = Gtk.Label(label=display_name)
+            name_label.set_halign(Gtk.Align.START)
+            box.pack_start(name_label, False, False, 0)
+            
+            desc_label = Gtk.Label(label=description)
+            desc_label.set_halign(Gtk.Align.START)
+            desc_label.set_xalign(0)
+            desc_label.get_style_context().add_class(Gtk.STYLE_CLASS_DIM_LABEL)
+            box.pack_start(desc_label, False, False, 0)
+            
+            row.add(box)
+            self.themes_listbox.add(row)
+    
+    def on_themes_clicked(self, button):
+        """Abrir diálogo de temas"""
         self._show_config_dialog()
     
     def on_history_clicked(self, item):
@@ -644,12 +854,51 @@ class MainWindow(Gtk.Window):
         ui_box.pack_start(theme_label, False, False, 0)
         
         theme_combo = Gtk.ComboBoxText()
-        theme_combo.append("dark", "Escuro")
-        theme_combo.append("light", "Claro")
-        theme_combo.set_active_id(self.config.get("ui.theme", "dark"))
+        # Carregar temas disponíveis
+        available_themes = self.config.get_available_themes()
+        for theme in available_themes:
+            theme_info = self.config.get_theme_info(theme)
+            display_name = theme_info.get("name", theme) if theme_info else theme
+            theme_combo.append(theme, display_name)
+        
+        theme_combo.set_active_id(self.config.get("app.theme", "dark"))
         ui_box.pack_start(theme_combo, False, False, 0)
         
+        # Botão para gerir temas
+        themes_btn = Gtk.Button(label="Gerir Temas")
+        themes_btn.connect("clicked", self.on_themes_clicked)
+        ui_box.pack_start(themes_btn, False, False, 0)
+        
         notebook.append_page(ui_box, Gtk.Label(label="Aparência"))
+        
+        # Separador Temas
+        themes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        themes_box.set_border_width(10)
+        
+        themes_label = Gtk.Label(label="<b>Temas Personalizados</b>")
+        themes_label.set_use_markup(True)
+        themes_box.pack_start(themes_label, False, False, 0)
+        
+        # Lista de temas
+        self.themes_listbox = Gtk.ListBox()
+        self.themes_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._populate_themes_list()
+        themes_box.pack_start(self.themes_listbox, True, True, 0)
+        
+        # Botões de tema
+        theme_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        
+        add_theme_btn = Gtk.Button(label="Adicionar Tema")
+        add_theme_btn.connect("clicked", self.on_add_theme_clicked)
+        theme_buttons.pack_start(add_theme_btn, False, False, 0)
+        
+        remove_theme_btn = Gtk.Button(label="Remover Tema")
+        remove_theme_btn.connect("clicked", self.on_remove_theme_clicked)
+        theme_buttons.pack_start(remove_theme_btn, False, False, 0)
+        
+        themes_box.pack_start(theme_buttons, False, False, 0)
+        
+        notebook.append_page(themes_box, Gtk.Label(label="Temas"))
         
         # Separador Funcionalidades
         features_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)

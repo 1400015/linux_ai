@@ -9,27 +9,52 @@
     "opacity": 0.9,
     "always_on_top": true,
     "auto_start": false,
-    "theme": "dark"
+    "theme": "dark",
+    "encryption_enabled": false
   },
   "api": {
     "default_provider": "openrouter",
     "providers": {
       "openrouter": {
-        "api_key": "YOUR_OPENROUTER_API_KEY",
+        "api_key": "",
         "base_url": "https://openrouter.ai/api/v1",
         "model": "google/gemini-flash-1.5",
         "timeout": 30
       },
       "google_ai_studio": {
-        "api_key": "YOUR_GOOGLE_AI_STUDIO_KEY",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "api_key": "",
+        "base_url": "https://generativelanguage.googleapis.com/v1",
         "model": "gemini-1.5-flash",
         "timeout": 30
+      },
+      "anthropic": {
+        "api_key": "",
+        "base_url": "https://api.anthropic.com/v1",
+        "model": "claude-3-haiku",
+        "timeout": 60
+      },
+      "mistral": {
+        "api_key": "",
+        "base_url": "https://api.mistral.ai/v1",
+        "model": "mistral-small",
+        "timeout": 60
+      },
+      "groq": {
+        "api_key": "",
+        "base_url": "https://api.groq.com/v1",
+        "model": "llama3-8b-8192",
+        "timeout": 60
+      },
+      "cohere": {
+        "api_key": "",
+        "base_url": "https://api.cohere.ai/v1",
+        "model": "command",
+        "timeout": 60
       },
       "local_llm": {
         "base_url": "http://localhost:11434/v1",
         "model": "llama3.2",
-        "timeout": 60
+        "timeout": 120
       }
     }
   },
@@ -43,22 +68,13 @@
   "permissions": {
     "require_sudo": true,
     "allowed_commands": [
-      "ls",
-      "cat",
-      "grep",
-      "ps",
-      "top",
-      "df",
-      "du",
-      "free",
-      "uname",
-      "neofetch"
+      "ls", "cat", "grep", "ps", "top", "df", "du", "free", "uname", "neofetch",
+      "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis",
+      "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig", "nslookup",
+      "wget", "curl", "git", "docker", "podman", "systemctl", "service",
+      "journalctl", "logcat", "apt", "dnf", "yum", "pacman", "xbps", "emerge"
     ],
-    "allowed_edit_dirs": [
-      "/etc",
-      "/home",
-      "/usr/local"
-    ]
+    "allowed_edit_dirs": ["/etc", "/home", "/usr/local", "/opt"]
   },
   "ui": {
     "font_family": "Monospace",

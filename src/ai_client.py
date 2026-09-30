@@ -1,7 +1,7 @@
 import json
 import time
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from requests.exceptions import RequestException, Timeout, ConnectionError
 
@@ -17,15 +17,26 @@ class AIClient:
     MAX_RETRIES = 3
     RATE_LIMIT_WAIT = 60  # segundos
     
+    # Provedores suportados
+    SUPPORTED_PROVIDERS = [
+        "openrouter",
+        "google_ai_studio", 
+        "anthropic",
+        "mistral",
+        "groq",
+        "cohere",
+        "local_llm"
+    ]
+    
     def __init__(self, config_manager):
         self.config = config_manager
         self.session = self._create_session()
         self.token_usage = {}
         self._setup_retry_strategy()
+        self._load_custom_providers()
     
     def _create_session(self):
         """Criar sessão HTTP com headers padrão"""
-        session = type('Session', (), {})()  # Placeholder
         import requests
         session = requests.Session()
         session.headers.update({
@@ -43,6 +54,34 @@ class AIClient:
             reraise=True
         )
     
+    def _load_custom_providers(self):
+        """Carregar provedores customizados de plugins"""
+        try:
+            from pathlib import Path
+            import importlib
+            
+            plugins_dir = Path(__file__).parent.parent / "plugins"
+            if plugins_dir.exists():
+                for plugin_file in plugins_dir.glob("*.py"):
+                    if plugin_file.name != "__init__.py":
+                        try:
+                            module_name = f"plugins.{plugin_file.stem}"
+                            module = importlib.import_module(module_name)
+                            if hasattr(module, 'register_provider'):
+                                module.register_provider(self)
+                                logger.info(f"Plugin carregado: {plugin_file.stem}")
+                        except Exception as e:
+                            logger.warning(f"Erro a carregar plugin {plugin_file}: {e}")
+        except Exception as e:
+            logger.warning(f"Erro a carregar plugins: {e}")
+    
+    def register_provider(self, name: str, chat_func: Callable):
+        """Registrar um novo provedor customizado"""
+        if name not in self.SUPPORTED_PROVIDERS:
+            self.SUPPORTED_PROVIDERS.append(name)
+        setattr(self, f"_chat_{name}", chat_func)
+        logger.info(f"Provedor customizado registado: {name}")
+    
     def _get_api_config(self, provider: str) -> Dict[str, Any]:
         """Obter configuração da API para um provedor específico"""
         providers = self.config.get("api.providers", {})
@@ -52,6 +91,10 @@ class AIClient:
         """Obter API key para um provedor"""
         api_config = self._get_api_config(provider)
         return api_config.get("api_key")
+    
+    def get_supported_providers(self) -> List[str]:
+        """Obter lista de provedores suportados"""
+        return self.SUPPORTED_PROVIDERS.copy()
     
     def _count_tokens(self, text: str) -> int:
         """Estimar número de tokens (simplificado)"""
@@ -85,7 +128,6 @@ class AIClient:
     def _make_request(self, url: str, payload: Dict, headers: Dict = None, 
                      timeout: int = None, stream: bool = False):
         """Fazer request com retry e error handling"""
-        import requests
         timeout = timeout or self.DEFAULT_TIMEOUT
         merged_headers = {**self.session.headers, **(headers or {})}
         
@@ -186,12 +228,10 @@ class AIClient:
             
             logger.info(f"Enviando request para {provider} com modelo {model}")
             
-            if provider == "openrouter":
-                result = self._chat_openrouter(messages, model, api_key, temperature, max_tokens, timeout)
-            elif provider == "google_ai_studio":
-                result = self._chat_google_ai_studio(messages, model, api_key, temperature, max_tokens, timeout)
-            elif provider == "local_llm":
-                result = self._chat_local_llm(messages, model, base_url, temperature, max_tokens, timeout)
+            # Chamar o método específico do provedor
+            chat_method = getattr(self, f"_chat_{provider}", None)
+            if chat_method:
+                result = chat_method(messages, model, api_key, temperature, max_tokens, timeout)
             else:
                 logger.error(f"Provedor não suportado: {provider}")
                 return None
@@ -288,6 +328,192 @@ class AIClient:
             logger.error(f"Erro na Google AI Studio: {e}")
             return None
     
+    def _chat_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                        temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+        """Comunicar com Anthropic Claude API"""
+        import os
+        
+        # Obter versão da API do modelo
+        api_version = "2023-06-01"  # Default para Claude
+        if "claude-3" in model:
+            api_version = "2024-03-07"
+        
+        url = f"https://api.anthropic.com/v1/messages"
+        
+        # Converter mensagens para o formato da Anthropic
+        anthropic_messages = []
+        for msg in messages:
+            role = msg["role"]
+            # A Anthropic usa "user" e "assistant" (não "system")
+            if role == "system":
+                role = "assistant"  # ou criar uma mensagem de sistema separada
+            anthropic_messages.append({
+                "role": role,
+                "content": msg["content"]
+            })
+        
+        payload = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "anthropic_version": api_version
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "x-api-key": api_key
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout)
+            data = response.json()
+            
+            if data.get("type") == "error":
+                logger.error(f"Erro da Anthropic: {data.get('error', {}).get('message', 'Unknown')}")
+                return None
+            
+            # Obter conteúdo da primeira resposta
+            if data.get("content"):
+                # Se for uma lista, pegar o primeiro
+                if isinstance(data["content"], list):
+                    for content in data["content"]:
+                        if content.get("type") == "text":
+                            return content.get("text", "")
+                else:
+                    return data["content"].get("text", "")
+            
+            return ""
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro a parsear JSON da Anthropic: {e}")
+            return None
+        except KeyError as e:
+            logger.error(f"Formato de resposta inválido da Anthropic: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Erro na Anthropic: {e}")
+            return None
+    
+    def _chat_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                      temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+        """Comunicar com Mistral AI API"""
+        url = f"https://api.mistral.ai/v1/chat/completions"
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout)
+            data = response.json()
+            
+            if not data.get("choices"):
+                logger.warning("Nenhuma escolha na resposta da Mistral")
+                return ""
+            
+            return data["choices"][0]["message"]["content"]
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro a parsear JSON da Mistral: {e}")
+            return None
+        except KeyError as e:
+            logger.error(f"Formato de resposta inválido da Mistral: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Erro na Mistral: {e}")
+            return None
+    
+    def _chat_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                   temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+        """Comunicar com Groq API"""
+        url = f"https://api.groq.com/v1/chat/completions"
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout)
+            data = response.json()
+            
+            if not data.get("choices"):
+                logger.warning("Nenhuma escolha na resposta do Groq")
+                return ""
+            
+            return data["choices"][0]["message"]["content"]
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro a parsear JSON do Groq: {e}")
+            return None
+        except KeyError as e:
+            logger.error(f"Formato de resposta inválido do Groq: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Erro no Groq: {e}")
+            return None
+    
+    def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                     temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+        """Comunicar com Cohere API"""
+        url = f"https://api.cohere.ai/v1/chat"
+        
+        # Converter mensagens para o formato da Cohere
+        cohere_messages = []
+        for msg in messages:
+            role = msg["role"]
+            # A Cohere usa "USER", "ASSISTANT", "SYSTEM"
+            role = role.upper()
+            cohere_messages.append({
+                "role": role,
+                "message": msg["content"]
+            })
+        
+        payload = {
+            "model": model,
+            "messages": cohere_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout)
+            data = response.json()
+            
+            if not data.get("response"):
+                logger.warning("Nenhuma resposta da Cohere")
+                return ""
+            
+            return data["response"]
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro a parsear JSON da Cohere: {e}")
+            return None
+        except KeyError as e:
+            logger.error(f"Formato de resposta inválido da Cohere: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Erro na Cohere: {e}")
+            return None
+    
     def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, base_url: str,
                         temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com modelo local (Ollama, etc)"""
@@ -351,12 +577,12 @@ class AIClient:
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
         
         try:
-            if provider == "openrouter":
-                yield from self._stream_openrouter(messages, model, api_key, temperature, max_tokens, timeout)
-            elif provider == "local_llm":
-                yield from self._stream_local_llm(messages, model, base_url, temperature, max_tokens, timeout)
+            # Chamar o método específico de stream do provedor
+            stream_method = getattr(self, f"_stream_{provider}", None)
+            if stream_method:
+                yield from stream_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
-                # Para Google AI Studio, fazer request normal e yield todo o conteúdo
+                # Fallback: fazer request normal e yield todo o conteúdo
                 response = self.chat(messages, provider, model, temperature, max_tokens)
                 if response:
                     yield response
@@ -365,7 +591,7 @@ class AIClient:
             yield f"Erro: {e}"
     
     def _stream_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                           temperature: float, max_tokens: int, timeout: int):
+                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream com OpenRouter"""
         url = "https://openrouter.ai/api/v1/chat/completions"
         
@@ -402,6 +628,185 @@ class AIClient:
                                 continue
         except Exception as e:
             logger.error(f"Erro no stream OpenRouter: {e}")
+            yield f"Erro no stream: {e}"
+    
+    def _stream_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                          base_url: str, temperature: float, max_tokens: int, timeout: int):
+        """Stream com Anthropic Claude"""
+        import os
+        
+        api_version = "2023-06-01"
+        if "claude-3" in model:
+            api_version = "2024-03-07"
+        
+        url = f"https://api.anthropic.com/v1/messages"
+        
+        anthropic_messages = []
+        for msg in messages:
+            role = msg["role"]
+            if role == "system":
+                role = "assistant"
+            anthropic_messages.append({
+                "role": role,
+                "content": msg["content"]
+            })
+        
+        payload = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "anthropic_version": api_version,
+            "stream": True
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "x-api-key": api_key
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout, stream=True)
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith("data: "):
+                        data_str = decoded_line[6:]
+                        if data_str != "[DONE]":
+                            try:
+                                data = json.loads(data_str)
+                                if data.get("type") == "message_delta":
+                                    if data.get("delta", {}).get("type") == "text_delta":
+                                        yield data["delta"]["text"]
+                            except json.JSONDecodeError:
+                                continue
+        except Exception as e:
+            logger.error(f"Erro no stream Anthropic: {e}")
+            yield f"Erro no stream: {e}"
+    
+    def _stream_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                        base_url: str, temperature: float, max_tokens: int, timeout: int):
+        """Stream com Mistral AI"""
+        url = f"https://api.mistral.ai/v1/chat/completions"
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout, stream=True)
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith("data: "):
+                        data_str = decoded_line[6:]
+                        if data_str != "[DONE]":
+                            try:
+                                data = json.loads(data_str)
+                                if "choices" in data and len(data["choices"]) > 0:
+                                    content = data["choices"][0].get("delta", {}).get("content", "")
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                continue
+        except Exception as e:
+            logger.error(f"Erro no stream Mistral: {e}")
+            yield f"Erro no stream: {e}"
+    
+    def _stream_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                      base_url: str, temperature: float, max_tokens: int, timeout: int):
+        """Stream com Groq"""
+        url = f"https://api.groq.com/v1/chat/completions"
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout, stream=True)
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith("data: "):
+                        data_str = decoded_line[6:]
+                        if data_str != "[DONE]":
+                            try:
+                                data = json.loads(data_str)
+                                if "choices" in data and len(data["choices"]) > 0:
+                                    content = data["choices"][0].get("delta", {}).get("content", "")
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                continue
+        except Exception as e:
+            logger.error(f"Erro no stream Groq: {e}")
+            yield f"Erro no stream: {e}"
+    
+    def _stream_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                        base_url: str, temperature: float, max_tokens: int, timeout: int):
+        """Stream com Cohere"""
+        url = f"https://api.cohere.ai/v1/chat"
+        
+        cohere_messages = []
+        for msg in messages:
+            role = msg["role"].upper()
+            cohere_messages.append({
+                "role": role,
+                "message": msg["content"]
+            })
+        
+        payload = {
+            "model": model,
+            "messages": cohere_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self._make_request(url, payload, headers, timeout, stream=True)
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith("data: "):
+                        data_str = decoded_line[6:]
+                        if data_str != "[DONE]":
+                            try:
+                                data = json.loads(data_str)
+                                if "text" in data:
+                                    yield data["text"]
+                            except json.JSONDecodeError:
+                                continue
+        except Exception as e:
+            logger.error(f"Erro no stream Cohere: {e}")
             yield f"Erro no stream: {e}"
     
     def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, base_url: str,

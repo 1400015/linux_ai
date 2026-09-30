@@ -1,0 +1,28 @@
+{
+    "name": "Light",
+    "description": "Tema claro",
+    "colors": {
+        "background": "#ffffff",
+        "text": "#333333",
+        "accent": "#4CAF50",
+        "secondary": "#f5f5f5",
+        "tertiary": "#eeeeee",
+        "border": "#dddddd"
+    },
+    "ui": {
+        "font_family": "Monospace",
+        "font_size": 12,
+        "border_radius": 10,
+        "opacity": 0.95
+    },
+    "syntax_highlighting": {
+        "user_message": "#333333",
+        "ai_message": "#2e7d32",
+        "system_message": "#666666",
+        "code": "#263238",
+        "keyword": "#0066cc",
+        "string": "#a31515",
+        "comment": "#009900",
+        "number": "#098658"
+    }
+}
