@@ -2,7 +2,7 @@ import os
 import re
 import xml.sax.saxutils
 
-CODE_RE = re.compile(r"```(\S*)\n(.*?)(?:```|\Z)", re.DOTALL)
+CODE_RE = re.compile(r"```(\S*)\n(.*?)```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 
 

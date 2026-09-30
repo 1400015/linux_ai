@@ -1,9 +1,9 @@
 import gi
 import os
-import sys
 import json
 import time
 import threading
+from typing import Optional, Dict
 from pathlib import Path
 
 try:
@@ -394,16 +394,16 @@ class MainWindow(Gtk.Window):
         # Configurar tags para formatação
         text_buffer = self.chat_textview.get_buffer()
         
-        user_tag = text_buffer.create_tag("user-message", 
+        text_buffer.create_tag("user-message", 
                                            foreground="#e0e0e0",
                                            font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}")
-        ai_tag = text_buffer.create_tag("ai-message",
+        text_buffer.create_tag("ai-message",
                                         foreground="#a0d0a0",
                                         font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}")
-        system_tag = text_buffer.create_tag("system-message",
+        text_buffer.create_tag("system-message",
                                            foreground="#808080",
                                            font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 11)}")
-        loading_tag = text_buffer.create_tag("loading",
+        text_buffer.create_tag("loading",
                                            foreground="#808080",
                                            font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}",
                                            style=Pango.Style.ITALIC)
@@ -672,10 +672,6 @@ class MainWindow(Gtk.Window):
             
             row.add(box)
             self.themes_listbox.add(row)
-    
-    def on_themes_clicked(self, button):
-        """Abrir diálogo de temas"""
-        self._show_config_dialog()
     
     def on_history_clicked(self, item):
         """Mostrar histórico de conversas"""
@@ -1250,13 +1246,15 @@ CPU: {info.get('cpu_cores', 'N/A')} núcleos
                 self.conversation_history.append({"role": "assistant", "content": response_text})
                 
                 # Oferecer escrita de ficheiros em modo especialista
+                # GTK não é thread-safe: mostrar diálogos a partir da main loop
                 if self.expert_mode and response_text:
-                    threading.Thread(
-                        target=file_actions.offer_file_blocks,
-                        args=(self, response_text,
-                              lambda msg: GLib.idle_add(self._add_system_message, msg)),
-                        daemon=True
-                    ).start()
+                    def _offer_blocks():
+                        file_actions.offer_file_blocks(
+                            self, response_text,
+                            lambda msg: GLib.idle_add(self._add_system_message, msg)
+                        )
+                        return False
+                    GLib.idle_add(_offer_blocks)
             
             # Atualizar UI
             GLib.idle_add(self._on_message_processed)

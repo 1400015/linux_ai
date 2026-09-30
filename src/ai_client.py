@@ -231,7 +231,7 @@ class AIClient:
             # Chamar o método específico do provedor
             chat_method = getattr(self, f"_chat_{provider}", None)
             if chat_method:
-                result = chat_method(messages, model, api_key, temperature, max_tokens, timeout)
+                result = chat_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
                 logger.error(f"Provedor não suportado: {provider}")
                 return None
@@ -249,9 +249,9 @@ class AIClient:
             return None
     
     def _chat_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                         temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+                         base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com OpenRouter API"""
-        url = "https://openrouter.ai/api/v1/chat/completions"
+        url = f"{base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -281,9 +281,9 @@ class AIClient:
             return None
     
     def _chat_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                               temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+                               base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com Google AI Studio API"""
-        url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+        url = f"{base_url}/models/{model}:generateContent?key={api_key}"
         
         # Converter mensagens para o formato da Google
         google_messages = []
@@ -329,16 +329,14 @@ class AIClient:
             return None
     
     def _chat_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                        temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+                        base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com Anthropic Claude API"""
-        import os
-        
         # Obter versão da API do modelo
         api_version = "2023-06-01"  # Default para Claude
         if "claude-3" in model:
             api_version = "2024-03-07"
         
-        url = f"https://api.anthropic.com/v1/messages"
+        url = f"{base_url}/messages"
         
         # Converter mensagens para o formato da Anthropic
         anthropic_messages = []
@@ -396,9 +394,9 @@ class AIClient:
             return None
     
     def _chat_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                      temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+                      base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com Mistral AI API"""
-        url = f"https://api.mistral.ai/v1/chat/completions"
+        url = f"{base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -432,9 +430,9 @@ class AIClient:
             return None
     
     def _chat_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                   temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+                   base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com Groq API"""
-        url = f"https://api.groq.com/v1/chat/completions"
+        url = f"{base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -468,9 +466,9 @@ class AIClient:
             return None
     
     def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                     temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+                     base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar com Cohere API"""
-        url = f"https://api.cohere.ai/v1/chat"
+        url = f"{base_url}/chat"
         
         # Converter mensagens para o formato da Cohere
         cohere_messages = []
@@ -593,7 +591,7 @@ class AIClient:
     def _stream_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
                            base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream com OpenRouter"""
-        url = "https://openrouter.ai/api/v1/chat/completions"
+        url = f"{base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -633,13 +631,11 @@ class AIClient:
     def _stream_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream com Anthropic Claude"""
-        import os
-        
         api_version = "2023-06-01"
         if "claude-3" in model:
             api_version = "2024-03-07"
         
-        url = f"https://api.anthropic.com/v1/messages"
+        url = f"{base_url}/messages"
         
         anthropic_messages = []
         for msg in messages:
@@ -689,7 +685,7 @@ class AIClient:
     def _stream_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream com Mistral AI"""
-        url = f"https://api.mistral.ai/v1/chat/completions"
+        url = f"{base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -728,7 +724,7 @@ class AIClient:
     def _stream_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
                       base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream com Groq"""
-        url = f"https://api.groq.com/v1/chat/completions"
+        url = f"{base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -767,7 +763,7 @@ class AIClient:
     def _stream_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream com Cohere"""
-        url = f"https://api.cohere.ai/v1/chat"
+        url = f"{base_url}/chat"
         
         cohere_messages = []
         for msg in messages:

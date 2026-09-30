@@ -113,8 +113,19 @@ def confirm_and_write(parent, block):
                 os.unlink(temp_path)
         else:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(block.content)
+            fd, temp_path = tempfile.mkstemp(
+                dir=os.path.dirname(path) or ".", text=True
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(block.content)
+                os.replace(temp_path, path)
+            except Exception:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                raise
         return ("written", path)
     except PermissionError as e:
         return ("error", str(e))

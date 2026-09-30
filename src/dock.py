@@ -3,7 +3,7 @@ import struct
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, GdkX11, Gtk  # noqa: E402
+from gi.repository import Gdk, GdkX11  # noqa: E402
 
 try:
     gi.require_version("GtkLayerShell", "0.1")
@@ -28,16 +28,16 @@ def _apply_x11_struts(gdk_window, edge, size):
     strut = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     if edge == "right":
         strut[1] = size
-        strut[5], strut[6] = 0, screen_h
+        strut[6], strut[7] = 0, screen_h - 1
     elif edge == "left":
         strut[0] = size
-        strut[4], strut[5] = 0, screen_h
+        strut[4], strut[5] = 0, screen_h - 1
     elif edge == "top":
         strut[2] = size
-        strut[8], strut[9] = 0, screen_w
+        strut[8], strut[9] = 0, screen_w - 1
     else:
         strut[3] = size
-        strut[10], strut[11] = 0, screen_w
+        strut[10], strut[11] = 0, screen_w - 1
     atom = Gdk.Atom.intern("_NET_WM_STRUT_PARTIAL", False)
     cardinal = Gdk.Atom.intern("CARDINAL", False)
     data = struct.pack("=" + "l" * 12, *strut)

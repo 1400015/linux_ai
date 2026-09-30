@@ -11,12 +11,12 @@ Uso:
 """
 
 import sys
-import os
 import json
+import time
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, Dict
 
 # Adicionar src ao path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -102,8 +102,7 @@ Exemplos:
         system_subparsers.add_parser('info', help='Informação completa do sistema')
         
         # system commands
-        commands_parser = system_subparsers.add_parser('commands', 
-                                                     help='Lista de comandos permitidos')
+        system_subparsers.add_parser('commands', help='Lista de comandos permitidos')
         
         # system processes
         system_subparsers.add_parser('processes', help='Lista de processos')
@@ -587,8 +586,6 @@ Responde em Português de Portugal de forma clara e concisa."""
 
 def main():
     """Ponto de entrada principal para CLI"""
-    import time
-    
     try:
         app = CLIApp()
         app.run()

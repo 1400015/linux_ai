@@ -1,7 +1,4 @@
 import gi
-import os
-import sys
-from pathlib import Path
 import logging
 
 # Configurar logger
@@ -10,12 +7,13 @@ logger = logging.getLogger(__name__)
 try:
     gi.require_version('Gtk', '3.0')
     gi.require_version('AppIndicator3', '0.1')
-    from gi.repository import Gtk, AppIndicator3, GLib
+    from gi.repository import Gtk, AppIndicator3
 except ImportError:
     # Fallback para sistemas sem AppIndicator3
     gi.require_version('Gtk', '3.0')
     gi.require_version('Gdk', '3.0')
-    from gi.repository import Gtk, Gdk
+    gi.require_version('GdkPixbuf', '2.0')
+    from gi.repository import Gtk, GdkPixbuf
 
 
 class TrayIcon:

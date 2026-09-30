@@ -6,11 +6,19 @@ Um assistente de IA permanente para Linux com interface flutuante,
 captura de ecrã, modo especialista e mais.
 """
 
-import os
 import sys
 import signal
 from pathlib import Path
 import logging
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    from gi.repository import Gtk, Gdk
+except (ImportError, ValueError):
+    Gtk = None
+    Gdk = None
 
 # Configurar logging cedo
 logging.basicConfig(
@@ -55,11 +63,6 @@ class LinuxAIAssistant:
     
     def run(self):
         """Iniciar a aplicação"""
-        import gi
-        gi.require_version('Gtk', '3.0')
-        gi.require_version('Gdk', '3.0')
-        from gi.repository import Gtk, Gdk
-        
         logger.info("Inicializar GTK")
         
         try:
