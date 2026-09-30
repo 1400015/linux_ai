@@ -146,15 +146,19 @@ class LinuxAIAssistant:
         button_window.add(button)
         
         edge = self.config.get("app.button_edge", "right")
-        screen = button_window.get_screen()
+        display = Gdk.Display.get_default()
+        monitor = display.get_monitor(0)
+        geometry = monitor.get_geometry()
+        x0, y0 = geometry.x, geometry.y
+        w, h = geometry.width, geometry.height
         if edge == "left":
-            button_window.move(12, screen.get_height() // 2 - 26)
+            button_window.move(x0 + 12, y0 + h // 2 - 26)
         elif edge == "top":
-            button_window.move(screen.get_width() // 2 - 26, 12)
+            button_window.move(x0 + w // 2 - 26, y0 + 12)
         elif edge == "bottom":
-            button_window.move(screen.get_width() // 2 - 26, screen.get_height() - 64)
+            button_window.move(x0 + w // 2 - 26, y0 + h - 64)
         else:
-            button_window.move(screen.get_width() - 64, screen.get_height() // 2 - 26)
+            button_window.move(x0 + w - 64, y0 + h // 2 - 26)
         
         button_window.show_all()
         self.float_button_window = button_window

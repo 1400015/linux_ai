@@ -341,25 +341,25 @@ Exemplos:
         print("INFORMAÇÃO DO SISTEMA")
         print("=" * 50)
         
-        print(f"\nSistema Operativo:")
+        print("\nSistema Operativo:")
         print(f"  Nome: {info.get('distro', 'Unknown')}")
         print(f"  ID: {info.get('distro_id', 'Unknown')}")
         print(f"  Versão: {info.get('release', 'Unknown')}")
         print(f"  Kernel: {info.get('version', 'Unknown')}")
         print(f"  Arquitetura: {info.get('machine', 'Unknown')} ({info.get('architecture', 'Unknown')})")
         
-        print(f"\nHardware:")
+        print("\nHardware:")
         print(f"  Hostname: {info.get('hostname', 'Unknown')}")
         print(f"  CPU: {info.get('cpu_cores', 'N/A')} núcleos ({info.get('cpu_physical_cores', 'N/A')} físicos)")
         print(f"  Uso de CPU: {info.get('cpu_usage', 'N/A')}")
         
-        print(f"\nMemória:")
+        print("\nMemória:")
         print(f"  Total: {info.get('memory_total', 'N/A')}")
         print(f"  Usada: {info.get('memory_used', 'N/A')}")
         print(f"  Disponível: {info.get('memory_available', 'N/A')}")
         print(f"  Uso: {info.get('memory_percent', 'N/A')}")
         
-        print(f"\nDisco:")
+        print("\nDisco:")
         print(f"  Total: {info.get('disk_total', 'N/A')}")
         print(f"  Usado: {info.get('disk_used', 'N/A')}")
         print(f"  Livre: {info.get('disk_free', 'N/A')}")
@@ -367,18 +367,18 @@ Exemplos:
         
         print(f"\nUptime: {info.get('uptime', 'N/A')}")
         
-        print(f"\nUtilizador:")
+        print("\nUtilizador:")
         print(f"  Nome: {info.get('username', 'Unknown')}")
         print(f"  É root: {info.get('is_root', False)}")
         
-        print(f"\nAmbiente Gráfico:")
+        print("\nAmbiente Gráfico:")
         print(f"  Tipo: {'Wayland' if info.get('is_wayland') == 'True' else 'X11'}")
         print(f"  Display: {info.get('display', 'N/A')}")
         
         if info.get('is_void'):
-            print(f"\n✓ Sistema: Void Linux")
+            print("\n✓ Sistema: Void Linux")
         if info.get('is_d77void'):
-            print(f"✓ Sistema: d77void")
+            print("✓ Sistema: d77void")
         
         print("=" * 50 + "\n")
     

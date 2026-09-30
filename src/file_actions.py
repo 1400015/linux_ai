@@ -31,14 +31,21 @@ def is_privileged_path(path):
     return not (real == home or real.startswith(home + os.sep))
 
 
+MAX_DIFF_BYTES = 1024 * 1024
+
+
 def preview_diff(path, new_content):
-    """Devolve um diff unificado, ou None se o ficheiro não existe."""
+    """Devolve um diff unificado, ou None se o ficheiro não existe.
+
+    Lê no máximo 1 MB do ficheiro existente para evitar carregar
+    ficheiros enormes em memória.
+    """
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
         return None
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            old_lines = f.readlines()
+            old_lines = f.readlines(MAX_DIFF_BYTES)
     except OSError:
         return None
     new_lines = new_content.splitlines(keepends=True)
