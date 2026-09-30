@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Script de instalação para Linux AI Assistant
-# Uso: ./install.sh [--dev]
+# Script de instalação específico para Void Linux e d77void
+# Uso: ./install_void.sh [--dev]
 
 set -e
 
@@ -30,92 +30,56 @@ if [ "$1" == "--dev" ]; then
     echo -e "${BLUE}Modo de desenvolvimento ativo${NC}"
 fi
 
-# Função para verificar se um comando existe
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
+# Verificar se é Void Linux
+if ! command -v xbps-install >/dev/null 2>&1; then
+    echo -e "${RED}Este script é específico para Void Linux/d77void!${NC}"
+    echo "Use ./install.sh para outras distribuições."
+    exit 1
+fi
+
+echo -e "${GREEN}"
+echo "  _    _      _ _       __        __         _   _"
+echo " | |  | |    | | |       \ \      / /        | | | |"
+echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
+echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"  
+echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
+echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
+echo ""
+echo -e "      Linux AI Assistant - Instalação para Void Linux/d77void${NC}"
+echo ""
+
+# Função para verificar se um pacote está instalado
+package_installed() {
+    xbps-query -x "$1" >/dev/null 2>&1
 }
 
-# Função para instalar pacotes
-install_packages() {
-    local packages=("$@")
+# Função para instalar pacotes no Void
+install_void_packages() {
+    echo -e "${YELLOW}Verificar dependências do sistema para Void Linux...${NC}"
     
-    echo -e "${YELLOW}Verificar dependências do sistema...${NC}"
-    
-    # Detectar distribuidor
-    if command_exists apt-get; then
-        PKG_MANAGER="apt-get"
-        UPDATE_CMD="sudo apt-get update"
-        INSTALL_CMD="sudo apt-get install -y"
-    elif command_exists dnf; then
-        PKG_MANAGER="dnf"
-        UPDATE_CMD="sudo dnf makecache"
-        INSTALL_CMD="sudo dnf install -y"
-    elif command_exists yum; then
-        PKG_MANAGER="yum"
-        UPDATE_CMD="sudo yum makecache"
-        INSTALL_CMD="sudo yum install -y"
-    elif command_exists pacman; then
-        PKG_MANAGER="pacman"
-        UPDATE_CMD="sudo pacman -Sy"
-        INSTALL_CMD="sudo pacman -S --noconfirm"
-    elif command_exists zypper; then
-        PKG_MANAGER="zypper"
-        UPDATE_CMD="sudo zypper refresh"
-        INSTALL_CMD="sudo zypper install -y"
-    elif command_exists xbps-install; then
-        PKG_MANAGER="xbps"
-        UPDATE_CMD="sudo xbps-install -Su"
-        INSTALL_CMD="sudo xbps-install -Sy"
-    else
-        echo -e "${RED}Não foi possível detectar o gestor de pacotes!${NC}"
-        exit 1
-    fi
-    
-    echo -e "${BLUE}Detetado gestor de pacotes: $PKG_MANAGER${NC}"
-    
-    # Pacotes necessários (nomes variam conforme a distribuição)
-    if [ "$PKG_MANAGER" = "xbps" ]; then
-        # Void Linux (e d77void)
-        REQUIRED_PACKAGES=(
-            "python3"
-            "python3-pip"
-            "python3-venv"
-            "git"
-            "scrot"
-            "tesseract-ocr"
-            "tesseract-ocr-por"
-            "tesseract-ocr-eng"
-            "libgtk-3"
-            "libgtk-3-devel"
-            "py3-gobject"
-            "py3-cairo"
-            "gobject-introspection"
-            "libappindicator-gtk3"
-        )
-    else
-        # Debian/Ubuntu, Fedora, Arch, openSUSE
-        REQUIRED_PACKAGES=(
-            "python3"
-            "python3-pip"
-            "python3-venv"
-            "git"
-            "scrot"
-            "tesseract-ocr"
-            "tesseract-ocr-por"
-            "tesseract-ocr-eng"
-            "libgtk-3-0"
-            "libgtk-3-dev"
-            "python3-gi"
-            "python3-gi-cairo"
-            "gir1.2-gtk-3.0"
-            "gir1.2-appindicator3-0.1"
-        )
-    fi
+    # Pacotes necessários para Void Linux
+    REQUIRED_PACKAGES=(
+        "python3"
+        "python3-pip"
+        "python3-venv"
+        "git"
+        "scrot"
+        "tesseract-ocr"
+        "tesseract-ocr-por"
+        "tesseract-ocr-eng"
+        "libgtk-3"
+        "libgtk-3-devel"
+        "py3-gobject"
+        "py3-cairo"
+        "gobject-introspection"
+        "libappindicator-gtk3"
+        "ImageMagick"  # Para criar ícone se necessário
+    )
     
     # Verificar e instalar pacotes em falta
     MISSING_PACKAGES=()
     for pkg in "${REQUIRED_PACKAGES[@]}"; do
-        if ! command_exists "$pkg" && ! dpkg -l "$pkg" >/dev/null 2>&1 && ! rpm -q "$pkg" >/dev/null 2>&1 && ! xbps-query -x "$pkg" >/dev/null 2>&1; then
+        if ! package_installed "$pkg"; then
             MISSING_PACKAGES+=("$pkg")
         fi
     done
@@ -124,18 +88,14 @@ install_packages() {
         echo -e "${YELLOW}Pacotes em falta: ${MISSING_PACKAGES[*]}${NC}"
         echo -e "${BLUE}A instalar pacotes...${NC}"
         
-        # Atualizar cache
-        eval "$UPDATE_CMD"
+        # Atualizar repositórios
+        sudo xbps-install -Su
         
-        # Instalar pacotes (para xbps, precisamos instalar um por um)
-        if [ "$PKG_MANAGER" = "xbps" ]; then
-            for pkg in "${MISSING_PACKAGES[@]}"; do
-                echo -e "${BLUE}A instalar: $pkg${NC}"
-                sudo xbps-install -Sy "$pkg"
-            done
-        else
-            eval "$INSTALL_CMD ${MISSING_PACKAGES[*]}"
-        fi
+        # Instalar pacotes um por um (xbps não tem suporte nativo para instalar múltiplos)
+        for pkg in "${MISSING_PACKAGES[@]}"; do
+            echo -e "${BLUE}  A instalar: $pkg${NC}"
+            sudo xbps-install -Sy "$pkg"
+        done
         
         echo -e "${GREEN}Pacotes instalados com sucesso!${NC}"
     else
@@ -193,7 +153,9 @@ EOL
     chmod +x "$DESKTOP_FILE"
     
     # Atualizar base de dados de aplicações
-    update-desktop-database "$DESKTOP_DIR"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$DESKTOP_DIR"
+    fi
     
     echo -e "${GREEN}Atalho criado em $DESKTOP_FILE${NC}"
 }
@@ -234,15 +196,26 @@ create_icon() {
     # Criar um ícone simples (se não existir)
     if [ ! -f "$ICON_DIR/icon.png" ]; then
         # Usar um ícone padrão do sistema
-        if command_exists convert; then
+        if command -v convert >/dev/null 2>&1; then
             # Criar ícone com ImageMagick
             convert -size 64x64 xc:black -fill white -draw "circle 32,32 32,16" "$ICON_DIR/icon.png"
         else
-            # Copiar ícone padrão
-            if [ -f "/usr/share/icons/hicolor/64x64/apps/system-run.png" ]; then
-                cp "/usr/share/icons/hicolor/64x64/apps/system-run.png" "$ICON_DIR/icon.png"
-            else
-                # Criar ficheiro vazio como placeholder
+            # Tentar copiar ícone padrão do Void
+            VOID_ICONS=(
+                "/usr/share/icons/hicolor/64x64/apps/system-run.png"
+                "/usr/share/pixmaps/system-run.png"
+                "/usr/local/share/icons/hicolor/64x64/apps/system-run.png"
+            )
+            
+            for icon in "${VOID_ICONS[@]}"; do
+                if [ -f "$icon" ]; then
+                    cp "$icon" "$ICON_DIR/icon.png"
+                    break
+                fi
+            done
+            
+            # Se não encontrou nenhum, criar placeholder
+            if [ ! -f "$ICON_DIR/icon.png" ]; then
                 touch "$ICON_DIR/icon.png"
             fi
         fi
@@ -274,6 +247,34 @@ create_config() {
     fi
 }
 
+# Função para criar serviço runit (opcional para Void Linux)
+create_runit_service() {
+    echo -e "${YELLOW}A criar serviço runit (opcional)...${NC}"
+    
+    # Diretório para serviços de utilizador
+    RUNIT_DIR="$HOME/.local/service"
+    mkdir -p "$RUNIT_DIR"
+    
+    # Criar ficheiro run
+    cat > "$RUNIT_DIR/linux-ai-assistant/run" <<EOL
+#!/bin/sh
+exec $PROJECT_DIR/run.sh
+EOL
+    
+    chmod +x "$RUNIT_DIR/linux-ai-assistant/run"
+    
+    # Criar link simbólico para /etc/sv (requer sudo)
+    echo -e "${BLUE}Para ativar o serviço runit, execute:${NC}"
+    echo "  sudo ln -s $RUNIT_DIR/linux-ai-assistant /etc/sv/linux-ai-assistant"
+    echo "  sudo ln -s /etc/sv/linux-ai-assistant /var/service/"
+    echo ""
+    echo -e "${BLUE}Para iniciar o serviço:${NC}"
+    echo "  sv up linux-ai-assistant"
+    echo ""
+    echo -e "${BLUE}Para parar o serviço:${NC}"
+    echo "  sv down linux-ai-assistant"
+}
+
 # Função para mostrar instruções finais
 show_final_instructions() {
     echo ""
@@ -295,28 +296,19 @@ show_final_instructions() {
     echo -e "${BLUE}Para desinstalar:${NC}"
     echo "  Execute: ./scripts/uninstall.sh"
     echo ""
-    echo -e "${YELLOW}Notas:${NC}"
+    echo -e "${YELLOW}Notas para Void Linux/d77void:${NC}"
     echo "  - O assistente será executado com privilégios normais."
     echo "  - Para funcionalidades que requerem sudo, será pedido password."
     echo "  - O modo especialista permite editar ficheiros de configuração."
+    echo "  - Opcionalmente, pode configurar um serviço runit para iniciar automaticamente."
+    echo "  - O d77void usa runit como init system em vez de systemd."
     echo ""
 }
 
 # Função principal
 main() {
-    echo -e "${GREEN}"
-    echo "  _    _      _ _       __        __         _   _"
-    echo " | |  | |    | | |       \ \      / /        | | | |"
-    echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
-    echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
-    echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
-    echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
-    echo ""
-    echo -e "      Linux AI Assistant - Instalação${NC}"
-    echo ""
-    
     # Instalar dependências do sistema
-    install_packages
+    install_void_packages
     
     # Criar ícone
     create_icon
@@ -332,6 +324,9 @@ main() {
     
     # Criar configuração
     create_config
+    
+    # Criar serviço runit (opcional)
+    create_runit_service
     
     # Mostrar instruções finais
     show_final_instructions

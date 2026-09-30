@@ -4,6 +4,10 @@ Um assistente de IA permanente para Linux com interface flutuante, integração 
 
 ![Linux AI Assistant](assets/screenshot.png)
 
+[![Void Linux](https://img.shields.io/badge/Void%20Linux-Compatible-green)](https://voidlinux.org)
+[![d77void](https://img.shields.io/badge/d77void-Supported-blue)](https://d77void.sourceforge.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ## Funcionalidades
 
 - ✅ **Interface flutuante transparente** - Janela permanente com fundos pretos e transparência configurável
@@ -19,7 +23,7 @@ Um assistente de IA permanente para Linux com interface flutuante, integração 
 ## Requisitos
 
 ### Sistema
-- Linux (testado em Ubuntu, Fedora, Debian, Arch)
+- Linux (testado em Ubuntu, Fedora, Debian, Arch, **Void Linux**, **d77void**)
 - Python 3.8+
 - GTK 3.0+
 
@@ -44,22 +48,25 @@ Ver [requirements.txt](requirements.txt)
 
 ```bash
 # Clonar o repositório
-git clone https://github.com/seu-utilizador/linux-ai-assistant.git
-cd linux-ai-assistant
+git clone https://github.com/1400015/linux_ai.git
+cd linux_ai
 
 # Tornar scripts executáveis
 chmod +x scripts/*.sh
 
-# Executar instalação
+# Executar instalação (para a maioria das distribuições)
 ./scripts/install.sh
+
+# Para Void Linux e d77void específicamente
+./scripts/install_void.sh
 ```
 
 ### Método 2: Instalação Manual
 
 ```bash
 # Clonar o repositório
-git clone https://github.com/seu-utilizador/linux-ai-assistant.git
-cd linux-ai-assistant
+git clone https://github.com/1400015/linux_ai.git
+cd linux_ai
 
 # Criar ambiente virtual
 python3 -m venv venv
@@ -78,6 +85,26 @@ nano ~/.config/linux_ai_assistant/.env
 
 # Executar
 python src/app.py
+```
+
+### Para Void Linux e d77void
+
+```bash
+# Instalar dependências com xbps
+git clone https://github.com/1400015/linux_ai.git
+cd linux_ai
+
+# Instalar dependências do sistema
+sudo xbps-install -Su
+sudo xbps-install -Sy python3 python3-pip python3-venv git scrot tesseract-ocr tesseract-ocr-por tesseract-ocr-eng libgtk-3 libgtk-3-devel py3-gobject py3-cairo gobject-introspection libappindicator-gtk3
+
+# Criar ambiente virtual e instalar
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Executar
+./run.sh
 ```
 
 ## Configuração
@@ -204,6 +231,85 @@ linux_ai_assistant/
 │   └── icon.png            # Ícone da aplicação
 ├── requirements.txt        # Dependências Python
 └── README.md               # Documentação
+```
+
+## Suporte para d77void e Void Linux
+
+O Linux AI Assistant tem suporte completo para **Void Linux** e **d77void**:
+
+### 🎯 Funcionalidades Específicas
+
+- ✅ **Suporte nativo para XBPS** - Gestor de pacotes do Void Linux
+- ✅ **Integração com runit** - Sistema de init do Void (em vez de systemd)
+- ✅ **Script de instalação dedicado** - `install_void.sh` otimizado para Void/d77void
+- ✅ **Pacote XBPS** - Template disponível em `xbps-src/` para criar pacote nativo
+- ✅ **Deteção automática** - Reconhece Void Linux e d77void automaticamente
+
+### 📦 Instalação no d77void
+
+O d77void é uma distribuição baseada em Void Linux com vários Window Managers pré-configurados. O Linux AI Assistant funciona perfeitamente em todas as variantes do d77void:
+
+- **Awesome WM**
+- **BSPWM**
+- **DWM**
+- **Fluxbox**
+- **Hyprland**
+- **i3**
+- **JWM**
+- **LabWC**
+- **LeftWM**
+- **MangoWC**
+- **Niri**
+- **Openbox**
+- **Qtile**
+- **River**
+- **Sway**
+- **Wayfire**
+- **wmd77**
+- **GNOME**
+- **LXQt**
+- **Plasma**
+- **XFCE**
+
+### 🔧 Serviço runit (Opcional)
+
+Para integrar o Linux AI Assistant com o sistema de init **runit** do Void Linux:
+
+```bash
+# Criar diretório de serviço
+mkdir -p ~/.local/service/linux-ai-assistant
+
+# Criar ficheiro run
+cat > ~/.local/service/linux-ai-assistant/run <<EOL
+#!/bin/sh
+exec /caminho/para/linux_ai/run.sh
+EOL
+
+chmod +x ~/.local/service/linux-ai-assistant/run
+
+# Ativar serviço (requer sudo)
+sudo ln -s ~/.local/service/linux-ai-assistant /etc/sv/linux-ai-assistant
+sudo ln -s /etc/sv/linux-ai-assistant /var/service/
+
+# Gerir serviço
+sv up linux-ai-assistant    # Iniciar
+sv down linux-ai-assistant  # Parar
+sv restart linux-ai-assistant  # Reiniciar
+```
+
+### 📦 Criar Pacote XBPS
+
+Para criar um pacote nativo para Void Linux:
+
+```bash
+# Copiar template para srcpkgs
+sudo cp -r xbps-src/linux-ai-assistant /var/db/xbps/srcpkgs/
+
+# Atualizar repositório
+sudo xbps-install -Su
+
+# Instalar pacote
+sudo xbps-install -S linux-ai-assistant
 ```
 
 ## Personalização
