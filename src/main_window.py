@@ -1,15 +1,26 @@
 import gi
 import os
 import sys
+import json
 import time
 import threading
 from pathlib import Path
 
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-gi.require_version('GdkPixbuf', '2.0')
+try:
+    import notify2
+except ImportError:
+    notify2 = None
+
+ gi.require_version('Gtk', '3.0')
+ gi.require_version('Gdk', '3.0')
+ gi.require_version('GdkPixbuf', '2.0')
+ gi.require_version('Notify', '0.7')
 
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
+import logging
+
+# Configurar logger
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(Gtk.Window):
@@ -23,6 +34,7 @@ class MainWindow(Gtk.Window):
         self.ai_client = ai_client
         self.system_utils = system_utils
         
+        # Configurar janela
         self.set_default_size(
             config_manager.get("app.width", 400),
             config_manager.get("app.height", 500)
@@ -45,14 +57,22 @@ class MainWindow(Gtk.Window):
         self.set_keep_above(config_manager.get("app.always_on_top", True))
         self.stick()
         
+        # Tornar janela redimensionável
+        self.set_resizable(True)
+        
         # Configurar estilo
         self._setup_style()
+        
+        # Configurar notificações
+        self._setup_notifications()
         
         # Variáveis de estado
         self.expert_mode = False
         self.conversation_history = []
         self.current_response = ""
         self.streaming = False
+        self.is_loading = False
+        self.cancel_streaming = False
         
         # Criar interface
         self._create_ui()
@@ -60,106 +80,205 @@ class MainWindow(Gtk.Window):
         # Conectar sinais
         self.connect("delete-event", self.on_delete_event)
         self.connect("configure-event", self.on_configure_event)
+        self.connect("size-allocate", self.on_size_allocate)
         
-        # Carregar história de conversa
+        # Atalhos de teclado
+        self._setup_keybindings()
+        
+        # Carregar histórico de conversa
         self._load_conversation_history()
+        
+        logger.info("Janela principal inicializada")
+    
+    def _setup_notifications(self):
+        """Configurar notificações do sistema"""
+        self.notifications_enabled = False
+        try:
+            if notify2 is not None:
+                notify2.init("Linux AI Assistant")
+                self.notifications_enabled = True
+                logger.info("Notificações do sistema ativadas")
+        except Exception as e:
+            logger.warning(f"Não foi possível ativar notificações: {e}")
+    
+    def show_notification(self, title: str, message: str, icon: str = "dialog-information"):
+        """Mostrar notificação do sistema"""
+        if self.notifications_enabled and notify2 is not None:
+            try:
+                n = notify2.Notification(title, message, icon)
+                n.show()
+                logger.debug(f"Notificação mostrada: {title}")
+            except Exception as e:
+                logger.error(f"Erro a mostrar notificação: {e}")
+    
+    def _setup_keybindings(self):
+        """Configurar atalhos de teclado"""
+        accel_group = Gtk.AccelGroup()
+        self.add_accel_group(accel_group)
+        
+        # Ctrl+Enter para enviar
+        key, mod = Gtk.accelerator_parse("<Control>Return")
+        self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        
+        # Ctrl+Shift+Enter para nova linha
+        key, mod = Gtk.accelerator_parse("<Control><Shift>Return")
+        self.input_entry.add_accelerator("insert-at-cursor", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        
+        # Escape para limpar input
+        key, mod = Gtk.accelerator_parse("Escape")
+        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
+                          Gtk.AccelFlags.VISIBLE, self.on_clear_input)
+        
+        # Ctrl+E para alternar modo especialista
+        key, mod = Gtk.accelerator_parse("<Control>e")
+        self.expert_btn.add_accelerator("clicked", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        
+        # Ctrl+Q para fechar
+        key, mod = Gtk.accelerator_parse("<Control>q")
+        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
+                          Gtk.AccelFlags.VISIBLE, lambda *args: self.on_close_clicked())
+        
+        # Ctrl+S para capturar ecrã
+        key, mod = Gtk.accelerator_parse("<Control>s")
+        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
+                          Gtk.AccelFlags.VISIBLE, lambda *args: self.on_capture_screen_clicked(None))
+        
+        logger.info("Atalhos de teclado configurados")
+    
+    def on_clear_input(self, *args):
+        """Limpar input ao pressionar Escape"""
+        self.input_entry.set_text("")
+        logger.debug("Input limpo")
     
     def _setup_style(self):
         """Configurar estilo CSS da janela"""
         style_provider = Gtk.CssProvider()
         
-        css = """
-        #main-box {
-            background-color: #1e1e1e;
-            color: #e0e0e0;
+        # Obter cores do tema
+        colors = self.config.get_theme_colors()
+        
+        css = f"""
+        #main-box {{
+            background-color: {colors['background']};
+            color: {colors['text']};
             border-radius: 10px;
             padding: 10px;
-        }
+            margin: 5px;
+        }}
         
-        #header {
+        #header {{
             background-color: #2d2d2d;
             border-radius: 8px 8px 0 0;
             padding: 8px;
             margin-bottom: 10px;
-        }
+        }}
         
-        #chat-area {
+        #chat-area {{
             background-color: #252525;
             border-radius: 5px;
             padding: 10px;
             margin-bottom: 10px;
-        }
+            min-height: 300px;
+        }}
         
-        #input-area {
+        #input-area {{
             background-color: #2d2d2d;
             border-radius: 5px;
             padding: 10px;
-        }
+        }}
         
-        textview, textview.user-message {
+        textview {{
+            font-family: {self.config.get('ui.font_family', 'Monospace')};
+            font-size: {self.config.get('ui.font_size', 12)}pt;
+            background-color: #252525;
+            color: {colors['text']};
+            border: none;
+            padding: 5px;
+        }}
+        
+        textview.user-message {{
             color: #e0e0e0;
-            font-family: Monospace;
-            font-size: 12pt;
-        }
+            font-family: {self.config.get('ui.font_family', 'Monospace')};
+            font-size: {self.config.get('ui.font_size', 12)}pt;
+        }}
         
-        textview.ai-message {
+        textview.ai-message {{
             color: #a0d0a0;
-            font-family: Monospace;
-            font-size: 12pt;
-        }
+            font-family: {self.config.get('ui.font_family', 'Monospace')};
+            font-size: {self.config.get('ui.font_size', 12)}pt;
+        }}
         
-        textview.system-message {
+        textview.system-message {{
             color: #808080;
-            font-family: Monospace;
-            font-size: 11pt;
-        }
+            font-family: {self.config.get('ui.font_family', 'Monospace')};
+            font-size: {self.config.get('ui.font_size', 11)}pt;
+        }}
         
-        button {
-            background-color: #4CAF50;
+        button {{
+            background-color: {colors['accent']};
             color: white;
             border-radius: 5px;
             padding: 5px 10px;
-            font-family: Monospace;
+            font-family: {self.config.get('ui.font_family', 'Monospace')};
             font-size: 10pt;
-        }
+            border: none;
+            min-width: 40px;
+        }}
         
-        button:hover {
+        button:hover {{
             background-color: #45a049;
-        }
+        }}
         
-        button:active {
+        button:active {{
             background-color: #3d8b40;
-        }
+        }}
         
-        button.expert {
+        button.expert {{
             background-color: #2196F3;
-        }
+        }}
         
-        button.expert:hover {
+        button.expert:hover {{
             background-color: #0b7dda;
-        }
+        }}
         
-        button.danger {
+        button.danger {{
             background-color: #f44336;
-        }
+        }}
         
-        button.danger:hover {
+        button.danger:hover {{
             background-color: #da190b;
-        }
+        }}
         
-        entry {
+        entry {{
             background-color: #3d3d3d;
-            color: #e0e0e0;
+            color: {colors['text']};
             border-radius: 5px;
             padding: 5px;
-            font-family: Monospace;
-            font-size: 12pt;
-        }
+            font-family: {self.config.get('ui.font_family', 'Monospace')};
+            font-size: {self.config.get('ui.font_size', 12)}pt;
+            border: none;
+        }}
         
-        scrolledwindow {
+        entry:focus {{
+            outline: none;
+            border: 1px solid {colors['accent']};
+        }}
+        
+        scrolledwindow {{
             background-color: #252525;
             border-radius: 5px;
-        }
+            border: none;
+        }}
+        
+        .loading {{
+            opacity: 0.7;
+            font-style: italic;
+        }}
+        
+        .expert-mode {{
+            border-left: 3px solid #2196F3;
+            padding-left: 10px;
+        }}
         """
         
         style_provider.load_from_data(css.encode())
@@ -168,6 +287,7 @@ class MainWindow(Gtk.Window):
             style_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        logger.debug("Estilo CSS aplicado")
     
     def _create_ui(self):
         """Criar interface da janela"""
@@ -179,6 +299,23 @@ class MainWindow(Gtk.Window):
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         header.set_property("name", "header")
         main_box.pack_start(header, False, False, 0)
+        
+        # Botão de menu
+        menu_btn = Gtk.Button.new_from_icon_name("open-menu", Gtk.IconSize.MENU)
+        menu_btn.connect("clicked", self.on_menu_clicked)
+        menu_btn.set_tooltip_text("Menu")
+        header.pack_start(menu_btn, False, False, 0)
+        
+        # Título
+        title_label = Gtk.Label(label="Linux AI Assistant")
+        title_label.set_halign(Gtk.Align.START)
+        title_label.set_valign(Gtk.Align.CENTER)
+        header.pack_start(title_label, True, True, 0)
+        
+        # Ícone de estado
+        self.status_icon = Gtk.Image.new_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text("Pronto")
+        header.pack_end(self.status_icon, False, False, 0)
         
         # Botão de fechar
         close_btn = Gtk.Button.new_from_icon_name("window-close", Gtk.IconSize.MENU)
@@ -192,12 +329,6 @@ class MainWindow(Gtk.Window):
         minimize_btn.set_tooltip_text("Minimizar")
         header.pack_end(minimize_btn, False, False, 0)
         
-        # Título
-        title_label = Gtk.Label(label="Linux AI Assistant")
-        title_label.set_halign(Gtk.Align.START)
-        title_label.set_valign(Gtk.Align.CENTER)
-        header.pack_start(title_label, True, True, 0)
-        
         # Área de chat
         chat_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         chat_area.set_property("name", "chat-area")
@@ -206,6 +337,7 @@ class MainWindow(Gtk.Window):
         # ScrolledWindow para o chat
         self.chat_scrolled = Gtk.ScrolledWindow()
         self.chat_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.chat_scrolled.set_shadow_type(Gtk.ShadowType.NONE)
         chat_area.pack_start(self.chat_scrolled, True, True, 0)
         
         # TextView para o chat
@@ -214,19 +346,27 @@ class MainWindow(Gtk.Window):
         self.chat_textview.set_cursor_visible(False)
         self.chat_textview.set_wrap_mode(Gtk.WrapMode.WORD)
         self.chat_textview.set_justification(Gtk.Justification.LEFT)
+        self.chat_textview.set_left_margin(10)
+        self.chat_textview.set_right_margin(10)
+        self.chat_textview.set_top_margin(10)
+        self.chat_textview.set_bottom_margin(10)
         
         # Configurar tags para formatação
         text_buffer = self.chat_textview.get_buffer()
         
         user_tag = text_buffer.create_tag("user-message", 
                                            foreground="#e0e0e0",
-                                           font="Monospace 12")
+                                           font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}")
         ai_tag = text_buffer.create_tag("ai-message",
                                         foreground="#a0d0a0",
-                                        font="Monospace 12")
+                                        font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}")
         system_tag = text_buffer.create_tag("system-message",
                                            foreground="#808080",
-                                           font="Monospace 11")
+                                           font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 11)}")
+        loading_tag = text_buffer.create_tag("loading",
+                                           foreground="#808080",
+                                           font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}",
+                                           style=Pango.Style.ITALIC)
         
         self.chat_textview.set_buffer(text_buffer)
         self.chat_scrolled.add(self.chat_textview)
@@ -238,41 +378,350 @@ class MainWindow(Gtk.Window):
         
         # Entry para input
         self.input_entry = Gtk.Entry()
-        self.input_entry.set_placeholder_text("Escreva a sua mensagem...")
+        self.input_entry.set_placeholder_text("Escreva a sua mensagem... (Ctrl+Enter para enviar)")
         self.input_entry.connect("activate", self.on_input_activate)
+        self.input_entry.set_hexpand(True)
         input_area.pack_start(self.input_entry, True, True, 0)
         
         # Botões de ação
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         input_area.pack_end(button_box, False, False, 0)
         
+        # Botão de cancelar
+        self.cancel_btn = Gtk.Button.new_from_icon_name("process-stop", Gtk.IconSize.MENU)
+        self.cancel_btn.connect("clicked", self.on_cancel_streaming)
+        self.cancel_btn.set_tooltip_text("Cancelar")
+        self.cancel_btn.set_sensitive(False)
+        button_box.pack_start(self.cancel_btn, False, False, 0)
+        
         # Botão de captura de ecrã
-        capture_btn = Gtk.Button(label="📷")
+        capture_btn = Gtk.Button.new_from_icon_name("camera-photo", Gtk.IconSize.MENU)
         capture_btn.connect("clicked", self.on_capture_screen_clicked)
-        capture_btn.set_tooltip_text("Capturar ecrã")
+        capture_btn.set_tooltip_text("Capturar ecrã (Ctrl+S)")
         button_box.pack_start(capture_btn, False, False, 0)
         
         # Botão de modo especialista
-        self.expert_btn = Gtk.Button(label="🧠")
+        self.expert_btn = Gtk.Button.new_from_icon_name("system-run", Gtk.IconSize.MENU)
         self.expert_btn.connect("clicked", self.on_expert_mode_toggled)
-        self.expert_btn.set_tooltip_text("Modo Especialista")
-        self.expert_btn.get_style_context().add_class("expert")
+        self.expert_btn.set_tooltip_text("Modo Especialista (Ctrl+E)")
         button_box.pack_start(self.expert_btn, False, False, 0)
         
         # Botão de enviar
-        send_btn = Gtk.Button(label="➤")
+        send_btn = Gtk.Button.new_from_icon_name("go-next", Gtk.IconSize.MENU)
         send_btn.connect("clicked", lambda btn: self.on_send_clicked())
-        send_btn.set_tooltip_text("Enviar")
+        send_btn.set_tooltip_text("Enviar (Ctrl+Enter)")
         button_box.pack_start(send_btn, False, False, 0)
         
         # Adicionar mensagem de boas-vindas
-        self._add_system_message("Bem-vindo ao Linux AI Assistant!\nEscreva uma mensagem ou clique em 📷 para capturar o ecrã.")
+        self._add_system_message("Bem-vindo ao Linux AI Assistant!\nEscreva uma mensagem ou pressione Ctrl+S para capturar o ecrã.")
         
         # Scroll automático para baixo
         self._scroll_to_bottom()
+        
+        logger.info("UI criada com sucesso")
+    
+    def on_menu_clicked(self, button):
+        """Mostrar menu de opções"""
+        menu = Gtk.Menu()
+        
+        # Opção de configurações
+        config_item = Gtk.MenuItem(label="Configurações")
+        config_item.connect("activate", self.on_config_clicked)
+        menu.append(config_item)
+        
+        # Opção de histórico
+        history_item = Gtk.MenuItem(label="Histórico de Conversas")
+        history_item.connect("activate", self.on_history_clicked)
+        menu.append(history_item)
+        
+        # Opção de estatísticas
+        stats_item = Gtk.MenuItem(label="Estatísticas")
+        stats_item.connect("activate", self.on_stats_clicked)
+        menu.append(stats_item)
+        
+        # Separador
+        menu.append(Gtk.SeparatorMenuItem())
+        
+        # Opção de sair
+        quit_item = Gtk.MenuItem(label="Sair")
+        quit_item.connect("activate", lambda *args: self.on_close_clicked())
+        menu.append(quit_item)
+        
+        menu.show_all()
+        menu.popup_at_pointer(None)  # Mostrar no cursor
+    
+    def on_config_clicked(self, item):
+        """Abrir janela de configurações"""
+        self._show_config_dialog()
+    
+    def on_history_clicked(self, item):
+        """Mostrar histórico de conversas"""
+        self._show_history_dialog()
+    
+    def on_stats_clicked(self, item):
+        """Mostrar estatísticas de uso"""
+        self._show_stats_dialog()
+    
+    def _show_stats_dialog(self):
+        """Mostrar diálogo de estatísticas"""
+        dialog = Gtk.Dialog(
+            title="Estatísticas - Linux AI Assistant",
+            parent=self,
+            flags=0,
+            buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        )
+        dialog.set_default_size(400, 300)
+        
+        content = dialog.get_content_area()
+        
+        # Obter estatísticas
+        token_usage = self.ai_client.get_token_usage()
+        
+        # Criar box vertical
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_border_width(10)
+        content.add(box)
+        
+        # Título
+        title = Gtk.Label(label="<b>Estatísticas de Uso</b>")
+        title.set_use_markup(True)
+        box.pack_start(title, False, False, 0)
+        
+        # Tokens por provedor
+        for provider, usage in token_usage.items():
+            provider_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+            
+            provider_label = Gtk.Label(label=f"{provider}:")
+            provider_label.set_halign(Gtk.Align.START)
+            provider_box.pack_start(provider_label, False, False, 0)
+            
+            tokens_label = Gtk.Label(label=f"Input: {usage.get('input', 0)}, Output: {usage.get('output', 0)}, Total: {usage.get('total', 0)}")
+            tokens_label.set_halign(Gtk.Align.END)
+            provider_box.pack_end(tokens_label, True, True, 0)
+            
+            box.pack_start(provider_box, False, False, 0)
+        
+        # Botão para resetar estatísticas
+        reset_btn = Gtk.Button(label="Resetar Estatísticas")
+        reset_btn.connect("clicked", lambda btn: self.ai_client.reset_token_usage())
+        reset_btn.set_halign(Gtk.Align.CENTER)
+        box.pack_start(reset_btn, False, False, 0)
+        
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+    
+    def _show_history_dialog(self):
+        """Mostrar diálogo de histórico"""
+        dialog = Gtk.Dialog(
+            title="Histórico de Conversas - Linux AI Assistant",
+            parent=self,
+            flags=0,
+            buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        )
+        dialog.set_default_size(500, 400)
+        
+        content = dialog.get_content_area()
+        
+        # Criar scrolled window
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        content.add(scrolled)
+        
+        # Criar text view
+        textview = Gtk.TextView()
+        textview.set_editable(False)
+        textview.set_cursor_visible(False)
+        textview.set_wrap_mode(Gtk.WrapMode.WORD)
+        scrolled.add(textview)
+        
+        # Carregar histórico
+        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        if history_file.exists():
+            try:
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    history = json.load(f)
+                
+                buffer = textview.get_buffer()
+                for msg in history:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    timestamp = msg.get("timestamp", 0)
+                    
+                    timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
+                    
+                    buffer.insert(buffer.get_end_iter(), f"[{timestamp_str}] [{role}]\n{content}\n\n")
+            except Exception as e:
+                logger.error(f"Erro a carregar histórico: {e}")
+                buffer = textview.get_buffer()
+                buffer.insert(buffer.get_end_iter(), f"Erro a carregar histórico: {e}")
+        else:
+            buffer = textview.get_buffer()
+            buffer.insert(buffer.get_end_iter(), "Nenhum histórico disponível.")
+        
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+    
+    def _show_config_dialog(self):
+        """Mostrar diálogo de configurações"""
+        dialog = Gtk.Dialog(
+            title="Configurações - Linux AI Assistant",
+            parent=self,
+            flags=0,
+            buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        )
+        
+        dialog.set_default_size(500, 400)
+        
+        # Criar conteúdo do diálogo
+        content = dialog.get_content_area()
+        
+        # Notebook para separadores
+        notebook = Gtk.Notebook()
+        content.add(notebook)
+        
+        # Separador API
+        api_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        api_box.set_border_width(10)
+        
+        api_label = Gtk.Label(label="<b>Configuração de API</b>")
+        api_label.set_use_markup(True)
+        api_box.pack_start(api_label, False, False, 0)
+        
+        # Provedor
+        provider_label = Gtk.Label(label="Provedor de IA:")
+        api_box.pack_start(provider_label, False, False, 0)
+        
+        provider_combo = Gtk.ComboBoxText()
+        for provider_name in self.config.get("api.providers", {}).keys():
+            provider_combo.append(provider_name, provider_name)
+        provider_combo.set_active_id(self.config.get("api.default_provider", "openrouter"))
+        api_box.pack_start(provider_combo, False, False, 0)
+        
+        # API Key
+        api_key_label = Gtk.Label(label="API Key:")
+        api_box.pack_start(api_key_label, False, False, 0)
+        
+        api_key_entry = Gtk.Entry()
+        api_key_entry.set_visibility(False)
+        api_key_entry.set_invisible_char('*')
+        api_key_entry.set_placeholder_text("Insira a sua API Key")
+        
+        # Carregar API key atual
+        current_provider = self.config.get("api.default_provider", "openrouter")
+        api_key_entry.set_text(self.config.get_api_key(current_provider) or "")
+        api_box.pack_start(api_key_entry, False, False, 0)
+        
+        notebook.append_page(api_box, Gtk.Label(label="API"))
+        
+        # Separador Aparência
+        ui_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        ui_box.set_border_width(10)
+        
+        ui_label = Gtk.Label(label="<b>Configuração de UI</b>")
+        ui_label.set_use_markup(True)
+        ui_box.pack_start(ui_label, False, False, 0)
+        
+        # Opacidade
+        opacity_label = Gtk.Label(label="Opacidade da janela:")
+        ui_box.pack_start(opacity_label, False, False, 0)
+        
+        opacity_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL,
+            0.1, 1.0, 0.1
+        )
+        opacity_scale.set_value(self.config.get("app.opacity", 0.9))
+        ui_box.pack_start(opacity_scale, False, False, 0)
+        
+        # Sempre visível
+        always_on_top_check = Gtk.CheckButton(label="Sempre visível")
+        always_on_top_check.set_active(self.config.get("app.always_on_top", True))
+        ui_box.pack_start(always_on_top_check, False, False, 0)
+        
+        # Tema
+        theme_label = Gtk.Label(label="Tema:")
+        ui_box.pack_start(theme_label, False, False, 0)
+        
+        theme_combo = Gtk.ComboBoxText()
+        theme_combo.append("dark", "Escuro")
+        theme_combo.append("light", "Claro")
+        theme_combo.set_active_id(self.config.get("ui.theme", "dark"))
+        ui_box.pack_start(theme_combo, False, False, 0)
+        
+        notebook.append_page(ui_box, Gtk.Label(label="Aparência"))
+        
+        # Separador Funcionalidades
+        features_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        features_box.set_border_width(10)
+        
+        features_label = Gtk.Label(label="<b>Funcionalidades</b>")
+        features_label.set_use_markup(True)
+        features_box.pack_start(features_label, False, False, 0)
+        
+        # Captura de ecrã
+        screen_capture_check = Gtk.CheckButton(label="Captura de ecrã")
+        screen_capture_check.set_active(self.config.get("features.screen_capture", True))
+        features_box.pack_start(screen_capture_check, False, False, 0)
+        
+        # OCR
+        ocr_check = Gtk.CheckButton(label="OCR (Reconhecimento de texto)")
+        ocr_check.set_active(self.config.get("features.ocr_enabled", True))
+        features_box.pack_start(ocr_check, False, False, 0)
+        
+        # Modo especialista
+        expert_check = Gtk.CheckButton(label="Modo Especialista")
+        expert_check.set_active(self.config.get("features.expert_mode", True))
+        features_box.pack_start(expert_check, False, False, 0)
+        
+        notebook.append_page(features_box, Gtk.Label(label="Funcionalidades"))
+        
+        # Mostrar diálogo
+        dialog.show_all()
+        
+        # Guardar configurações ao fechar
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            # Guardar provedor
+            new_provider = provider_combo.get_active_id()
+            self.config.set("api.default_provider", new_provider)
+            
+            # Guardar API key
+            api_key = api_key_entry.get_text()
+            self.config.set_api_key(new_provider, api_key)
+            
+            # Guardar opacidade
+            opacity = opacity_scale.get_value()
+            self.config.set("app.opacity", opacity)
+            self.set_opacity(opacity)
+            
+            # Guardar sempre visível
+            always_on_top = always_on_top_check.get_active()
+            self.config.set("app.always_on_top", always_on_top)
+            self.set_keep_above(always_on_top)
+            
+            # Guardar tema
+            theme = theme_combo.get_active_id()
+            self.config.set("ui.theme", theme)
+            
+            # Guardar funcionalidades
+            self.config.set("features.screen_capture", screen_capture_check.get_active())
+            self.config.set("features.ocr_enabled", ocr_check.get_active())
+            self.config.set("features.expert_mode", expert_check.get_active())
+            
+            # Guardar configurações
+            self.config.save()
+            
+            # Mostrar notificação
+            self.show_notification("Linux AI Assistant", "Configurações guardadas com sucesso")
+        
+        dialog.destroy()
     
     def _add_user_message(self, message: str):
         """Adicionar mensagem do utilizador ao chat"""
+        if not message:
+            return
+            
         buffer = self.chat_textview.get_buffer()
         end_iter = buffer.get_end_iter()
         
@@ -283,10 +732,17 @@ class MainWindow(Gtk.Window):
         end = buffer.get_end_iter()
         buffer.apply_tag_by_name("user-message", start, end)
         
+        # Guardar em histórico
+        self._save_message_to_history("user", message)
+        
         self._scroll_to_bottom()
+        logger.debug(f"Mensagem do utilizador adicionada: {message[:50]}...")
     
     def _add_ai_message(self, message: str, streaming: bool = False):
         """Adicionar mensagem da IA ao chat"""
+        if self.cancel_streaming:
+            return
+            
         buffer = self.chat_textview.get_buffer()
         
         if streaming and self.streaming:
@@ -304,7 +760,13 @@ class MainWindow(Gtk.Window):
             end = buffer.get_end_iter()
             buffer.apply_tag_by_name("ai-message", start, end)
             
+            # Guardar em histórico (apenas mensagem completa)
+            if not streaming:
+                self._save_message_to_history("assistant", message)
+            
             self._scroll_to_bottom()
+        
+        logger.debug(f"Mensagem da IA adicionada: {message[:50]}...")
     
     def _add_system_message(self, message: str):
         """Adicionar mensagem do sistema ao chat"""
@@ -319,21 +781,130 @@ class MainWindow(Gtk.Window):
         buffer.apply_tag_by_name("system-message", start, end)
         
         self._scroll_to_bottom()
+        logger.info(f"Mensagem do sistema: {message}")
+    
+    def _add_loading_message(self, message: str = "A pensar..."):
+        """Adicionar mensagem de loading"""
+        buffer = self.chat_textview.get_buffer()
+        end_iter = buffer.get_end_iter()
+        
+        buffer.insert(end_iter, f"\n[IA]\n{message}")
+        
+        # Aplicar tag de loading
+        start = buffer.get_iter_at_offset(buffer.get_char_count() - len(message) - 6)
+        end = buffer.get_end_iter()
+        buffer.apply_tag_by_name("loading", start, end)
+        
+        self._scroll_to_bottom()
+    
+    def _remove_loading_message(self):
+        """Remover mensagem de loading"""
+        buffer = self.chat_textview.get_buffer()
+        start = buffer.get_end_iter()
+        
+        # Procurar pela última mensagem de loading
+        text = buffer.get_text(buffer.get_start_iter(), start)
+        lines = text.split('\n')
+        
+        # Remover as últimas linhas que começam com [IA]
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].startswith('[IA]'):
+                # Remover esta linha e a seguinte (conteúdo)
+                line_start = buffer.get_iter_at_line(i)
+                buffer.delete(line_start, start)
+                break
     
     def _scroll_to_bottom(self):
         """Scroll automático para o fundo do chat"""
+        GLib.idle_add(self._do_scroll_to_bottom)
+    
+    def _do_scroll_to_bottom(self):
+        """Executa o scroll para o fundo"""
         adjustment = self.chat_scrolled.get_vadjustment()
         adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        return False
     
     def _load_conversation_history(self):
-        """Carregar história de conversa"""
-        # Por implementar: carregar de ficheiro
-        pass
+        """Carregar histórico de conversa"""
+        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        try:
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    self.conversation_history = json.load(f)
+                logger.info(f"Histórico carregado com {len(self.conversation_history)} mensagens")
+        except Exception as e:
+            logger.error(f"Erro a carregar histórico: {e}")
+            self.conversation_history = []
     
-    def _save_conversation_history(self):
-        """Guardar história de conversa"""
-        # Por implementar: guardar em ficheiro
-        pass
+    def _save_message_to_history(self, role: str, content: str):
+        """Guardar mensagem no histórico persistente"""
+        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        try:
+            history = []
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    history = json.load(f)
+            
+            history.append({
+                "timestamp": time.time(),
+                "role": role,
+                "content": content
+            })
+            
+            # Manter último 1000 mensagens
+            history = history[-1000:]
+            
+            with open(history_file, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+            
+            logger.debug(f"Mensagem guardada no histórico: {role}")
+        except Exception as e:
+            logger.error(f"Erro a guardar histórico: {e}")
+    
+    def _get_context_message(self) -> Optional[Dict[str, str]]:
+        """Obter mensagem de contexto com base no modo"""
+        if self.expert_mode:
+            return {
+                "role": "system",
+                "content": """Eres um especialista em sistemas Linux com vastos conhecimentos sobre:
+- Configuração de sistemas e serviços
+- Gestão de pacotes (apt, dnf, pacman, xbps, etc.)
+- Configuração de rede e firewall
+- Scripting em Bash e Python
+- Resolução de problemas comuns
+- Otimização de performance
+- Segurança do sistema
+
+Ajudas o utilizador a resolver problemas, explicar conceitos e fazer alterações a ficheiros de configuração.
+Sê preciso e fornece comandos específicos que o utilizador pode executar.
+Se for necessário editar ficheiros de configuração, pede autorização explícita antes de o fazer.
+Responde em Português de Portugal.
+
+Informação do sistema:
+""" + self._get_system_info_for_context()
+            }
+        else:
+            return {
+                "role": "system",
+                "content": """Eres um assistente de IA útil que responde a perguntas sobre o sistema Linux e assuntos gerais.
+Podes ajudar com dúvidas, explicações e sugestões.
+Responde em Português de Portugal de forma clara e concisa."""
+            }
+    
+    def _get_system_info_for_context(self) -> str:
+        """Obter informação do sistema para contexto"""
+        try:
+            info = self.system_utils.get_system_info()
+            return f"""
+Sistema: {info.get('distro', 'Unknown')}
+Kernel: {info.get('release', 'Unknown')}
+Arquitetura: {info.get('machine', 'Unknown')}
+Memória: {info.get('memory_total', 'N/A')} usados de {info.get('memory_total', 'N/A')}
+CPU: {info.get('cpu_cores', 'N/A')} núcleos
+"""
+        except Exception as e:
+            logger.warning(f"Erro a obter info do sistema para contexto: {e}")
+            return ""
     
     def on_input_activate(self, entry):
         """Handler para Enter no input"""
@@ -341,6 +912,10 @@ class MainWindow(Gtk.Window):
     
     def on_send_clicked(self):
         """Handler para clique no botão enviar"""
+        if self.is_loading:
+            logger.warning("Já está a processar uma mensagem")
+            return
+        
         text = self.input_entry.get_text().strip()
         if not text:
             return
@@ -353,12 +928,20 @@ class MainWindow(Gtk.Window):
         # Adicionar a mensagem à história
         self.conversation_history.append({"role": "user", "content": text})
         
+        # Atualizar estado
+        self.is_loading = True
+        self.streaming = True
+        self.cancel_streaming = False
+        self.cancel_btn.set_sensitive(True)
+        self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text("Processando...")
+        
         # Processar em thread separado para não bloquear a UI
         threading.Thread(target=self._process_message, args=(text,), daemon=True).start()
     
     def _process_message(self, message: str):
         """Processar mensagem e obter resposta da IA"""
-        GLib.idle_add(self._add_ai_message, "A pensar...")
+        GLib.idle_add(self._add_loading_message)
         
         try:
             # Preparar contexto
@@ -373,39 +956,68 @@ class MainWindow(Gtk.Window):
             
             response_text = ""
             for chunk in self.ai_client.stream_chat(full_history):
+                if self.cancel_streaming:
+                    break
+                
                 response_text += chunk
-                GLib.idle_add(self._add_ai_message, chunk, True)
+                GLib.idle_add(self._update_ai_message, chunk, True)
             
             self.streaming = False
             
             # Adicionar à história
-            self.conversation_history.append({"role": "assistant", "content": response_text})
+            if not self.cancel_streaming:
+                self.conversation_history.append({"role": "assistant", "content": response_text})
+            
+            # Atualizar UI
+            GLib.idle_add(self._on_message_processed)
             
         except Exception as e:
+            logger.error(f"Erro ao processar mensagem: {e}", exc_info=True)
             GLib.idle_add(self._add_system_message, f"Erro: {e}")
+            GLib.idle_add(self._on_message_processed)
     
-    def _get_context_message(self) -> Optional[Dict[str, str]]:
-        """Obter mensagem de contexto com base no modo"""
-        if self.expert_mode:
-            return {
-                "role": "system",
-                "content": """Eres um especialista em sistemas Linux. 
-Ajudas o utilizador a resolver problemas, explicar conceitos e fazer alterações a ficheiros de configuração. 
-Sê preciso e fornece comandos específicos que o utilizador pode executar. 
-Se for necessário editar ficheiros de configuração, pede autorização explícita antes de o fazer. 
-Responde em Português de Portugal."""
-            }
-        else:
-            return {
-                "role": "system",
-                "content": """Eres um assistente de IA útil que responde a perguntas sobre o sistema Linux. 
-Podes ajudar com dúvidas gerais, explicações e sugestões. 
-Responde em Português de Portugal."""
-            }
+    def _update_ai_message(self, chunk: str, streaming: bool):
+        """Atualizar mensagem da IA"""
+        self._add_ai_message(chunk, streaming)
+        return False
+    
+    def _on_message_processed(self):
+        """Callback quando mensagem é processada"""
+        self.is_loading = False
+        self.cancel_streaming = False
+        self.cancel_btn.set_sensitive(False)
+        self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text("Pronto")
+        
+        # Remover mensagem de loading
+        GLib.idle_add(self._remove_loading_message)
+        
+        # Mostrar notificação se não estiver ativa
+        if not self.get_window().get_property("is-active"):
+            self.show_notification("Linux AI Assistant", "Nova resposta recebida")
+    
+    def on_cancel_streaming(self, button):
+        """Cancelar streaming atual"""
+        self.cancel_streaming = True
+        self.is_loading = False
+        self.streaming = False
+        self.cancel_btn.set_sensitive(False)
+        self.status_icon.set_from_icon_name("dialog-error", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text("Cancelado")
+        
+        self._add_system_message("Streaming cancelado")
+        GLib.idle_add(self._remove_loading_message)
+        logger.info("Streaming cancelado pelo utilizador")
     
     def on_capture_screen_clicked(self, button):
         """Handler para captura de ecrã"""
+        if self.is_loading:
+            self.show_notification("Linux AI Assistant", "Aguarde até a mensagem atual ser processada")
+            return
+            
         self._add_system_message("A capturar ecrã...")
+        self.is_loading = True
+        self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
         
         def capture_and_process():
             try:
@@ -413,11 +1025,11 @@ Responde em Português de Portugal."""
                 success, image_path = self.system_utils.capture_screen()
                 
                 if success:
-                    self._add_system_message(f"Ecrã capturado: {image_path}")
+                    GLib.idle_add(self._add_system_message, f"Ecrã capturado: {image_path}")
                     
                     # Extrair texto
                     if self.config.get("features.ocr_enabled", True):
-                        self._add_system_message("A extrair texto da imagem...")
+                        GLib.idle_add(self._add_system_message, "A extrair texto da imagem...")
                         success, text = self.system_utils.extract_text_from_image(image_path)
                         
                         if success and text:
@@ -426,15 +1038,12 @@ Responde em Português de Portugal."""
                             if len(text) > max_length:
                                 text = text[:max_length] + "\n\n... (texto truncado)"
                             
-                            self._add_user_message(f"[Captura de ecrã]\n{text}")
-                            self.conversation_history.append({
-                                "role": "user",
-                                "content": f"[Captura de ecrã]\n{text}"
-                            })
+                            GLib.idle_add(self._add_user_message, f"[Captura de ecrã]\n{text}")
+                            GLib.idle_add(self._update_conversation_history, "user", f"[Captura de ecrã]\n{text}")
                         else:
-                            self._add_system_message("Não foi possível extrair texto da imagem.")
+                            GLib.idle_add(self._add_system_message, "Não foi possível extrair texto da imagem.")
                     else:
-                        self._add_system_message("OCR desativado nas configurações.")
+                        GLib.idle_add(self._add_system_message, "OCR desativado nas configurações.")
                     
                     # Remover imagem temporária
                     try:
@@ -442,12 +1051,26 @@ Responde em Português de Portugal."""
                     except:
                         pass
                 else:
-                    self._add_system_message(f"Erro ao capturar ecrã: {image_path}")
+                    GLib.idle_add(self._add_system_message, f"Erro ao capturar ecrã: {image_path}")
                     
             except Exception as e:
-                self._add_system_message(f"Erro: {e}")
+                logger.error(f"Erro na captura de ecrã: {e}", exc_info=True)
+                GLib.idle_add(self._add_system_message, f"Erro: {e}")
+            finally:
+                GLib.idle_add(self._on_capture_complete)
         
         threading.Thread(target=capture_and_process, daemon=True).start()
+    
+    def _on_capture_complete(self):
+        """Callback quando captura é completada"""
+        self.is_loading = False
+        self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text("Pronto")
+    
+    def _update_conversation_history(self, role: str, content: str):
+        """Atualizar histórico de conversa"""
+        self.conversation_history.append({"role": role, "content": content})
+        return False
     
     def on_expert_mode_toggled(self, button):
         """Alternar modo especialista"""
@@ -456,12 +1079,15 @@ Responde em Português de Portugal."""
         if self.expert_mode:
             self.expert_btn.get_style_context().add_class("expert")
             self._add_system_message("Modo Especialista ATIVADO - A ajudar com configurações de sistema")
+            self.show_notification("Linux AI Assistant", "Modo Especialista Ativado")
         else:
             self.expert_btn.get_style_context().remove_class("expert")
             self._add_system_message("Modo Especialista DESATIVADO")
+            self.show_notification("Linux AI Assistant", "Modo Especialista Desativado")
         
         # Limpar história para novo contexto
         self.conversation_history = []
+        logger.info(f"Modo especialista {'ativado' if self.expert_mode else 'desativado'}")
     
     def on_close_clicked(self):
         """Handler para fechar janela"""
@@ -470,31 +1096,44 @@ Responde em Português de Portugal."""
     def on_delete_event(self, widget, event):
         """Handler para fechar janela"""
         # Guardar geometria da janela
-        geometry = self.get_window().get_geometry()
-        self.config.set_window_geometry(
-            geometry.width,
-            geometry.height,
-            self.get_window().get_position().x,
-            self.get_window().get_position().y
-        )
+        if hasattr(self, 'get_window') and self.get_window():
+            geometry = self.get_window().get_geometry()
+            self.config.set_window_geometry(
+                geometry.width,
+                geometry.height,
+                self.get_window().get_position().x,
+                self.get_window().get_position().y
+            )
         
-        # Guardar história
-        self._save_conversation_history()
+        # Guardar histórico
+        # (Já é guardado automaticamente ao adicionar mensagens)
         
         # Fechar aplicação
+        logger.info("Janela fechada")
         Gtk.main_quit()
         return True
     
     def on_configure_event(self, widget, event):
         """Handler para redimensionar/mover janela"""
         # Guardar posição
-        x, y = self.get_window().get_position()
-        self.config.set("app.x_position", x)
-        self.config.set("app.y_position", y)
+        if hasattr(self, 'get_window') and self.get_window():
+            x, y = self.get_window().get_position()
+            self.config.set("app.x_position", x)
+            self.config.set("app.y_position", y)
+            
+            # Guardar tamanho
+            geometry = self.get_window().get_geometry()
+            self.config.set("app.width", geometry.width)
+            self.config.set("app.height", geometry.height)
         
+        return True
+    
+    def on_size_allocate(self, widget, allocation):
+        """Handler para quando o tamanho é alocado"""
         # Guardar tamanho
-        geometry = self.get_window().get_geometry()
-        self.config.set("app.width", geometry.width)
-        self.config.set("app.height", geometry.height)
+        if hasattr(self, 'get_window') and self.get_window():
+            geometry = self.get_window().get_geometry()
+            self.config.set("app.width", geometry.width)
+            self.config.set("app.height", geometry.height)
         
         return True

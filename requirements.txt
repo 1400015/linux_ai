@@ -7,3 +7,15 @@ pytesseract==0.3.10
 python-dotenv==1.0.0
 pyautogui==0.9.54
 psutil==5.9.5
+
+# Nova: Retry mechanism
+tenacity==8.2.3
+
+# Nova: Logging JSON (opcional)
+python-json-logger==2.0.7
+
+# Nova: Encriptação (opcional)
+cryptography==42.0.2
+
+# Nova: Notificações do sistema
+notify2==0.3.1
