@@ -18,7 +18,7 @@ def is_wayland(window):
 
 
 def _apply_x11_struts(gdk_window, edge, size):
-    """Reserva espaço no ecrã via _NET_WM_STRUT_PARTIAL."""
+    """Reserve screen space via _NET_WM_STRUT_PARTIAL."""
     if not isinstance(gdk_window.get_display(), GdkX11.X11Display):
         return False
     display = gdk_window.get_display()
@@ -47,9 +47,9 @@ def _apply_x11_struts(gdk_window, edge, size):
 
 
 def apply_dock(window, edge, width):
-    """Tenta fixar a janela ao ecrã e reservar espaço.
+    """Try to pin the window to the screen and reserve space.
 
-    Retorna o método usado: "layer-shell", "x11-struts" ou "window".
+    Returns the method used: "layer-shell", "x11-struts" or "window".
     """
     if is_wayland(window) and HAS_LAYER_SHELL:
         try:

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class SystemUtils:
-    """Utilitários para interagir com o sistema Linux"""
+    """Utilities to interact with the Linux system"""
     
     def __init__(self, config_manager):
         self.config = config_manager
@@ -31,39 +31,39 @@ class SystemUtils:
         logger.info(f"Utilizador: {self.username}, Root: {self.is_root}")
     
     def _sanitize_command(self, command: str) -> List[str]:
-        """Sanitizar comando para evitar injeção de comandos"""
+        """Sanitize command to prevent command injection"""
         try:
-            # Usar shlex para split seguro
+            # Usar shlex for split seguro
             return shlex.split(command)
         except ValueError as e:
-            logger.error(f"Comando inválido para sanitizar: {command} - {e}")
+            logger.error(f"Invalid command to sanitize: {command} - {e}")
             return []
     
     def _validate_path(self, path: str) -> bool:
-        """Validar se um path é permitido"""
+        """Validate if a path is allowed"""
         try:
             # Normalizar path
             path = os.path.normpath(path)
             path = os.path.abspath(path)
             
-            # Verificar se está em diretórios permitidos
+            # Check if it is in allowed directories
             for allowed_dir in self.allowed_edit_dirs:
                 allowed_dir = os.path.normpath(allowed_dir)
                 if path.startswith(allowed_dir):
                     return True
             
-            logger.warning(f"Path não permitido: {path}")
+            logger.warning(f"Path not allowed: {path}")
             return False
         except Exception as e:
             logger.error(f"Erro a validar path: {e}")
             return False
     
     def get_system_info(self) -> Dict[str, str]:
-        """Obter informação do sistema"""
+        """Get system information"""
         info = {}
         
         try:
-            # Informação básica
+            # Basic information
             info["os"] = platform.system()
             info["release"] = platform.release()
             info["version"] = platform.version()
@@ -71,7 +71,7 @@ class SystemUtils:
             info["processor"] = platform.processor()
             info["architecture"] = platform.architecture()[0]
             
-            # Detetar se é Void Linux ou d77void
+            # Detect if it is Void Linux or d77void
             info["is_void"] = False
             info["is_d77void"] = False
             try:
@@ -84,9 +84,9 @@ class SystemUtils:
                         elif line.startswith('D77VOID_VERSION='):
                             info["is_d77void"] = True
             except Exception as e:
-                logger.warning(f"Erro a ler /etc/os-release: {e}")
+                logger.warning(f"Erro a read /etc/os-release: {e}")
             
-            # Memória
+            # Memory
             try:
                 import psutil
                 mem = psutil.virtual_memory()
@@ -106,7 +106,7 @@ class SystemUtils:
                                 free_kb = int(line.split()[1])
                                 info["memory_available"] = f"{free_kb / (1024**2):.2f} GB"
                 except Exception as e:
-                    logger.warning(f"Não foi possível obter info de memória: {e}")
+                    logger.warning(f"Could not get memory info: {e}")
             
             # CPU
             try:
@@ -124,7 +124,7 @@ class SystemUtils:
                                 cores += 1
                         info["cpu_cores"] = str(cores)
                 except Exception as e:
-                    logger.warning(f"Não foi possível obter info de CPU: {e}")
+                    logger.warning(f"Could not get CPU info: {e}")
             
             # Disco
             try:
@@ -140,7 +140,7 @@ class SystemUtils:
                     info["disk_total"] = f"{(stat.f_blocks * stat.f_frsize) / (1024**3):.2f} GB"
                     info["disk_free"] = f"{(stat.f_bavail * stat.f_frsize) / (1024**3):.2f} GB"
                 except Exception as e:
-                    logger.warning(f"Não foi possível obter info de disco: {e}")
+                    logger.warning(f"Could not get disk info: {e}")
             
             # Uptime
             try:
@@ -151,7 +151,7 @@ class SystemUtils:
                     with open('/proc/uptime', 'r') as f:
                         uptime_seconds = int(float(f.readline().split()[0]))
                 except Exception as e:
-                    logger.warning(f"Não foi possível obter uptime: {e}")
+                    logger.warning(f"Could not get uptime: {e}")
                     uptime_seconds = 0
             
             days, remainder = divmod(uptime_seconds, 86400)
@@ -168,13 +168,13 @@ class SystemUtils:
             
             info["hostname"] = platform.node()
             
-            # Ambiente gráfico
+            # Graphical environment
             info["is_wayland"] = str(self.is_wayland)
             info["is_x11"] = str(self.is_x11)
             info["display"] = os.environ.get("DISPLAY", "N/A")
             info["xdg_session_type"] = os.environ.get("XDG_SESSION_TYPE", "N/A")
             
-            # Distribuição Linux
+            # Linux distribution
             try:
                 with open('/etc/os-release', 'r') as f:
                     for line in f:
@@ -188,52 +188,52 @@ class SystemUtils:
             
             return info
         except Exception as e:
-            logger.error(f"Erro a obter info do sistema: {e}")
+            logger.error(f"Erro a get info do sistema: {e}")
             return {"error": str(e)}
     
     def execute_command(self, command: str, timeout: int = 10) -> Tuple[bool, str]:
         """
-        Executar um comando no sistema com sanitização
+        Run a command on the system with sanitization
         
         Args:
-            command: Comando a executar
+            command: Command a executar
             timeout: Timeout em segundos
             
         Returns:
             Tuplo (sucesso, output)
         """
         if not command or not isinstance(command, str):
-            logger.error("Comando inválido")
-            return False, "Comando inválido"
+            logger.error("Invalid command")
+            return False, "Invalid command"
         
-        # Sanitizar comando
+        # Sanitize comando
         try:
             cmd_parts = self._sanitize_command(command)
             if not cmd_parts:
-                return False, "Comando inválido após sanitização"
+                return False, "Invalid command after sanitization"
             
             cmd_base = cmd_parts[0]
         except Exception as e:
-            logger.error(f"Erro a sanitizar comando: {e}")
+            logger.error(f"Erro a sanitize comando: {e}")
             return False, f"Erro a processar comando: {e}"
         
-        # Verificar se o comando é permitido
+        # Check if the command is allowed
         if cmd_base not in self.allowed_commands:
-            logger.warning(f"Comando não permitido: {cmd_base}")
-            return False, f"Comando não permitido: {cmd_base}"
+            logger.warning(f"Command not allowed: {cmd_base}")
+            return False, f"Command not allowed: {cmd_base}"
         
         try:
             logger.info(f"A executar comando: {' '.join(cmd_parts)}")
             
             result = subprocess.run(
-                cmd_parts,  # Usar lista em vez de shell=True para segurança
+                cmd_parts,  # Use list instead of shell=True for security
                 capture_output=True,
                 text=True,
                 timeout=timeout
             )
             
             if result.returncode == 0:
-                logger.debug(f"Comando executado com sucesso: {cmd_base}")
+                logger.debug(f"Comando executado with sucesso: {cmd_base}")
                 return True, result.stdout
             else:
                 logger.warning(f"Comando falhou ({result.returncode}): {cmd_base}")
@@ -248,36 +248,36 @@ class SystemUtils:
     
     def execute_sudo_command(self, command: str, password: str = None, timeout: int = 10) -> Tuple[bool, str]:
         """
-        Executar comando com privilégios sudo
+        Run command with sudo privileges
         
         Args:
-            command: Comando a executar
-            password: Password para sudo (opcional)
+            command: Command a executar
+            password: Password for sudo (opcional)
             timeout: Timeout em segundos
             
         Returns:
             Tuplo (sucesso, output)
         """
         if not command or not isinstance(command, str):
-            return False, "Comando inválido"
+            return False, "Invalid command"
         
-        # Sanitizar comando
+        # Sanitize comando
         try:
             cmd_parts = self._sanitize_command(command)
             if not cmd_parts:
-                return False, "Comando inválido após sanitização"
+                return False, "Invalid command after sanitization"
             
             cmd_base = cmd_parts[0]
         except Exception as e:
             return False, f"Erro a processar comando: {e}"
         
-        # Verificar se o comando é permitido
+        # Check if the command is allowed
         if cmd_base not in self.allowed_commands:
-            return False, f"Comando não permitido: {cmd_base}"
+            return False, f"Command not allowed: {cmd_base}"
         
         try:
             if password:
-                # Usar sudo com password
+                # Usar sudo with password
                 cmd = ['sudo', '-S'] + cmd_parts
                 result = subprocess.run(
                     cmd,
@@ -302,23 +302,23 @@ class SystemUtils:
                 return False, result.stderr or result.stdout
                 
         except subprocess.TimeoutExpired:
-            return False, f"Timeout ao executar comando sudo: {command}"
+            return False, f"Timeout ao executar command sudo: {command}"
         except Exception as e:
-            return False, f"Erro ao executar comando sudo: {e}"
+            return False, f"Erro ao executar command sudo: {e}"
     
     def read_file(self, filepath: str, max_lines: int = 100) -> Tuple[bool, str]:
         """
-        Ler ficheiro do sistema
+        Ler file do sistema
         
         Args:
-            filepath: Caminho do ficheiro
-            max_lines: Número máximo de linhas a ler
+            filepath: Path do ficheiro
+            max_lines: Maximum number of lines to read
             
         Returns:
-            Tuplo (sucesso, conteúdo)
+            Tuple (success, content)
         """
         if not filepath or not isinstance(filepath, str):
-            return False, "Caminho inválido"
+            return False, "Invalid path"
         
         # Validar path
         if not self._validate_path(filepath):
@@ -328,15 +328,15 @@ class SystemUtils:
         try:
             file_path = Path(filepath)
             if not file_path.exists():
-                return False, f"Ficheiro não encontrado: {filepath}"
+                return False, f"File not found: {filepath}"
             
-            # Verificar se é diretório
+            # Check if it is a directory
             if file_path.is_dir():
-                return False, f"É um diretório: {filepath}"
+                return False, f"It is a directory: {filepath}"
             
-            # Verificar permissões
+            # Check permissions
             if not os.access(filepath, os.R_OK):
-                return False, f"Sem permissão para ler: {filepath}"
+                return False, f"No permission to read: {filepath}"
             
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = []
@@ -348,29 +348,29 @@ class SystemUtils:
             
             return True, ''.join(lines)
         except PermissionError:
-            logger.error(f"Permissão negada para ler: {filepath}")
-            return False, f"Permissão negada para ler: {filepath}"
+            logger.error(f"Permission denied to read: {filepath}")
+            return False, f"Permission denied to read: {filepath}"
         except Exception as e:
-            logger.error(f"Erro ao ler ficheiro: {e}")
-            return False, f"Erro ao ler ficheiro: {e}"
+            logger.error(f"Erro ao read ficheiro: {e}")
+            return False, f"Erro ao read ficheiro: {e}"
     
     def write_file(self, filepath: str, content: str, append: bool = False) -> Tuple[bool, str]:
         """
-        Escrever em ficheiro do sistema
+        Escrever em file do sistema
         
         Args:
-            filepath: Caminho do ficheiro
-            content: Conteúdo a escrever
-            append: Se True, adiciona ao ficheiro; caso contrário, substitui
+            filepath: Path do ficheiro
+            content: Content to write
+            append: If True, appends to the file; otherwise, replaces it
             
         Returns:
             Tuplo (sucesso, mensagem)
         """
         if not filepath or not isinstance(filepath, str):
-            return False, "Caminho inválido"
+            return False, "Invalid path"
         
         if not content or not isinstance(content, str):
-            return False, "Conteúdo inválido"
+            return False, "Invalid content"
         
         # Validar path
         if not self._validate_path(filepath):
@@ -380,9 +380,9 @@ class SystemUtils:
         try:
             file_path = Path(filepath)
             
-            # Verificar permissões
+            # Check permissions
             if not os.access(file_path.parent, os.W_OK):
-                return False, f"Sem permissão para escrever em: {file_path.parent}"
+                return False, f"No permission to write in: {file_path.parent}"
             
             file_path.parent.mkdir(parents=True, exist_ok=True)
             
@@ -390,34 +390,34 @@ class SystemUtils:
             with open(file_path, mode, encoding='utf-8') as f:
                 f.write(content)
             
-            logger.info(f"Ficheiro {filepath} {'atualizado' if not append else 'adicionado'} com sucesso")
-            return True, f"Ficheiro {filepath} {'atualizado' if not append else 'adicionado'} com sucesso"
+            logger.info(f"Ficheiro {filepath} {'atualizado' if not append else 'adicionado'} with sucesso")
+            return True, f"Ficheiro {filepath} {'atualizado' if not append else 'adicionado'} with sucesso"
         except PermissionError:
-            logger.error(f"Permissão negada para escrever: {filepath}")
-            return False, f"Permissão negada para escrever: {filepath}"
+            logger.error(f"Permission denied to write: {filepath}")
+            return False, f"Permission denied to write: {filepath}"
         except Exception as e:
-            logger.error(f"Erro ao escrever ficheiro: {e}")
-            return False, f"Erro ao escrever ficheiro: {e}"
+            logger.error(f"Erro ao write ficheiro: {e}")
+            return False, f"Erro ao write ficheiro: {e}"
     
     def capture_screen(self, output_path: str = None) -> Tuple[bool, str]:
         """
-        Capturar ecrã com suporte para Wayland e X11
+        Capture screen with support for Wayland e X11
         
         Args:
-            output_path: Caminho para guardar a captura (opcional)
+            output_path: Path for save a capture (opcional)
             
         Returns:
             Tuplo (sucesso, caminho_da_imagem)
         """
         try:
             if self.is_wayland:
-                # Tentar usar grim para Wayland
+                # Tentar usar grim for Wayland
                 if subprocess.run(['which', 'grim'], capture_output=True).returncode == 0:
                     if output_path:
                         result = subprocess.run(['grim', '-o', output_path], 
                                               capture_output=True, timeout=10)
                         if result.returncode == 0:
-                            logger.info(f"Ecrã capturado com grim: {output_path}")
+                            logger.info(f"Screen captured with grim: {output_path}")
                             return True, output_path
                     else:
                         import tempfile
@@ -425,20 +425,20 @@ class SystemUtils:
                             result = subprocess.run(['grim', '-o', tmp.name], 
                                                   capture_output=True, timeout=10)
                             if result.returncode == 0:
-                                logger.info(f"Ecrã capturado temporariamente: {tmp.name}")
+                                logger.info(f"Screen temporarily captured: {tmp.name}")
                                 return True, tmp.name
                 
-                # Tentar usar slurp para Wayland (interativo)
+                # Tentar usar slurp for Wayland (interativo)
                 if subprocess.run(['which', 'slurp'], capture_output=True).returncode == 0:
-                    logger.warning("slurp disponível mas requer interação. Use grim para captura automática.")
+                    logger.warning("slurp available but requires interaction. Use grim for automatic capture.")
             
-            # Tentar usar scrot para X11
+            # Tentar usar scrot for X11
             if subprocess.run(['which', 'scrot'], capture_output=True).returncode == 0:
                 if output_path:
                     result = subprocess.run(['scrot', output_path], 
                                           capture_output=True, timeout=10)
                     if result.returncode == 0:
-                        logger.info(f"Ecrã capturado com scrot: {output_path}")
+                        logger.info(f"Screen captured with scrot: {output_path}")
                         return True, output_path
                 else:
                     import tempfile
@@ -446,7 +446,7 @@ class SystemUtils:
                         result = subprocess.run(['scrot', tmp.name], 
                                               capture_output=True, timeout=10)
                         if result.returncode == 0:
-                            logger.info(f"Ecrã capturado temporariamente: {tmp.name}")
+                            logger.info(f"Screen temporarily captured: {tmp.name}")
                             return True, tmp.name
             
             # Tentar usar gnome-screenshot
@@ -455,7 +455,7 @@ class SystemUtils:
                     result = subprocess.run(['gnome-screenshot', '-f', output_path], 
                                           capture_output=True, timeout=10)
                     if result.returncode == 0:
-                        logger.info(f"Ecrã capturado com gnome-screenshot: {output_path}")
+                        logger.info(f"Screen captured with gnome-screenshot: {output_path}")
                         return True, output_path
                 else:
                     import tempfile
@@ -463,38 +463,38 @@ class SystemUtils:
                         result = subprocess.run(['gnome-screenshot', '-f', tmp.name], 
                                               capture_output=True, timeout=10)
                         if result.returncode == 0:
-                            logger.info(f"Ecrã capturado temporariamente: {tmp.name}")
+                            logger.info(f"Screen temporarily captured: {tmp.name}")
                             return True, tmp.name
             
-            logger.error("Nenhum utilitário de captura de ecrã encontrado")
-            return False, "Nenhum utilitário de captura de ecrã encontrado (instale scrot, grim ou gnome-screenshot)"
+            logger.error("No screen capture utility found")
+            return False, "No screen capture utility found (install scrot, grim or gnome-screenshot)"
             
         except subprocess.TimeoutExpired:
-            logger.error("Timeout ao capturar ecrã")
-            return False, "Timeout ao capturar ecrã"
+            logger.error("Timeout capturing screen")
+            return False, "Timeout capturing screen"
         except Exception as e:
-            logger.error(f"Erro ao capturar ecrã: {e}")
-            return False, f"Erro ao capturar ecrã: {e}"
+            logger.error(f"Error capturing screen: {e}")
+            return False, f"Error capturing screen: {e}"
     
     def capture_active_window(self, output_path: str = None) -> Tuple[bool, str]:
         """
-        Capturar janela ativa com suporte para Wayland e X11
+        Capturar window active with support for Wayland e X11
         
         Args:
-            output_path: Caminho para guardar a captura
+            output_path: Path for save a captura
             
         Returns:
             Tuplo (sucesso, caminho_da_imagem)
         """
         try:
             if self.is_wayland:
-                # Tentar usar slurp para Wayland
+                # Tentar usar slurp for Wayland
                 if subprocess.run(['which', 'slurp'], capture_output=True).returncode == 0:
                     if output_path:
                         result = subprocess.run(['slurp', '-o', output_path], 
                                               capture_output=True, timeout=10)
                         if result.returncode == 0:
-                            logger.info(f"Janela ativa capturada com slurp: {output_path}")
+                            logger.info(f"Janela active capturada with slurp: {output_path}")
                             return True, output_path
                     else:
                         import tempfile
@@ -502,16 +502,16 @@ class SystemUtils:
                             result = subprocess.run(['slurp', '-o', tmp.name], 
                                                   capture_output=True, timeout=10)
                             if result.returncode == 0:
-                                logger.info(f"Janela ativa capturada temporariamente: {tmp.name}")
+                                logger.info(f"Janela active capturada temporariamente: {tmp.name}")
                                 return True, tmp.name
             else:
-                # Usar scrot para X11
+                # Usar scrot for X11
                 if subprocess.run(['which', 'scrot'], capture_output=True).returncode == 0:
                     if output_path:
                         result = subprocess.run(['scrot', '-u', output_path], 
                                               capture_output=True, timeout=10)
                         if result.returncode == 0:
-                            logger.info(f"Janela ativa capturada com scrot: {output_path}")
+                            logger.info(f"Janela active capturada with scrot: {output_path}")
                             return True, output_path
                     else:
                         import tempfile
@@ -519,26 +519,26 @@ class SystemUtils:
                             result = subprocess.run(['scrot', '-u', tmp.name], 
                                                   capture_output=True, timeout=10)
                             if result.returncode == 0:
-                                logger.info(f"Janela ativa capturada temporariamente: {tmp.name}")
+                                logger.info(f"Janela active capturada temporariamente: {tmp.name}")
                                 return True, tmp.name
             
-            logger.error("Nenhum utilitário de captura de janela encontrado")
-            return False, "Nenhum utilitário de captura de janela encontrado (instale scrot ou slurp)"
+            logger.error("No window capture utility found")
+            return False, "No window capture utility found (install scrot or slurp)"
             
         except subprocess.TimeoutExpired:
-            logger.error("Timeout ao capturar janela ativa")
-            return False, "Timeout ao capturar janela ativa"
+            logger.error("Timeout ao capturar window ativa")
+            return False, "Timeout ao capturar window ativa"
         except Exception as e:
-            logger.error(f"Erro ao capturar janela ativa: {e}")
-            return False, f"Erro ao capturar janela ativa: {e}"
+            logger.error(f"Erro ao capturar window ativa: {e}")
+            return False, f"Erro ao capturar window ativa: {e}"
     
     def get_active_window_info(self) -> Dict[str, str]:
-        """Obter informação sobre a janela ativa"""
+        """Get information about the active window"""
         info = {}
         
         try:
             if self.is_wayland:
-                # Tentar usar swaymsg para Wayland (Sway)
+                # Tentar usar swaymsg for Wayland (Sway)
                 if subprocess.run(['which', 'swaymsg'], capture_output=True).returncode == 0:
                     result = subprocess.run(['swaymsg', '-t', 'get_tree'], 
                                           capture_output=True, text=True, timeout=5)
@@ -547,7 +547,7 @@ class SystemUtils:
                             import json
                             tree = json.loads(result.stdout)
                             if tree and 'nodes' in tree:
-                                # Encontrar janela ativa
+                                # Encontrar window ativa
                                 for node in tree.get('nodes', []):
                                     if node.get('focused', False):
                                         info['title'] = node.get('name', 'Unknown')
@@ -556,14 +556,14 @@ class SystemUtils:
                         except Exception as e:
                             logger.warning(f"Erro a parsear swaymsg: {e}")
                 
-                # Tentar usar wl-focus para Wayland
+                # Tentar usar wl-focus for Wayland
                 if subprocess.run(['which', 'wl-focus'], capture_output=True).returncode == 0:
                     result = subprocess.run(['wl-focus', '--get'], 
                                           capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
                         info['window_id'] = result.stdout.strip()
             else:
-                # Usar xdotool para X11
+                # Usar xdotool for X11
                 if subprocess.run(['which', 'xdotool'], capture_output=True).returncode == 0:
                     result = subprocess.run(
                         ['xdotool', 'getactivewindow', 'getwindowname'],
@@ -586,7 +586,7 @@ class SystemUtils:
                     if result.returncode == 0:
                         info["geometry"] = result.stdout.strip()
                 
-                # Usar xprop para obter mais info
+                # Usar xprop for get mais info
                 if subprocess.run(['which', 'xprop'], capture_output=True).returncode == 0:
                     result = subprocess.run(
                         ['xprop', '-root', '_NET_ACTIVE_WINDOW'],
@@ -596,47 +596,47 @@ class SystemUtils:
                         info["window_id"] = result.stdout.strip()
             
         except Exception as e:
-            logger.warning(f"Erro a obter info da janela ativa: {e}")
+            logger.warning(f"Erro a get info da window ativa: {e}")
             info["error"] = str(e)
         
         return info
     
     def extract_text_from_image(self, image_path: str, lang: str = "por+eng") -> Tuple[bool, str]:
         """
-        Extrair texto de uma imagem usando OCR com fallback
+        Extrair text de a image usando OCR with fallback
         
         Args:
-            image_path: Caminho para a imagem
-            lang: Idiomas para OCR (ex: "por+eng")
+            image_path: Path for a imagem
+            lang: Idiomas for OCR (ex: "por+eng")
             
         Returns:
-            Tuplo (sucesso, texto_extraído)
+            Tuple (success, extracted_text)
         """
         try:
             import pytesseract
             from PIL import Image
             
-            # Verificar se ficheiro existe
+            # Verificar se file existe
             if not os.path.exists(image_path):
-                return False, f"Ficheiro não encontrado: {image_path}"
+                return False, f"File not found: {image_path}"
             
-            # Abrir imagem
+            # Open imagem
             img = Image.open(image_path)
             
             # Extrair texto
             try:
                 text = pytesseract.image_to_string(img, lang=lang)
                 
-                # Se não obtiver texto, tentar com inglês apenas
+                # If no text is obtained, try with English only
                 if not text.strip():
-                    logger.info("Sem texto detetado. A tentar com inglês...")
+                    logger.info("No text detected. Trying with English...")
                     text = pytesseract.image_to_string(img, lang='eng')
                 
                 if text.strip():
-                    logger.info(f"Texto extraído com sucesso ({len(text)} caracteres)")
+                    logger.info(f"Text extracted successfully ({len(text)} characters)")
                     return True, text.strip()
                 else:
-                    logger.warning("Nenhum texto detetado na imagem")
+                    logger.warning("Nenhum text detected na imagem")
                     return True, ""
                     
             except Exception as e:
@@ -644,14 +644,14 @@ class SystemUtils:
                 return False, f"Erro no OCR: {e}"
                 
         except ImportError as e:
-            logger.error(f"pytesseract ou PIL não instalados: {e}")
-            return False, "pytesseract ou PIL não instalados (instale com: pip install pytesseract pillow)"
+            logger.error(f"pytesseract or PIL not installed: {e}")
+            return False, "pytesseract or PIL not installed (install with: pip install pytesseract pillow)"
         except Exception as e:
             logger.error(f"Erro ao extrair texto: {e}")
             return False, f"Erro ao extrair texto: {e}"
     
     def get_process_list(self) -> List[Dict[str, str]]:
-        """Obter lista de processos em execução"""
+        """Get list of running processes"""
         processes = []
         
         try:
@@ -684,12 +684,12 @@ class SystemUtils:
                                 "memory": parts[3]
                             })
             except Exception as e:
-                logger.warning(f"Não foi possível obter lista de processos: {e}")
+                logger.warning(f"Could not get process list: {e}")
         
         return sorted(processes, key=lambda x: float(x['cpu'].replace('%', '')), reverse=True)
     
     def get_network_info(self) -> Dict[str, Any]:
-        """Obter informação de rede"""
+        """Get network information"""
         info = {}
         
         try:
@@ -705,7 +705,7 @@ class SystemUtils:
                     "packets_recv": data.packets_recv
                 }
             
-            # Conexões
+            # Connections
             connections = psutil.net_connections(kind='inet')
             info["connections"] = []
             for conn in connections:
@@ -727,9 +727,9 @@ class SystemUtils:
                 if result.returncode == 0:
                     info["connections"] = result.stdout.split('\n')
             except Exception as e:
-                logger.warning(f"Não foi possível obter info de rede: {e}")
+                logger.warning(f"Could not get network info: {e}")
         except Exception as e:
-            logger.error(f"Erro a obter info de rede: {e}")
+            logger.error(f"Erro a get info de rede: {e}")
             info["error"] = str(e)
         
         return info
@@ -740,8 +740,8 @@ class SystemUtils:
         
         Args:
             search_term: Termo a procurar
-            search_path: Diretório onde procurar
-            max_results: Número máximo de resultados
+            search_path: Directory to search in
+            max_results: Maximum number of results
             
         Returns:
             Lista de caminhos de ficheiros
@@ -752,7 +752,7 @@ class SystemUtils:
             return results
         
         try:
-            # Usar find para procurar
+            # Usar find for procurar
             cmd = f"find {search_path} -type f -name '*{search_term}*' 2>/dev/null | head -n {max_results}"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
             
@@ -764,16 +764,16 @@ class SystemUtils:
         return results
     
     def get_file_info(self, filepath: str) -> Dict[str, str]:
-        """Obter informação sobre um ficheiro"""
+        """Get information about a file"""
         info = {}
         
         if not filepath or not isinstance(filepath, str):
-            return {"error": "Caminho inválido"}
+            return {"error": "Invalid path"}
         
         try:
             file_path = Path(filepath)
             if not file_path.exists():
-                return {"error": "Ficheiro não encontrado"}
+                return {"error": "File not found"}
             
             stat = file_path.stat()
             info["name"] = file_path.name
@@ -787,7 +787,7 @@ class SystemUtils:
             info["owner"] = str(stat.st_uid)
             info["group"] = str(stat.st_gid)
             
-            # Informação adicional para ficheiros
+            # Additional information for files
             if file_path.is_file():
                 try:
                     with open(file_path, 'rb') as f:
@@ -797,7 +797,7 @@ class SystemUtils:
                     pass
             
         except Exception as e:
-            logger.error(f"Erro a obter info do ficheiro: {e}")
+            logger.error(f"Erro a get info do ficheiro: {e}")
             info["error"] = str(e)
         
         return info

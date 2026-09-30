@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
-    """Gestor de configuração da aplicação com encriptação opcional e suporte a temas"""
+    """Application configuration manager with optional encryption and theme support"""
     
     DEFAULT_CONFIG = {
         "app": {
@@ -27,7 +27,8 @@ class ConfigManager:
             "encryption_enabled": False,
             "dock_mode": "float",
             "dock_edge": "right",
-            "button_edge": "right"
+            "button_edge": "right",
+            "language": ""
         },
         "api": {
             "default_provider": "openrouter",
@@ -100,7 +101,7 @@ class ConfigManager:
         }
     }
     
-    # Schema para validação (simplificado)
+    # Schema for validation (simplified)
     CONFIG_SCHEMA = {
         "app": {
             "width": int,
@@ -141,13 +142,13 @@ class ConfigManager:
     
     def __init__(self, config_path: str = None):
         """
-        Inicializar o gestor de configuração
+        Initialize the configuration manager
         
         Args:
-            config_path: Caminho para o ficheiro de configuração
+            config_path: Path to the configuration file
         """
         if config_path is None:
-            # Caminho default: ~/.config/linux_ai_assistant/config.json
+            # Path default: ~/.config/linux_ai_assistant/config.json
             config_dir = Path.home() / ".config" / "linux_ai_assistant"
             config_dir.mkdir(parents=True, exist_ok=True)
             config_path = str(config_dir / "config.json")
@@ -160,33 +161,33 @@ class ConfigManager:
         self._validate_config()
     
     def _load_encryption_key(self):
-        """Carregar ou gerar chave de encriptação"""
+        """Load or generate encryption key"""
         if self.config.get("app.encryption_enabled", False):
             key_path = Path.home() / ".config" / "linux_ai_assistant" / ".encryption_key"
             if key_path.exists():
                 try:
                     with open(key_path, 'rb') as f:
                         self._encryption_key = f.read()
-                    logger.info("Chave de encriptação carregada")
+                    logger.info("Encryption key loaded")
                 except Exception as e:
-                    logger.error(f"Erro a carregar chave de encriptação: {e}")
+                    logger.error(f"Error loading encryption key: {e}")
                     self.config["app"]["encryption_enabled"] = False
                     self.save()
             else:
-                # Gerar nova chave
+                # Gerar new chave
                 try:
                     from cryptography.fernet import Fernet
                     self._encryption_key = Fernet.generate_key()
                     key_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(key_path, 'wb') as f:
                         f.write(self._encryption_key)
-                    logger.info("Nova chave de encriptação gerada")
+                    logger.info("New encryption key generated")
                 except ImportError:
-                    logger.warning("cryptography não instalado. Encriptação desativada.")
+                    logger.warning("cryptography not installed. Encryption disabled.")
                     self.config["app"]["encryption_enabled"] = False
                     self.save()
                 except Exception as e:
-                    logger.error(f"Erro a gerar chave de encriptação: {e}")
+                    logger.error(f"Error generating encryption key: {e}")
                     self.config["app"]["encryption_enabled"] = False
                     self.save()
     
@@ -215,65 +216,65 @@ class ConfigManager:
             return value
     
     def _load_config(self):
-        """Carregar configuração do ficheiro"""
+        """Load configuration from file"""
         try:
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     self.config = json.load(f)
-                logger.info(f"Configuração carregada de {self.config_path}")
+                logger.info(f"Configuration loaded from {self.config_path}")
             else:
-                # Criar configuração default
+                # Create configuration default
                 self.config = self._get_default_config()
                 self.save()
-                logger.info("Configuração default criada")
+                logger.info("Default configuration created")
         except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Erro a carregar configuração: {e}")
+            logger.error(f"Error loading configuration: {e}")
             self.config = self._get_default_config()
     
     def _get_default_config(self) -> Dict[str, Any]:
-        """Obter configuração default"""
+        """Get default configuration"""
         return self.DEFAULT_CONFIG.copy()
     
     def _validate_config(self):
-        """Validar configuração contra schema"""
+        """Validate configuration against schema"""
         try:
-            # Validar estrutura básica
+            # Validate basic structure
             for section, schema in self.CONFIG_SCHEMA.items():
                 if section not in self.config:
                     self.config[section] = {}
-                    logger.warning(f"Secção {section} não encontada. A criar default.")
+                    logger.warning(f"Section {section} not found. Creating default.")
                 
                 for key, expected_type in schema.items():
                     if key in self.config[section]:
                         value = self.config[section][key]
                         if not isinstance(value, expected_type):
-                            logger.warning(f"Tipo inválido para {section}.{key}: esperado {expected_type}, obtido {type(value)}")
+                            logger.warning(f"Invalid type for {section}.{key}: expected {expected_type}, got {type(value)}")
                             self.config[section][key] = expected_type()
                     else:
                         self.config[section][key] = expected_type()
-                        logger.warning(f"Chave {section}.{key} não encontrada. A criar default.")
+                        logger.warning(f"Key {section}.{key} not found. Creating default.")
             
-            # Carregar chave de encriptação se necessária
+            # Load encryption key if needed
             if self.config.get("app.encryption_enabled", False):
                 self._load_encryption_key()
             
             self.save()
         except Exception as e:
-            logger.error(f"Erro na validação da configuração: {e}")
+            logger.error(f"Error validating configuration: {e}")
     
     def get(self, key: str, default: Any = None) -> Any:
         """
-        Obter valor da configuração usando dot notation
+        Get valor da configuration usando dot notation
         
         Exemplo:
             config.get("app.width") -> 400
             config.get("api.providers.openrouter.api_key") -> "..."
         """
-        # Override por variáveis de ambiente
+        # Override by environment variables
         env_var = key.upper().replace(".", "_").replace("-", "_")
         env_value = os.environ.get(f"LINUX_AI_{env_var}")
         if env_value is not None:
-            # Converter tipo se necessário
+            # Convert type if needed
             if isinstance(default, bool):
                 return env_value.lower() in ('true', '1', 't', 'y', 'yes')
             elif isinstance(default, int):
@@ -297,7 +298,7 @@ class ConfigManager:
             else:
                 return default
         
-        # Desencriptar API keys se necessário
+        # Decrypt API keys if needed
         if "api_key" in key and isinstance(value, str):
             return self._decrypt_value(value)
         
@@ -305,10 +306,10 @@ class ConfigManager:
     
     def set(self, key: str, value: Any):
         """
-        Definir valor na configuração usando dot notation
+        Set valor na configuration usando dot notation
         
         Args:
-            key: Chave em dot notation (ex: "app.width")
+            key: Key em dot notation (ex: "app.width")
             value: Valor a definir
         """
         keys = key.split('.')
@@ -319,37 +320,37 @@ class ConfigManager:
                 current[k] = {}
             current = current[k]
         
-        # Encriptar API keys se necessário
+        # Encrypt API keys if needed
         if "api_key" in key and isinstance(value, str) and self.config.get("app.encryption_enabled", False):
             value = self._encrypt_value(value)
         
         current[keys[-1]] = value
         self.save()
-        logger.debug(f"Configuração atualizada: {key} = {value}")
+        logger.debug(f"Configuration updated: {key} = {value}")
     
     def save(self):
-        """Guardar configuração no ficheiro"""
+        """Save configuration to file"""
         try:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
-            logger.info(f"Configuração guardada em {self.config_path}")
+            logger.info(f"Configuration saved to {self.config_path}")
         except IOError as e:
-            logger.error(f"Erro a guardar configuração: {e}")
+            logger.error(f"Error saving configuration: {e}")
     
     def reload(self):
-        """Recarregar configuração do ficheiro"""
+        """Reload configuration from file"""
         self._load_config()
         self._validate_config()
-        logger.info("Configuração recarregada")
+        logger.info("Configuration reloaded")
     
     def get_api_key(self, provider: str) -> Optional[str]:
-        """Obter API key para um provedor específico"""
+        """Get API key for a specific provider"""
         return self.get(f"api.providers.{provider}.api_key")
     
     def set_api_key(self, provider: str, api_key: str):
-        """Definir API key para um provedor"""
+        """Definir API key for a provedor"""
         self.set(f"api.providers.{provider}.api_key", api_key)
-        logger.info(f"API key atualizada para {provider}")
+        logger.info(f"API key atualizada for {provider}")
     
     def get_window_geometry(self) -> Dict[str, int]:
         """Obter geometria da janela"""
@@ -366,11 +367,11 @@ class ConfigManager:
         self.set("app.height", height)
         self.set("app.x_position", x)
         self.set("app.y_position", y)
-        logger.debug(f"Geometria da janela atualizada: {width}x{height} @ ({x},{y})")
+        logger.debug(f"Geometria da window atualizada: {width}x{height} @ ({x},{y})")
     
     def get_theme_colors(self) -> Dict[str, str]:
         """Obter cores do tema"""
-        # Verificar se há tema customizado
+        # Check if there are custom themes
         theme_name = self.get("app.theme", "dark")
         custom_theme = self._load_theme(theme_name)
         
@@ -392,9 +393,9 @@ class ConfigManager:
             }
     
     def _load_theme(self, theme_name: str) -> Optional[Dict]:
-        """Carregar tema do ficheiro"""
+        """Carregar theme do ficheiro"""
         try:
-            # Procurar em temas customizados do utilizador
+            # Procurar em themes customizados do utilizador
             user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
             user_theme_file = user_themes_dir / f"{theme_name}.json"
             
@@ -402,29 +403,29 @@ class ConfigManager:
                 with open(user_theme_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             
-            # Procurar em temas da aplicação
+            # Search in application themes
             app_theme_file = self._themes_dir / f"{theme_name}.json"
             if app_theme_file.exists():
                 with open(app_theme_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             
-            logger.warning(f"Tema não encontrado: {theme_name}")
+            logger.warning(f"Theme not found: {theme_name}")
             return None
             
         except Exception as e:
-            logger.error(f"Erro a carregar tema {theme_name}: {e}")
+            logger.error(f"Erro a load theme {theme_name}: {e}")
             return None
     
     def get_available_themes(self) -> List[str]:
-        """Obter lista de temas disponíveis"""
+        """Get list of available themes"""
         themes = []
         
-        # Temas da aplicação
+        # Application themes
         if self._themes_dir.exists():
             for theme_file in self._themes_dir.glob("*.json"):
                 themes.append(theme_file.stem)
         
-        # Temas do utilizador
+        # Themes do utilizador
         user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
         if user_themes_dir.exists():
             for theme_file in user_themes_dir.glob("*.json"):
@@ -434,7 +435,7 @@ class ConfigManager:
         return sorted(themes)
     
     def get_theme_info(self, theme_name: str) -> Optional[Dict]:
-        """Obter informação sobre um tema"""
+        """Get information about a theme"""
         theme = self._load_theme(theme_name)
         if theme:
             return {
@@ -446,9 +447,9 @@ class ConfigManager:
         return None
     
     def enable_encryption(self, enable: bool = True):
-        """Ativar/desativar encriptação de API keys"""
+        """Enable/disable API key encryption"""
         if enable:
-            # Gerar chave se não existir
+            # Gerar key se no existir
             if not self._encryption_key:
                 self._load_encryption_key()
             self.set("app.encryption_enabled", True)
@@ -464,4 +465,4 @@ class ConfigManager:
                 if api_key:
                     self.set(f"api.providers.{provider}.api_key", api_key)
             self.set("app.encryption_enabled", False)
-        logger.info(f"Encriptação {'ativada' if enable else 'desativada'}")
+        logger.info(f"Encryption {'enabled' if enable else 'disabled'}")

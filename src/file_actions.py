@@ -1,8 +1,8 @@
-"""Ações de escrita de ficheiros com confirmação e diff.
+"""File writing actions with confirmation and diff.
 
-Em modo especialista, a IA pode devolver blocos ``` com um caminho de
-ficheiro. Estes blocos são oferecidos ao utilizador com um diff/preview
-antes de escrita. Caminhos fora da home requerem elevação (pkexec).
+Em mode especialista, a IA pode devolver blocos ``` with a path de
+file. These blocks are offered to the user with a diff/preview
+before writing. Paths outside the home require elevation (pkexec).
 """
 
 import difflib
@@ -12,8 +12,10 @@ import tempfile
 
 try:
     from .render_core import FileBlock
+    from .i18n import _
 except ImportError:
     from render_core import FileBlock
+    from i18n import _
 
 try:
     import gi
@@ -25,7 +27,7 @@ except (ImportError, ValueError):
 
 
 def is_privileged_path(path):
-    """True se o caminho está fora da home do utilizador."""
+    """True if the path is outside the user's home."""
     home = os.path.expanduser("~")
     real = os.path.realpath(os.path.expanduser(path))
     return not (real == home or real.startswith(home + os.sep))
@@ -35,10 +37,10 @@ MAX_DIFF_BYTES = 1024 * 1024
 
 
 def preview_diff(path, new_content):
-    """Devolve um diff unificado, ou None se o ficheiro não existe.
+    """Devolve a diff unificado, ou None se o file no existe.
 
-    Lê no máximo 1 MB do ficheiro existente para evitar carregar
-    ficheiros enormes em memória.
+    Reads at most 1 MB of the existing file to prevent loading
+    huge files into memory.
     """
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
@@ -57,19 +59,19 @@ def preview_diff(path, new_content):
 
 
 def _write_privileged(temp_path, dest_path):
-    """Copia tempfile para destino privilegiado via pkexec."""
+    """Copia tempfile for destino privilegiado via pkexec."""
     result = subprocess.run(
         ["pkexec", "cp", temp_path, dest_path],
         capture_output=True, text=True
     )
     if result.returncode != 0:
         raise PermissionError(
-            result.stderr.strip() or f"Falha ao escrever {dest_path} (pkexec)"
+            result.stderr.strip() or f"Falha ao write {dest_path} (pkexec)"
         )
 
 
 def confirm_and_write(parent, block):
-    """Mostra diálogo de confirmação com diff e escreve o ficheiro.
+    """Show confirmation dialog with diff and write the file.
 
     Retorna ("written"|"cancelled"|"error", msg).
     """
@@ -77,16 +79,16 @@ def confirm_and_write(parent, block):
     diff = preview_diff(path, block.content)
 
     if not HAS_GTK:
-        return ("error", "GTK indisponível")
+        return ("error", "GTK unavailable")
 
     content = diff if diff is not None else block.content
-    title = "Novo ficheiro" if diff is None else "Alterações propostas"
+    title = _("New file") if diff is None else _("Proposed changes")
 
     dialog = Gtk.Dialog(
         title=title, transient_for=parent, modal=True
     )
-    dialog.add_button("Cancelar", Gtk.ResponseType.CANCEL)
-    dialog.add_button("Escrever ficheiro", Gtk.ResponseType.OK)
+    dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+    dialog.add_button(_("Write file"), Gtk.ResponseType.OK)
     dialog.set_default_response(Gtk.ResponseType.CANCEL)
 
     box = dialog.get_content_area()
@@ -141,10 +143,10 @@ def confirm_and_write(parent, block):
 
 
 def offer_file_blocks(parent, reply_text, notify):
-    """Deteta blocos de ficheiro na resposta e oferece escrita.
+    """Deteta blocos de file na response e oferece escrita.
 
-    Ignora respostas com mais de 3 blocos (provavelmente apenas
-    exemplos de código). `notify(msg)` é chamado no contexto da UI.
+    Ignora respostas with mais de 3 blocos (provavelmente apenas
+    code examples). `notify(msg)` is called in the UI context.
     """
     blocks = FileBlock.parse_all(reply_text)
     if not blocks:
@@ -159,4 +161,4 @@ def offer_file_blocks(parent, reply_text, notify):
         if status == "written":
             notify(f"Ficheiro escrito: {msg}")
         elif status == "error":
-            notify(f"Erro ao escrever ficheiro: {msg}")
+            notify(f"Erro ao write ficheiro: {msg}")

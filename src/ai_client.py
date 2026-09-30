@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class AIClient:
-    """Cliente para interagir com várias APIs de IA"""
+    """Client to interact with several AI APIs"""
     
     # Constantes
     DEFAULT_TIMEOUT = 30
@@ -36,7 +36,7 @@ class AIClient:
         self._load_custom_providers()
     
     def _create_session(self):
-        """Criar sessão HTTP com headers padrão"""
+        """Create HTTP session with default headers"""
         import requests
         session = requests.Session()
         session.headers.update({
@@ -46,7 +46,7 @@ class AIClient:
         return session
     
     def _setup_retry_strategy(self):
-        """Configurar estratégia de retry"""
+        """Configure retry strategy"""
         self.retry_decorator = retry(
             stop=stop_after_attempt(self.MAX_RETRIES),
             wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -71,36 +71,36 @@ class AIClient:
                                 module.register_provider(self)
                                 logger.info(f"Plugin carregado: {plugin_file.stem}")
                         except Exception as e:
-                            logger.warning(f"Erro a carregar plugin {plugin_file}: {e}")
+                            logger.warning(f"Erro a load plugin {plugin_file}: {e}")
         except Exception as e:
-            logger.warning(f"Erro a carregar plugins: {e}")
+            logger.warning(f"Erro a load plugins: {e}")
     
     def register_provider(self, name: str, chat_func: Callable):
-        """Registrar um novo provedor customizado"""
+        """Registrar a new provider customizado"""
         if name not in self.SUPPORTED_PROVIDERS:
             self.SUPPORTED_PROVIDERS.append(name)
         setattr(self, f"_chat_{name}", chat_func)
         logger.info(f"Provedor customizado registado: {name}")
     
     def _get_api_config(self, provider: str) -> Dict[str, Any]:
-        """Obter configuração da API para um provedor específico"""
+        """Get API configuration for a specific provider"""
         providers = self.config.get("api.providers", {})
         return providers.get(provider, {})
     
     def _get_api_key(self, provider: str) -> Optional[str]:
-        """Obter API key para um provedor"""
+        """Obter API key for a provedor"""
         api_config = self._get_api_config(provider)
         return api_config.get("api_key")
     
     def get_supported_providers(self) -> List[str]:
-        """Obter lista de provedores suportados"""
+        """Obter list de provedores suportados"""
         return self.SUPPORTED_PROVIDERS.copy()
     
     def _count_tokens(self, text: str) -> int:
-        """Estimar número de tokens (simplificado)"""
+        """Estimate number of tokens (simplified)"""
         if not text:
             return 0
-        # Estimativa: ~4 caracteres por token em média
+        # Estimate: ~4 characters per token on average
         return max(1, len(text) // 4)
     
     def _update_token_usage(self, provider: str, input_tokens: int, output_tokens: int):
@@ -127,7 +127,7 @@ class AIClient:
            retry=retry_if_exception_type((RequestException, Timeout, ConnectionError)))
     def _make_request(self, url: str, payload: Dict, headers: Dict = None, 
                      timeout: int = None, stream: bool = False):
-        """Fazer request com retry e error handling"""
+        """Fazer request with retry e error handling"""
         timeout = timeout or self.DEFAULT_TIMEOUT
         merged_headers = {**self.session.headers, **(headers or {})}
         
@@ -144,7 +144,7 @@ class AIClient:
             # Handle rate limiting
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', self.RATE_LIMIT_WAIT))
-                logger.warning(f"Rate limit atingido para {url}. A esperar {retry_after} segundos...")
+                logger.warning(f"Rate limit atingido for {url}. A esperar {retry_after} segundos...")
                 time.sleep(retry_after)
                 # Retry manually
                 return self._make_request(url, payload, headers, timeout, stream)
@@ -156,27 +156,27 @@ class AIClient:
             logger.error(f"Timeout ao conectar a {url}: {e}")
             raise
         except RequestException as e:
-            logger.error(f"Erro na request para {url}: {e}")
+            logger.error(f"Erro na request for {url}: {e}")
             raise
         except Exception as e:
-            logger.error(f"Erro inesperado em request para {url}: {e}")
+            logger.error(f"Erro inesperado em request for {url}: {e}")
             raise
     
     def _validate_messages(self, messages: List[Dict[str, str]]) -> bool:
         """Validar formato das mensagens"""
         if not isinstance(messages, list):
-            logger.error("Messages deve ser uma lista")
+            logger.error("Messages deve ser a lista")
             return False
         
         for i, msg in enumerate(messages):
             if not isinstance(msg, dict):
-                logger.error(f"Mensagem {i} não é um dicionário")
+                logger.error(f"Message {i} is not a dictionary")
                 return False
             if "role" not in msg or "content" not in msg:
-                logger.error(f"Mensagem {i} não tem 'role' ou 'content'")
+                logger.error(f"Message {i} has no 'role' or 'content'")
                 return False
             if msg["role"] not in ["user", "assistant", "system"]:
-                logger.error(f"Role inválido na mensagem {i}: {msg['role']}")
+                logger.error(f"Invalid role in message {i}: {msg['role']}")
                 return False
         
         return True
@@ -184,25 +184,25 @@ class AIClient:
     def chat(self, messages: List[Dict[str, str]], provider: str = None, model: str = None,
              temperature: float = 0.7, max_tokens: int = 2000) -> Optional[str]:
         """
-        Enviar mensagens para a API de IA e obter resposta
+        Enviar messages for a API de IA e get resposta
         
         Args:
-            messages: Lista de mensagens no formato {"role": "user", "content": "..."}
-            provider: Provedor a usar (None = default)
+            messages: Lista de messages no formato {"role": "user", "content": "..."}
+            provider: Provider a usar (None = default)
             model: Modelo a usar (None = default do provedor)
-            temperature: Temperatura para geração
-            max_tokens: Número máximo de tokens
+            temperature: Temperature for generation
+            max_tokens: Maximum number of tokens
             
         Returns:
             Resposta da IA ou None em caso de erro
         """
         # Validar input
         if not self._validate_messages(messages):
-            logger.error("Formato de mensagens inválido")
+            logger.error("Invalid message format")
             return None
         
         if not messages:
-            logger.error("Lista de mensagens vazia")
+            logger.error("Lista de messages vazia")
             return None
         
         provider = provider or self.config.get("api.default_provider", "openrouter")
@@ -218,7 +218,7 @@ class AIClient:
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
         
         if not api_key and provider != "local_llm":
-            logger.error(f"API key não configurada para {provider}")
+            logger.error(f"API key not configured for {provider}")
             return None
         
         try:
@@ -226,17 +226,17 @@ class AIClient:
             input_text = " ".join([msg.get("content", "") for msg in messages])
             input_tokens = self._count_tokens(input_text)
             
-            logger.info(f"Enviando request para {provider} com modelo {model}")
+            logger.info(f"Enviando request for {provider} with modelo {model}")
             
-            # Chamar o método específico do provedor
+            # Call the provider's specific method
             chat_method = getattr(self, f"_chat_{provider}", None)
             if chat_method:
                 result = chat_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
-                logger.error(f"Provedor não suportado: {provider}")
+                logger.error(f"Unsupported provider: {provider}")
                 return None
             
-            # Contar tokens de output e atualizar uso
+            # Contar tokens de output e update uso
             if result:
                 output_tokens = self._count_tokens(result)
                 self._update_token_usage(provider, input_tokens, output_tokens)
@@ -245,12 +245,12 @@ class AIClient:
             return result
             
         except Exception as e:
-            logger.error(f"Erro ao comunicar com {provider}: {e}", exc_info=True)
+            logger.error(f"Erro ao comunicar with {provider}: {e}", exc_info=True)
             return None
     
     def _chat_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
                          base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com OpenRouter API"""
+        """Comunicar with OpenRouter API"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -274,7 +274,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON da OpenRouter: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido da OpenRouter: {e}")
+            logger.error(f"Invalid response format from OpenRouter: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro na OpenRouter: {e}")
@@ -282,10 +282,10 @@ class AIClient:
     
     def _chat_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
                                base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com Google AI Studio API"""
+        """Comunicar with Google AI Studio API"""
         url = f"{base_url}/models/{model}:generateContent?key={api_key}"
         
-        # Converter mensagens para o formato da Google
+        # Converter messages for the formato da Google
         google_messages = []
         for msg in messages:
             role = "user" if msg["role"] == "user" else "model"
@@ -314,7 +314,7 @@ class AIClient:
             data = response.json()
             
             if not data.get("candidates"):
-                logger.warning("Nenhum candidato na resposta da Google AI Studio")
+                logger.warning("Nenhum candidato na response da Google AI Studio")
                 return ""
             
             return data["candidates"][0]["content"]["parts"][0]["text"]
@@ -322,7 +322,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON da Google AI Studio: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido da Google AI Studio: {e}")
+            logger.error(f"Invalid response format from Google AI Studio: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro na Google AI Studio: {e}")
@@ -330,21 +330,21 @@ class AIClient:
     
     def _chat_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com Anthropic Claude API"""
-        # Obter versão da API do modelo
-        api_version = "2023-06-01"  # Default para Claude
+        """Comunicar with Anthropic Claude API"""
+        # Get version da API do modelo
+        api_version = "2023-06-01"  # Default for Claude
         if "claude-3" in model:
             api_version = "2024-03-07"
         
         url = f"{base_url}/messages"
         
-        # Converter mensagens para o formato da Anthropic
+        # Converter messages for the formato da Anthropic
         anthropic_messages = []
         for msg in messages:
             role = msg["role"]
-            # A Anthropic usa "user" e "assistant" (não "system")
+            # Anthropic uses "user" and "assistant" (not "system")
             if role == "system":
-                role = "assistant"  # ou criar uma mensagem de sistema separada
+                role = "assistant"  # ou create a message de system separada
             anthropic_messages.append({
                 "role": role,
                 "content": msg["content"]
@@ -372,9 +372,9 @@ class AIClient:
                 logger.error(f"Erro da Anthropic: {data.get('error', {}).get('message', 'Unknown')}")
                 return None
             
-            # Obter conteúdo da primeira resposta
+            # Get content da primeira resposta
             if data.get("content"):
-                # Se for uma lista, pegar o primeiro
+                # Se for a lista, pegar o primeiro
                 if isinstance(data["content"], list):
                     for content in data["content"]:
                         if content.get("type") == "text":
@@ -387,7 +387,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON da Anthropic: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido da Anthropic: {e}")
+            logger.error(f"Invalid response format from Anthropic: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro na Anthropic: {e}")
@@ -395,7 +395,7 @@ class AIClient:
     
     def _chat_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
                       base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com Mistral AI API"""
+        """Comunicar with Mistral AI API"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -415,7 +415,7 @@ class AIClient:
             data = response.json()
             
             if not data.get("choices"):
-                logger.warning("Nenhuma escolha na resposta da Mistral")
+                logger.warning("Nenhuma escolha na response da Mistral")
                 return ""
             
             return data["choices"][0]["message"]["content"]
@@ -423,7 +423,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON da Mistral: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido da Mistral: {e}")
+            logger.error(f"Invalid response format from Mistral: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro na Mistral: {e}")
@@ -431,7 +431,7 @@ class AIClient:
     
     def _chat_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
                    base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com Groq API"""
+        """Comunicar with Groq API"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -451,7 +451,7 @@ class AIClient:
             data = response.json()
             
             if not data.get("choices"):
-                logger.warning("Nenhuma escolha na resposta do Groq")
+                logger.warning("Nenhuma escolha na response do Groq")
                 return ""
             
             return data["choices"][0]["message"]["content"]
@@ -459,7 +459,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON do Groq: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido do Groq: {e}")
+            logger.error(f"Invalid response format from Groq: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro no Groq: {e}")
@@ -467,10 +467,10 @@ class AIClient:
     
     def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
                      base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com Cohere API"""
+        """Comunicar with Cohere API"""
         url = f"{base_url}/chat"
         
-        # Converter mensagens para o formato da Cohere
+        # Converter messages for the formato da Cohere
         cohere_messages = []
         for msg in messages:
             role = msg["role"]
@@ -498,7 +498,7 @@ class AIClient:
             data = response.json()
             
             if not data.get("response"):
-                logger.warning("Nenhuma resposta da Cohere")
+                logger.warning("Nenhuma response da Cohere")
                 return ""
             
             return data["response"]
@@ -506,7 +506,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON da Cohere: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido da Cohere: {e}")
+            logger.error(f"Invalid response format from Cohere: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro na Cohere: {e}")
@@ -514,7 +514,7 @@ class AIClient:
     
     def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, base_url: str,
                         temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Comunicar com modelo local (Ollama, etc)"""
+        """Comunicar with modelo local (Ollama, etc)"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -532,7 +532,7 @@ class AIClient:
             logger.error(f"Erro a parsear JSON do modelo local: {e}")
             return None
         except KeyError as e:
-            logger.error(f"Formato de resposta inválido do modelo local: {e}")
+            logger.error(f"Invalid response format from local model: {e}")
             return None
         except Exception as e:
             logger.error(f"Erro no modelo local: {e}")
@@ -541,25 +541,25 @@ class AIClient:
     def stream_chat(self, messages: List[Dict[str, str]], provider: str = None, model: str = None,
                     temperature: float = 0.7, max_tokens: int = 2000):
         """
-        Stream de resposta da IA (gerador)
+        Stream de response da IA (gerador)
         
         Args:
             messages: Lista de mensagens
-            provider: Provedor a usar
+            provider: Provider a usar
             model: Modelo a usar
             temperature: Temperatura
-            max_tokens: Máximo de tokens
+            max_tokens: Maximum tokens
             
         Yields:
-            Pedacos da resposta à medida que chegam
+            Chunks of the response as they arrive
         """
         # Validar input
         if not self._validate_messages(messages):
-            yield "Formato de mensagens inválido"
+            yield "Invalid message format"
             return
         
         if not messages:
-            yield "Lista de mensagens vazia"
+            yield "Lista de messages vazia"
             return
         
         provider = provider or self.config.get("api.default_provider", "openrouter")
@@ -575,22 +575,22 @@ class AIClient:
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
         
         try:
-            # Chamar o método específico de stream do provedor
+            # Call the provider's specific stream method
             stream_method = getattr(self, f"_stream_{provider}", None)
             if stream_method:
                 yield from stream_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
-                # Fallback: fazer request normal e yield todo o conteúdo
+                # Fallback: make a normal request and yield all content
                 response = self.chat(messages, provider, model, temperature, max_tokens)
                 if response:
                     yield response
         except Exception as e:
-            logger.error(f"Erro no stream para {provider}: {e}", exc_info=True)
+            logger.error(f"Erro no stream for {provider}: {e}", exc_info=True)
             yield f"Erro: {e}"
     
     def _stream_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
                            base_url: str, temperature: float, max_tokens: int, timeout: int):
-        """Stream com OpenRouter"""
+        """Stream with OpenRouter"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -630,7 +630,7 @@ class AIClient:
     
     def _stream_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
-        """Stream com Anthropic Claude"""
+        """Stream with Anthropic Claude"""
         api_version = "2023-06-01"
         if "claude-3" in model:
             api_version = "2024-03-07"
@@ -684,7 +684,7 @@ class AIClient:
     
     def _stream_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int):
-        """Stream com Mistral AI"""
+        """Stream with Mistral AI"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -723,7 +723,7 @@ class AIClient:
     
     def _stream_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
                       base_url: str, temperature: float, max_tokens: int, timeout: int):
-        """Stream com Groq"""
+        """Stream with Groq"""
         url = f"{base_url}/chat/completions"
         
         payload = {
@@ -762,7 +762,7 @@ class AIClient:
     
     def _stream_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int):
-        """Stream com Cohere"""
+        """Stream with Cohere"""
         url = f"{base_url}/chat"
         
         cohere_messages = []
@@ -807,7 +807,7 @@ class AIClient:
     
     def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, base_url: str,
                           temperature: float, max_tokens: int, timeout: int):
-        """Stream com modelo local"""
+        """Stream with modelo local"""
         url = f"{base_url}/chat/completions"
         
         payload = {

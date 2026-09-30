@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Linux AI Assistant - Aplicação principal
+Linux AI Assistant - Main application
 
-Um assistente de IA permanente para Linux com interface flutuante,
-captura de ecrã, modo especialista e mais.
+Um assistente de IA permanent for Linux with interface flutuante,
+screen capture, expert mode and more.
 """
 
 import sys
@@ -30,66 +30,69 @@ logger = logging.getLogger(__name__)
 # Adicionar src ao path
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Importar módulos (que já configuram o seu logging)
+# Import modules (which set up their own logging)
 from .config_manager import ConfigManager
 from .ai_client import AIClient
 from .system_utils import SystemUtils
 from .main_window import MainWindow
+from . import i18n
 from .tray_icon import TrayIcon
 
 
 class LinuxAIAssistant:
-    """Aplicação principal"""
+    """Main application"""
     
     def __init__(self):
         logger.info("Inicializar Linux AI Assistant")
         
         try:
             self.config = ConfigManager()
-            logger.info("Configuração carregada")
+            logger.info("Configuration loaded")
             
             self.ai_client = AIClient(self.config)
             logger.info("Cliente de IA inicializado")
             
             self.system_utils = SystemUtils(self.config)
-            logger.info("Utilitários do sistema inicializados")
+            logger.info("System utilities initialized")
+            
+            i18n.set_language_from_config(self.config)
             
             self.main_window = None
             self.tray_icon = None
             
         except Exception as e:
-            logger.error(f"Erro ao inicializar aplicação: {e}", exc_info=True)
+            logger.error(f"Error initializing application: {e}", exc_info=True)
             raise
     
     def run(self):
-        """Iniciar a aplicação"""
+        """Start the application"""
         logger.info("Inicializar GTK")
         
         try:
-            # Inicializar GTK
+            # Initialize GTK
             Gtk.init()
             logger.info("GTK inicializado")
             
-            # Criar janela principal
-            logger.info("A criar janela principal")
+            # Create window principal
+            logger.info("A create window principal")
             self.main_window = MainWindow(self, self.config, self.ai_client, self.system_utils)
             
-            # Criar ícone de system tray
-            logger.info("A criar ícone de system tray")
+            # Create system tray icon
+            logger.info("Creating system tray icon")
             self.tray_icon = TrayIcon(self, self.config, self.main_window)
             
-            # Criar botão flutuante permanente
+            # Create permanent floating button
             self._create_float_button()
             
-            # Mostrar janela se auto_start estiver ativo
+            # Show window se auto_start estiver ativo
             if self.config.get("app.auto_start", False):
                 self.main_window.show()
-                logger.info("Janela mostrada (auto_start ativo)")
+                logger.info("Janela shown (auto_start ativo)")
             else:
-                logger.info("Janela não mostrada (auto_start inativo). Use o ícone de system tray.")
+                logger.info("Window not shown (auto_start inactive). Use the system tray icon.")
             
-            # Iniciar loop principal
-            logger.info("A iniciar loop principal do GTK")
+            # Start loop principal
+            logger.info("A start loop main do GTK")
             Gtk.main()
             
         except KeyboardInterrupt:
@@ -100,13 +103,13 @@ class LinuxAIAssistant:
             self.quit()
     
     def quit(self):
-        """Terminar a aplicação"""
-        logger.info("A terminar aplicação")
+        """Quit the application"""
+        logger.info("Terminating application")
         
         try:
             if self.main_window:
                 self.main_window.destroy()
-                logger.info("Janela principal destruída")
+                logger.info("Main window destroyed")
             
             if self.tray_icon:
                 if hasattr(self.tray_icon, 'indicator'):
@@ -120,10 +123,10 @@ class LinuxAIAssistant:
             Gtk.main_quit()
             
         except Exception as e:
-            logger.error(f"Erro ao terminar aplicação: {e}", exc_info=True)
+            logger.error(f"Error terminating application: {e}", exc_info=True)
     
     def _create_float_button(self):
-        """Botão flutuante permanente para mostrar/ocultar a janela principal"""
+        """Permanent floating button to show/hide the main window"""
         button_window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
         button_window.set_default_size(52, 52)
         button_window.set_decorated(False)
@@ -165,13 +168,13 @@ class LinuxAIAssistant:
 
 
 def main():
-    """Ponto de entrada principal"""
-    logger.info("Linux AI Assistant - Início")
+    """Ponto de input principal"""
+    logger.info("Linux AI Assistant - Start")
     
     try:
         app = LinuxAIAssistant()
         
-        # Manipular sinais para saír corretamente
+        # Handle signals to quit correctly
         signal.signal(signal.SIGINT, lambda s, f: app.quit())
         signal.signal(signal.SIGTERM, lambda s, f: app.quit())
         logger.info("Handlers de sinal configurados")
