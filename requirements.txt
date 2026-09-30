@@ -1,0 +1,9 @@
+# Dependências principais
+gi==4.7.1
+pygobject==3.40.1
+requests==2.31.0
+pillow==9.5.0
+pytesseract==0.3.10
+python-dotenv==1.0.0
+pyautogui==0.9.54
+psutil==5.9.5
