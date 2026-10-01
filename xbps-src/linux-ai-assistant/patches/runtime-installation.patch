@@ -1,0 +1,789 @@
+diff --git a/config/.env.example b/config/.env.example
+index 5ed0cb3..e6405b3 100644
+--- a/config/.env.example
++++ b/config/.env.example
+@@ -1,13 +1,13 @@
+ # Configuração de API Keys
+ # Copie este ficheiro para .env e preencha com as suas chaves
+ 
+-OPENROUTER_API_KEY=your_openrouter_api_key_here
+-GOOGLE_AI_STUDIO_KEY=your_google_ai_studio_key_here
++OPENROUTER_API_KEY=
++GOOGLE_AI_STUDIO_KEY=
+ 
+ # Configuração opcional do modelo local
+-LOCAL_LLM_BASE_URL=http://localhost:11434/v1
+-LOCAL_LLM_MODEL=llama3.2
++LINUX_AI_API_PROVIDERS_LOCAL_LLM_BASE_URL=http://localhost:11434/v1
++LINUX_AI_API_PROVIDERS_LOCAL_LLM_MODEL=llama3.2
+ 
+ # Configuração da aplicação
+-APP_ALWAYS_ON_TOP=true
+-APP_OPACITY=0.9
++LINUX_AI_APP_ALWAYS_ON_TOP=true
++LINUX_AI_APP_OPACITY=0.9
+diff --git a/requirements.txt b/requirements.txt
+index 45257a2..96e68a7 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,21 +1,19 @@
+ # Dependências principais
+-gi==4.7.1
+-pygobject==3.40.1
+-requests==2.31.0
+-pillow==9.5.0
+-pytesseract==0.3.10
+-python-dotenv==1.0.0
+-pyautogui==0.9.54
+-psutil==5.9.5
++# GTK bindings (PyGObject/cairo) must be installed by the system package manager.
++requests>=2.31.0
++pillow>=10.0.0
++pytesseract>=0.3.10
++python-dotenv>=1.0.0
++psutil>=5.9.5
+ 
+ # Nova: Retry mechanism
+-tenacity==8.2.3
++tenacity>=8.2.3
+ 
+ # Nova: Logging JSON (opcional)
+-python-json-logger==2.0.7
++python-json-logger>=2.0.7
+ 
+ # Nova: Encriptação (opcional)
+-cryptography==42.0.2
++cryptography>=42.0.2
+ 
+ # Nova: Notificações do sistema
+-notify2==0.3.1
++notify2>=0.3.1
+diff --git a/run.sh b/run.sh
+new file mode 100755
+index 0000000..2181ed2
+--- /dev/null
++++ b/run.sh
+@@ -0,0 +1,8 @@
++#!/bin/bash
++set -e
++PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++cd "$PROJECT_DIR"
++if [ -x "$PROJECT_DIR/venv/bin/python" ]; then
++    exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
++fi
++exec python3 -m src.app "$@"
+diff --git a/scripts/autostart.sh b/scripts/autostart.sh
+index 6a3c55c..fc75a22 100644
+--- a/scripts/autostart.sh
++++ b/scripts/autostart.sh
+@@ -32,7 +32,7 @@ Version=1.0
+ Type=Application
+ Name=Linux AI Assistant
+ Comment=Assistente de IA permanente para Linux
+-Exec=$PROJECT_DIR/run.sh
++Exec=bash "$PROJECT_DIR/run.sh"
+ Icon=$PROJECT_DIR/assets/icon.png
+ Terminal=false
+ Categories=Utility;System;
+@@ -76,12 +76,6 @@ check_autostart() {
+ # Função principal
+ main() {
+     echo -e "${GREEN}"
+-    echo "  _    _      _ _       __        __         _   _"
+-    echo " | |  | |    | | |       \ \      / /        | | | |"
+-    echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
+-    echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
+-    echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
+-    echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
+     echo ""
+     echo -e "      Linux AI Assistant - Configuração de Inicialização${NC}"
+     echo ""
+diff --git a/scripts/detect_distro.sh b/scripts/detect_distro.sh
+index 7de6d3b..7cfdcbc 100644
+--- a/scripts/detect_distro.sh
++++ b/scripts/detect_distro.sh
+@@ -12,12 +12,6 @@ CYAN='\033[0;36m'
+ NC='\033[0m' # No Color
+ 
+ echo -e "${CYAN}"
+-echo "  _    _      _ _       __        __         _   _"
+-echo " | |  | |    | | |       \ \      / /        | | | |"
+-echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
+-echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
+-echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
+-echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
+ echo ""
+ echo -e "      Linux AI Assistant - Deteção de Distribuição${NC}"
+ echo ""
+diff --git a/scripts/install.sh b/scripts/install.sh
+index 39e5887..d5753b0 100644
+--- a/scripts/install.sh
++++ b/scripts/install.sh
+@@ -23,6 +23,10 @@ fi
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+ 
++if command -v xbps-install >/dev/null 2>&1; then
++    exec bash "$SCRIPT_DIR/install_void.sh" "$@"
++fi
++
+ # Modo de desenvolvimento
+ DEV_MODE=false
+ if [ "$1" == "--dev" ]; then
+@@ -46,76 +50,25 @@ install_packages() {
+         PKG_MANAGER="apt-get"
+         UPDATE_CMD="sudo apt-get update"
+         INSTALL_CMD="sudo apt-get install -y"
+-    elif command_exists dnf; then
+-        PKG_MANAGER="dnf"
+-        UPDATE_CMD="sudo dnf makecache"
+-        INSTALL_CMD="sudo dnf install -y"
+-    elif command_exists yum; then
+-        PKG_MANAGER="yum"
+-        UPDATE_CMD="sudo yum makecache"
+-        INSTALL_CMD="sudo yum install -y"
+-    elif command_exists pacman; then
+-        PKG_MANAGER="pacman"
+-        UPDATE_CMD="sudo pacman -Sy"
+-        INSTALL_CMD="sudo pacman -S --noconfirm"
+-    elif command_exists zypper; then
+-        PKG_MANAGER="zypper"
+-        UPDATE_CMD="sudo zypper refresh"
+-        INSTALL_CMD="sudo zypper install -y"
+-    elif command_exists xbps-install; then
+-        PKG_MANAGER="xbps"
+-        UPDATE_CMD="sudo xbps-install -Su"
+-        INSTALL_CMD="sudo xbps-install -Sy"
+     else
+-        echo -e "${RED}Não foi possível detectar o gestor de pacotes!${NC}"
++        echo "Automatic installation currently supports Debian/Ubuntu and Void Linux."
++        echo "For other distributions, install the dependencies from README.md manually."
+         exit 1
+     fi
+     
+     echo -e "${BLUE}Detetado gestor de pacotes: $PKG_MANAGER${NC}"
+     
+-    # Pacotes necessários (nomes variam conforme a distribuição)
+-    if [ "$PKG_MANAGER" = "xbps" ]; then
+-        # Void Linux (e d77void)
+-        REQUIRED_PACKAGES=(
+-            "python3"
+-            "python3-pip"
+-            "python3-venv"
+-            "git"
+-            "scrot"
+-            "tesseract-ocr"
+-            "tesseract-ocr-por"
+-            "tesseract-ocr-eng"
+-            "libgtk-3"
+-            "libgtk-3-devel"
+-            "py3-gobject"
+-            "py3-cairo"
+-            "gobject-introspection"
+-            "libappindicator-gtk3"
+-        )
+-    else
+-        # Debian/Ubuntu, Fedora, Arch, openSUSE
+-        REQUIRED_PACKAGES=(
+-            "python3"
+-            "python3-pip"
+-            "python3-venv"
+-            "git"
+-            "scrot"
+-            "tesseract-ocr"
+-            "tesseract-ocr-por"
+-            "tesseract-ocr-eng"
+-            "libgtk-3-0"
+-            "libgtk-3-dev"
+-            "python3-gi"
+-            "python3-gi-cairo"
+-            "gir1.2-gtk-3.0"
+-            "gir1.2-appindicator3-0.1"
+-        )
+-    fi
+-    
++    REQUIRED_PACKAGES=(
++        python3 python3-pip python3-venv git scrot tesseract-ocr
++        tesseract-ocr-por tesseract-ocr-eng libgtk-3-0 python3-gi
++        python3-gi-cairo gir1.2-gtk-3.0 gir1.2-notify-0.7
++        gir1.2-appindicator3-0.1
++    )
++
+     # Verificar e instalar pacotes em falta
+     MISSING_PACKAGES=()
+     for pkg in "${REQUIRED_PACKAGES[@]}"; do
+-        if ! command_exists "$pkg" && ! dpkg -l "$pkg" >/dev/null 2>&1 && ! rpm -q "$pkg" >/dev/null 2>&1 && ! xbps-query -x "$pkg" >/dev/null 2>&1; then
++        if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" != "install ok installed" ]; then
+             MISSING_PACKAGES+=("$pkg")
+         fi
+     done
+@@ -127,16 +80,8 @@ install_packages() {
+         # Atualizar cache
+         eval "$UPDATE_CMD"
+         
+-        # Instalar pacotes (para xbps, precisamos instalar um por um)
+-        if [ "$PKG_MANAGER" = "xbps" ]; then
+-            for pkg in "${MISSING_PACKAGES[@]}"; do
+-                echo -e "${BLUE}A instalar: $pkg${NC}"
+-                sudo xbps-install -Sy "$pkg"
+-            done
+-        else
+-            eval "$INSTALL_CMD ${MISSING_PACKAGES[*]}"
+-        fi
+-        
++        sudo apt-get install -y "${MISSING_PACKAGES[@]}"
++
+         echo -e "${GREEN}Pacotes instalados com sucesso!${NC}"
+     else
+         echo -e "${GREEN}Todos os pacotes necessários já estão instalados!${NC}"
+@@ -155,7 +100,7 @@ create_venv() {
+     fi
+     
+     # Criar ambiente virtual
+-    python3 -m venv "$VENV_DIR"
++    python3 -m venv --system-site-packages "$VENV_DIR"
+     
+     # Ativar ambiente virtual e instalar dependências
+     source "$VENV_DIR/bin/activate"
+@@ -182,7 +127,7 @@ Version=1.0
+ Type=Application
+ Name=Linux AI Assistant
+ Comment=Assistente de IA permanente para Linux
+-Exec=$PROJECT_DIR/run.sh
++Exec=bash "$PROJECT_DIR/run.sh"
+ Icon=$PROJECT_DIR/assets/icon.png
+ Terminal=false
+ Categories=Utility;System;
+@@ -193,7 +138,9 @@ EOL
+     chmod +x "$DESKTOP_FILE"
+     
+     # Atualizar base de dados de aplicações
+-    update-desktop-database "$DESKTOP_DIR"
++    if command -v update-desktop-database >/dev/null 2>&1; then
++        update-desktop-database "$DESKTOP_DIR"
++    fi
+     
+     echo -e "${GREEN}Atalho criado em $DESKTOP_FILE${NC}"
+ }
+@@ -204,19 +151,12 @@ create_run_script() {
+     
+     RUN_SCRIPT="$PROJECT_DIR/run.sh"
+     
+-    cat > "$RUN_SCRIPT" <<EOL
++    cat > "$RUN_SCRIPT" <<'EOL'
+ #!/bin/bash
+-
+-# Script de execução para Linux AI Assistant
+-
++set -e
+ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-VENV_DIR="$PROJECT_DIR/venv"
+-
+-# Ativar ambiente virtual
+-source "$VENV_DIR/bin/activate"
+-
+-# Executar aplicação
+-python "$PROJECT_DIR/src/app.py"
++cd "$PROJECT_DIR"
++exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
+ EOL
+     
+     chmod +x "$RUN_SCRIPT"
+@@ -305,12 +245,6 @@ show_final_instructions() {
+ # Função principal
+ main() {
+     echo -e "${GREEN}"
+-    echo "  _    _      _ _       __        __         _   _"
+-    echo " | |  | |    | | |       \ \      / /        | | | |"
+-    echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
+-    echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
+-    echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
+-    echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
+     echo ""
+     echo -e "      Linux AI Assistant - Instalação${NC}"
+     echo ""
+diff --git a/scripts/install_void.sh b/scripts/install_void.sh
+index d867bf9..06d286c 100644
+--- a/scripts/install_void.sh
++++ b/scripts/install_void.sh
+@@ -38,12 +38,6 @@ if ! command -v xbps-install >/dev/null 2>&1; then
+ fi
+ 
+ echo -e "${GREEN}"
+-echo "  _    _      _ _       __        __         _   _"
+-echo " | |  | |    | | |       \ \      / /        | | | |"
+-echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
+-echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"  
+-echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
+-echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
+ echo ""
+ echo -e "      Linux AI Assistant - Instalação para Void Linux/d77void${NC}"
+ echo ""
+@@ -61,18 +55,15 @@ install_void_packages() {
+     REQUIRED_PACKAGES=(
+         "python3"
+         "python3-pip"
+-        "python3-venv"
+         "git"
+         "scrot"
+         "tesseract-ocr"
+         "tesseract-ocr-por"
+         "tesseract-ocr-eng"
+-        "libgtk-3"
+-        "libgtk-3-devel"
+-        "py3-gobject"
+-        "py3-cairo"
+-        "gobject-introspection"
+-        "libappindicator-gtk3"
++        "gtk+3"
++        "python3-gobject"
++        "python3-cairo"
++        "libnotify"
+         "ImageMagick"  # Para criar ícone se necessário
+     )
+     
+@@ -91,11 +82,7 @@ install_void_packages() {
+         # Atualizar repositórios
+         sudo xbps-install -Su
+         
+-        # Instalar pacotes um por um (xbps não tem suporte nativo para instalar múltiplos)
+-        for pkg in "${MISSING_PACKAGES[@]}"; do
+-            echo -e "${BLUE}  A instalar: $pkg${NC}"
+-            sudo xbps-install -Sy "$pkg"
+-        done
++        sudo xbps-install -y "${MISSING_PACKAGES[@]}"
+         
+         echo -e "${GREEN}Pacotes instalados com sucesso!${NC}"
+     else
+@@ -115,7 +102,7 @@ create_venv() {
+     fi
+     
+     # Criar ambiente virtual
+-    python3 -m venv "$VENV_DIR"
++    python3 -m venv --system-site-packages "$VENV_DIR"
+     
+     # Ativar ambiente virtual e instalar dependências
+     source "$VENV_DIR/bin/activate"
+@@ -142,7 +129,7 @@ Version=1.0
+ Type=Application
+ Name=Linux AI Assistant
+ Comment=Assistente de IA permanente para Linux
+-Exec=$PROJECT_DIR/run.sh
++Exec=bash "$PROJECT_DIR/run.sh"
+ Icon=$PROJECT_DIR/assets/icon.png
+ Terminal=false
+ Categories=Utility;System;
+@@ -166,19 +153,12 @@ create_run_script() {
+     
+     RUN_SCRIPT="$PROJECT_DIR/run.sh"
+     
+-    cat > "$RUN_SCRIPT" <<EOL
++    cat > "$RUN_SCRIPT" <<'EOL'
+ #!/bin/bash
+-
+-# Script de execução para Linux AI Assistant
+-
++set -e
+ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-VENV_DIR="$PROJECT_DIR/venv"
+-
+-# Ativar ambiente virtual
+-source "$VENV_DIR/bin/activate"
+-
+-# Executar aplicação
+-python "$PROJECT_DIR/src/app.py"
++cd "$PROJECT_DIR"
++exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
+ EOL
+     
+     chmod +x "$RUN_SCRIPT"
+@@ -247,34 +227,6 @@ create_config() {
+     fi
+ }
+ 
+-# Função para criar serviço runit (opcional para Void Linux)
+-create_runit_service() {
+-    echo -e "${YELLOW}A criar serviço runit (opcional)...${NC}"
+-    
+-    # Diretório para serviços de utilizador
+-    RUNIT_DIR="$HOME/.local/service"
+-    mkdir -p "$RUNIT_DIR"
+-    
+-    # Criar ficheiro run
+-    cat > "$RUNIT_DIR/linux-ai-assistant/run" <<EOL
+-#!/bin/sh
+-exec $PROJECT_DIR/run.sh
+-EOL
+-    
+-    chmod +x "$RUNIT_DIR/linux-ai-assistant/run"
+-    
+-    # Criar link simbólico para /etc/sv (requer sudo)
+-    echo -e "${BLUE}Para ativar o serviço runit, execute:${NC}"
+-    echo "  sudo ln -s $RUNIT_DIR/linux-ai-assistant /etc/sv/linux-ai-assistant"
+-    echo "  sudo ln -s /etc/sv/linux-ai-assistant /var/service/"
+-    echo ""
+-    echo -e "${BLUE}Para iniciar o serviço:${NC}"
+-    echo "  sv up linux-ai-assistant"
+-    echo ""
+-    echo -e "${BLUE}Para parar o serviço:${NC}"
+-    echo "  sv down linux-ai-assistant"
+-}
+-
+ # Função para mostrar instruções finais
+ show_final_instructions() {
+     echo ""
+@@ -300,7 +252,7 @@ show_final_instructions() {
+     echo "  - O assistente será executado com privilégios normais."
+     echo "  - Para funcionalidades que requerem sudo, será pedido password."
+     echo "  - O modo especialista permite editar ficheiros de configuração."
+-    echo "  - Opcionalmente, pode configurar um serviço runit para iniciar automaticamente."
++    echo "  - Para iniciar na sessão gráfica: ./scripts/autostart.sh enable"
+     echo "  - O d77void usa runit como init system em vez de systemd."
+     echo ""
+ }
+@@ -325,9 +277,6 @@ main() {
+     # Criar configuração
+     create_config
+     
+-    # Criar serviço runit (opcional)
+-    create_runit_service
+-    
+     # Mostrar instruções finais
+     show_final_instructions
+ }
+diff --git a/scripts/linux-ai-assistant.desktop b/scripts/linux-ai-assistant.desktop
+new file mode 100644
+index 0000000..9e964b9
+--- /dev/null
++++ b/scripts/linux-ai-assistant.desktop
+@@ -0,0 +1,9 @@
++[Desktop Entry]
++Type=Application
++Name=Linux AI Assistant
++Comment=Floating Linux AI assistant
++Exec=linux-ai-assistant
++Icon=system-run
++Terminal=false
++Categories=Utility;System;
++StartupWMClass=linux-ai-assistant
+diff --git a/scripts/uninstall.sh b/scripts/uninstall.sh
+index 3418d28..07ec871 100644
+--- a/scripts/uninstall.sh
++++ b/scripts/uninstall.sh
+@@ -84,12 +84,6 @@ remove_cache() {
+ # Função principal
+ main() {
+     echo -e "${RED}"
+-    echo "  _    _      _ _       __        __         _   _"
+-    echo " | |  | |    | | |       \ \      / /        | | | |"
+-    echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
+-    echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
+-    echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
+-    echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
+     echo ""
+     echo -e "      Linux AI Assistant - Desinstalação${NC}"
+     echo ""
+diff --git a/setup.py b/setup.py
+index af2b106..be600a8 100644
+--- a/setup.py
++++ b/setup.py
+@@ -4,7 +4,7 @@ Setup script para Linux AI Assistant
+ """
+ 
+ from setuptools import setup, find_packages
+-import os
++from glob import glob
+ 
+ # Ler o ficheiro requirements.txt
+ with open('requirements.txt') as f:
+@@ -22,8 +22,9 @@ setup(
+     long_description_content_type='text/markdown',
+     author='Linux AI Assistant Team',
+     author_email='',
+-    url='https://github.com/seu-utilizador/linux-ai-assistant',
++    url='https://github.com/1400015/linux_ai',
+     packages=find_packages(),
++    data_files=[('share/linux-ai-assistant/themes', glob('themes/*.json'))],
+     package_dir={'': '.'},
+     python_requires='>=3.8',
+     install_requires=requirements,
+@@ -47,7 +48,7 @@ setup(
+         'Topic :: Utilities',
+     ],
+     project_urls={
+-        'Bug Reports': 'https://github.com/seu-utilizador/linux-ai-assistant/issues',
+-        'Source': 'https://github.com/seu-utilizador/linux-ai-assistant',
++        'Bug Reports': 'https://github.com/1400015/linux_ai/issues',
++        'Source': 'https://github.com/1400015/linux_ai',
+     },
+ )
+diff --git a/src/__init__.py b/src/__init__.py
+index bdc3f6a..be54590 100644
+--- a/src/__init__.py
++++ b/src/__init__.py
+@@ -32,6 +32,3 @@ except Exception as e:
+     print(f"Warning: Could not set up file logging: {e}")
+ 
+ logger.addHandler(console_handler)
+-
+-# Import modules so that logging is available
+-from . import ai_client, config_manager, system_utils, main_window, tray_icon, app
+diff --git a/src/ai_client.py b/src/ai_client.py
+index 24f67b8..2b21d41 100644
+--- a/src/ai_client.py
++++ b/src/ai_client.py
+@@ -89,8 +89,7 @@ class AIClient:
+     
+     def _get_api_key(self, provider: str) -> Optional[str]:
+         """Obter API key for a provedor"""
+-        api_config = self._get_api_config(provider)
+-        return api_config.get("api_key")
++        return self.config.get_api_key(provider)
+     
+     def get_supported_providers(self) -> List[str]:
+         """Obter list de provedores suportados"""
+diff --git a/src/config_manager.py b/src/config_manager.py
+index 239c7dc..0cc3bfb 100644
+--- a/src/config_manager.py
++++ b/src/config_manager.py
+@@ -4,6 +4,8 @@ import base64
+ from pathlib import Path
+ from typing import Any, Optional, Dict, List
+ import logging
++import sys
++from dotenv import load_dotenv
+ 
+ # Configurar logger
+ logger = logging.getLogger(__name__)
+@@ -153,10 +155,13 @@ class ConfigManager:
+             config_dir.mkdir(parents=True, exist_ok=True)
+             config_path = str(config_dir / "config.json")
+         
++        load_dotenv(Path(config_path).parent / ".env", override=False)
+         self.config_path = config_path
+         self.config = {}
+         self._encryption_key = None
+         self._themes_dir = Path(__file__).parent.parent / "themes"
++        if not self._themes_dir.is_dir():
++            self._themes_dir = Path(sys.prefix) / "share" / "linux-ai-assistant" / "themes"
+         self._load_config()
+         self._validate_config()
+     
+@@ -326,7 +331,7 @@ class ConfigManager:
+         
+         current[keys[-1]] = value
+         self.save()
+-        logger.debug(f"Configuration updated: {key} = {value}")
++        logger.debug("Configuration updated: %s", key)
+     
+     def save(self):
+         """Save configuration to file"""
+@@ -345,7 +350,18 @@ class ConfigManager:
+     
+     def get_api_key(self, provider: str) -> Optional[str]:
+         """Get API key for a specific provider"""
+-        return self.get(f"api.providers.{provider}.api_key")
++        legacy_names = {
++            "openrouter": "OPENROUTER_API_KEY",
++            "google_ai_studio": "GOOGLE_AI_STUDIO_KEY",
++        }
++        key = f"api.providers.{provider}.api_key"
++        env_name = "LINUX_AI_" + key.upper().replace(".", "_")
++        if os.environ.get(env_name):
++            return os.environ[env_name]
++        legacy_name = legacy_names.get(provider)
++        if legacy_name and os.environ.get(legacy_name):
++            return os.environ[legacy_name]
++        return self.get(key)
+     
+     def set_api_key(self, provider: str, api_key: str):
+         """Definir API key for a provedor"""
+diff --git a/src/main_window.py b/src/main_window.py
+index b6745fe..586cda8 100644
+--- a/src/main_window.py
++++ b/src/main_window.py
+@@ -134,13 +134,9 @@ class MainWindow(Gtk.Window):
+         key, mod = Gtk.accelerator_parse("<Control>Return")
+         self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+         
+-        # Ctrl+Shift+Enter for new linha
+-        key, mod = Gtk.accelerator_parse("<Control><Shift>Return")
+-        self.input_entry.add_accelerator("insert-at-cursor", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+-        
+         # Escape for clear input
+         key, mod = Gtk.accelerator_parse("Escape")
+-        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
++        accel_group.connect(key, mod,
+                           Gtk.AccelFlags.VISIBLE, self.on_clear_input)
+         
+         # Ctrl+E for alternar mode especialista
+@@ -149,12 +145,12 @@ class MainWindow(Gtk.Window):
+         
+         # Ctrl+Q for fechar
+         key, mod = Gtk.accelerator_parse("<Control>q")
+-        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
++        accel_group.connect(key, mod,
+                           Gtk.AccelFlags.VISIBLE, lambda *args: self.on_close_clicked())
+         
+         # Ctrl+S to capture screen
+         key, mod = Gtk.accelerator_parse("<Control>s")
+-        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
++        accel_group.connect(key, mod,
+                           Gtk.AccelFlags.VISIBLE, lambda *args: self.on_capture_screen_clicked(None))
+         
+         logger.info("Atalhos de teclado configurados")
+diff --git a/src/system_utils.py b/src/system_utils.py
+index ae6f136..cce9627 100644
+--- a/src/system_utils.py
++++ b/src/system_utils.py
+@@ -1,4 +1,6 @@
+ import os
++import getpass
++import shutil
+ import shlex
+ import subprocess
+ import platform
+@@ -25,7 +27,7 @@ class SystemUtils:
+         self.is_wayland = os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+         self.is_x11 = os.environ.get("DISPLAY") is not None
+         self.is_root = os.geteuid() == 0
+-        self.username = os.getlogin()
++        self.username = getpass.getuser()
+         
+         logger.info(f"Ambiente detetado: {'Wayland' if self.is_wayland else 'X11'}")
+         logger.info(f"Utilizador: {self.username}, Root: {self.is_root}")
+@@ -616,6 +618,10 @@ class SystemUtils:
+             import pytesseract
+             from PIL import Image
+             
++            pytesseract.pytesseract.tesseract_cmd = (
++                shutil.which("tesseract") or shutil.which("tesseract-ocr") or "tesseract"
++            )
++
+             # Verificar se file existe
+             if not os.path.exists(image_path):
+                 return False, f"File not found: {image_path}"
+@@ -643,9 +649,20 @@ class SystemUtils:
+                 logger.error(f"Erro no pytesseract: {e}")
+                 return False, f"Erro no OCR: {e}"
+                 
+-        except ImportError as e:
+-            logger.error(f"pytesseract or PIL not installed: {e}")
+-            return False, "pytesseract or PIL not installed (install with: pip install pytesseract pillow)"
++        except ImportError:
++            binary = shutil.which("tesseract") or shutil.which("tesseract-ocr")
++            if not binary:
++                return False, "Tesseract OCR is not installed"
++            try:
++                result = subprocess.run(
++                    [binary, image_path, "stdout", "-l", lang],
++                    capture_output=True, text=True, timeout=30
++                )
++                if result.returncode != 0:
++                    return False, result.stderr.strip()
++                return True, result.stdout.strip()
++            except (OSError, subprocess.TimeoutExpired) as e:
++                return False, f"OCR failed: {e}"
+         except Exception as e:
+             logger.error(f"Erro ao extrair texto: {e}")
+             return False, f"Erro ao extrair texto: {e}"
+diff --git a/src/tray_icon.py b/src/tray_icon.py
+index 89517fb..6ef20cc 100644
+--- a/src/tray_icon.py
++++ b/src/tray_icon.py
+@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
+ try:
+     gi.require_version('Gtk', '3.0')
+     gi.require_version('AppIndicator3', '0.1')
+-    from gi.repository import Gtk, AppIndicator3
+-except ImportError:
++    from gi.repository import Gtk, GdkPixbuf, AppIndicator3
++except (ImportError, ValueError):
++    AppIndicator3 = None
+     # Fallback for sistemas sem AppIndicator3
+     gi.require_version('Gtk', '3.0')
+     gi.require_version('Gdk', '3.0')
+diff --git a/tests/test_installation.py b/tests/test_installation.py
+new file mode 100644
+index 0000000..2c0ddcc
+--- /dev/null
++++ b/tests/test_installation.py
+@@ -0,0 +1,78 @@
++"""Regression tests for installation, configuration and headless startup."""
++import os
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++import unittest
++from unittest.mock import patch
++
++from src.config_manager import ConfigManager
++from src.ai_client import AIClient
++from src.system_utils import SystemUtils
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++class InstallationTests(unittest.TestCase):
++    def test_shell_scripts_parse(self):
++        for script in [ROOT / "run.sh", *sorted((ROOT / "scripts").glob("*.sh"))]:
++            with self.subTest(script=script.name):
++                subprocess.run(["bash", "-n", str(script)], check=True)
++
++    def test_generated_launchers_resolve_the_project_at_runtime(self):
++        for name in ("install.sh", "install_void.sh"):
++            with self.subTest(installer=name), tempfile.TemporaryDirectory() as directory:
++                project = Path(directory) / "checkout with spaces"
++                interpreter = project / "venv" / "bin" / "python"
++                interpreter.parent.mkdir(parents=True)
++                interpreter.write_text('#!/bin/sh\nprintf "%s\\n" "$PWD" "$@"\n')
++                interpreter.chmod(0o755)
++                text = (ROOT / "scripts" / name).read_text()
++                function = text.split("create_run_script() {", 1)[1].split("\n}", 1)[0]
++                subprocess.run(
++                    ["bash", "-c", 'PROJECT_DIR="$1"\ncreate_run_script() {' + function +
++                     '\n}\ncreate_run_script', "test", str(project)],
++                    check=True, capture_output=True, text=True,
++                )
++                result = subprocess.run(
++                    [str(project / "run.sh"), "argument with spaces"],
++                    cwd="/tmp", check=True, capture_output=True, text=True,
++                )
++                self.assertEqual(result.stdout.splitlines(),
++                                 [str(project), "-m", "src.app", "argument with spaces"])
++
++    def test_package_import_does_not_load_gui(self):
++        result = subprocess.run(
++            [sys.executable, "-c", "import src,sys; assert 'src.main_window' not in sys.modules"],
++            cwd=ROOT, capture_output=True, text=True,
++        )
++        self.assertEqual(result.returncode, 0, result.stderr)
++
++    def test_documented_dotenv_key_reaches_api_client(self):
++        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
++            config_path = Path(directory) / "config.json"
++            (config_path.parent / ".env").write_text("OPENROUTER_API_KEY=test-key\n")
++            config = ConfigManager(str(config_path))
++            client = AIClient(config)
++            self.assertEqual(client._get_api_key("openrouter"), "test-key")
++            client.session.close()
++
++    def test_existing_environment_takes_precedence_over_dotenv(self):
++        with tempfile.TemporaryDirectory() as directory, patch.dict(
++            os.environ, {"OPENROUTER_API_KEY": "process-key"}, clear=True
++        ):
++            (Path(directory) / ".env").write_text("OPENROUTER_API_KEY=file-key\n")
++            config = ConfigManager(str(Path(directory) / "config.json"))
++            self.assertEqual(config.get_api_key("openrouter"), "process-key")
++
++    def test_system_utils_without_a_controlling_terminal(self):
++        with patch("os.getlogin", side_effect=OSError("no terminal")), patch(
++            "getpass.getuser", return_value="desktop-user"
++        ):
++            utilities = SystemUtils(type("Config", (), {"get": lambda self, key, default: default})())
++            self.assertEqual(utilities.username, "desktop-user")
++
++
++if __name__ == "__main__":
++    unittest.main()
