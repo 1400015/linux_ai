@@ -51,11 +51,52 @@ def _inline_to_markup(text: str) -> str:
     return "".join(parts)
 
 
+def _code_block_to_markup(body: str) -> str:
+    """Render a fenced block as a monospace span (escaped, never raw)."""
+    return ("<span font_family='monospace' background='#2a2a30'>%s</span>"
+            % esc(body))
+
+
+CODE_BLOCK_TAG = "code-block"
+INLINE_CODE_TAG = "inline-code"
+
+
+def code_ranges(text: str) -> list[tuple[int, int, str]]:
+    """Return `(start, end, tag)` spans for fenced blocks and inline code.
+
+    Offsets are relative to `text`, so a caller can apply the tags to a region
+    that is already in the chat buffer without re-inserting (and therefore
+    without disturbing) the text.
+    """
+    ranges: list[tuple[int, int, str]] = []
+    for match in CODE_RE.finditer(text):
+        ranges.append((match.start(), match.end(), CODE_BLOCK_TAG))
+
+    # Inline code, but only outside fenced blocks: mask them out first so a
+    # backtick inside a block cannot produce a bogus nested span.
+    masked = list(text)
+    for start, end, _tag in ranges:
+        for index in range(start, end):
+            masked[index] = "\0"
+    for match in INLINE_CODE_RE.finditer("".join(masked)):
+        inner = match.group(1)
+        if "\0" not in inner:
+            # Strip the surrounding backticks.
+            ranges.append((match.start() + 1, match.end() - 1, INLINE_CODE_TAG))
+
+    ranges.sort()
+    return ranges
+
+
 def render_text_markup(text: str) -> str:
     parts = []
     pos = 0
     for m in CODE_RE.finditer(text):
         parts.append(_inline_to_markup(text[pos:m.start()]))
+        # The block itself must be emitted: the old loop advanced `pos` past
+        # it without appending anything, so every fenced block disappeared
+        # from the rendered text.
+        parts.append(_code_block_to_markup(m.group(2)))
         pos = m.end()
     parts.append(_inline_to_markup(text[pos:]))
     return "".join(parts)

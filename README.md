@@ -15,6 +15,7 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 - ✅ **File editing** - Edit configuration files with authorization
 - ✅ **Command execution** - Run system commands with controlled permissions
 - ✅ **Conversation history** - Keeps conversation context
+- ✅ **Code highlighting** - Fenced blocks and inline `code` are highlighted in the chat
 - ✅ **System tray icon** - Quick access through the taskbar icon
 - ✅ **Automatic startup** - Configurable to start with the system
 - ✅ **Docked mode** - Pin the window to a screen edge and reserve workspace (`_NET_WM_STRUT_PARTIAL` / gtk-layer-shell)
@@ -113,6 +114,20 @@ pip install -r requirements.txt
 bash run.sh
 ```
 
+### Flatpak
+
+A manifest is provided in `flatpak/`:
+
+```bash
+flatpak-builder --user --install build flatpak/io.github.linux_ai_assistant.json
+flatpak run io.github.linux_ai_assistant
+```
+
+The dependencies are installed under `/app/lib/python3.*/site-packages`, so the
+sandbox starts the app through `scripts/flatpak-launch.sh`, which puts that
+directory on `PYTHONPATH` before running `python -m src.app`. Note that OCR
+needs the `tesseract` binary, which the current runtime does not provide.
+
 ## Configuration
 
 ### API Keys
@@ -153,6 +168,8 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 - **Permissions**
 - **Theme colors**
 - **Docked mode and dock edge** (`app.dock_mode`, `app.dock_edge`)
+- **Expert mode state** (`app.expert_mode`; `features.expert_mode` only shows/hides the button)
+- **Context budget** (`context.max_messages`, `context.max_chars`) - how much of the conversation is sent on each request
 - **Language** (`app.language`; empty = system locale, `en` = English)
 
 ### Supported Providers

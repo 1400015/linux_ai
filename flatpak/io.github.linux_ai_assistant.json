@@ -28,7 +28,7 @@
                 "cp -r scripts /app/bin/",
                 "cp -r plugins /app/bin/",
                 "cp -r themes /app/bin/",
-                "cp run.sh /app/bin/linux-ai-assistant",
+                "cp scripts/flatpak-launch.sh /app/bin/linux-ai-assistant",
                 "chmod +x /app/bin/linux-ai-assistant",
                 "mkdir -p /app/share/linux-ai-assistant",
                 "cp README.md /app/share/linux-ai-assistant/",

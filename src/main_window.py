@@ -20,7 +20,7 @@ from gi.repository import Gtk, Gdk, GLib, Pango
 import logging
 
 from . import dock, file_actions, offline_assistant
-from .render_core import placeholder_span, valid_span, header_offset
+from .render_core import placeholder_span, valid_span, header_offset, code_ranges
 from .i18n import _, get_language
 
 # Set up logger
@@ -127,7 +127,9 @@ class MainWindow(Gtk.Window):
         self._setup_notifications()
         
         # State variables
-        self.expert_mode = False
+        # Expert mode is persisted (app.expert_mode); `features.expert_mode`
+        # only controls whether the button is shown at all.
+        self.expert_mode = bool(self.config.get("app.expert_mode", False))
         self.conversation_history = []
         self.streaming = False
         self.is_loading = False
@@ -142,6 +144,9 @@ class MainWindow(Gtk.Window):
         self._settings_notebook = None
         # Interval (start, end) of the "Thinking..." placeholder in the buffer
         self._loading_span = None
+        # Buffer offset where the current streamed AI message body starts
+        # (used to tag code spans once the stream completes).
+        self._ai_body_start = None
         # History is persisted from a single background writer (FIFO), so the
         # GTK main loop never blocks on a full file rewrite per message.
         self._history_queue = queue.SimpleQueue()
@@ -217,13 +222,28 @@ class MainWindow(Gtk.Window):
                 return
             temp_path = None
             try:
+                # Drain everything already queued: rewriting the whole file
+                # once per message turned a burst of messages into a burst of
+                # full rewrites (O(n) I/O per turn, with an fsync each).
+                entries = [entry]
+                stop = False
+                while True:
+                    try:
+                        item = self._history_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if item is None:  # sentinel arrived mid-drain
+                        stop = True
+                        break
+                    entries.append(item)
+
                 history = []
                 if history_file.exists():
                     with open(history_file, 'r', encoding='utf-8') as f:
                         loaded = json.load(f)
                     if isinstance(loaded, list):
                         history = loaded
-                history.append(entry)
+                history.extend(entries)
                 # Keep the last 1000 messages
                 history = history[-1000:]
                 history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +253,13 @@ class MainWindow(Gtk.Window):
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(temp_path, history_file)
-                logger.debug(f"Message saved to history: {entry.get('role')}")
+                logger.debug(
+                    "%d message(s) saved to history: %s",
+                    len(entries),
+                    [e.get("role") for e in entries],
+                )
+                if stop:
+                    return
             except Exception as e:
                 logger.error(f"Error saving history: {e}")
                 if temp_path is not None:
@@ -557,6 +583,12 @@ class MainWindow(Gtk.Window):
                                            foreground="#808080",
                                            font=f"{self.config.get('ui.font_family', 'Monospace')} {self.config.get('ui.font_size', 12)}",
                                            style=Pango.Style.ITALIC)
+        # Applied on top of the message tags so code stands out without
+        # changing the text (see _apply_code_tags).
+        text_buffer.create_tag("code-block", family="Monospace",
+                                           background="#2a2a30")
+        text_buffer.create_tag("inline-code", family="Monospace",
+                                           background="#2a2a30")
         
         self.chat_textview.set_buffer(text_buffer)
         self.chat_scrolled.add(self.chat_textview)
@@ -607,6 +639,10 @@ class MainWindow(Gtk.Window):
         
         # Hide the feature buttons that are disabled in settings
         self._apply_feature_toggles()
+        # Restore the persisted expert mode visually (the toggle only styles
+        # the button when the user clicks it).
+        if self.expert_mode and hasattr(self, "expert_btn"):
+            self.expert_btn.get_style_context().add_class("expert")
         
         # Add welcome message
         self._add_system_message(_("Welcome to Linux AI Assistant!\nType a message or press Ctrl+S to capture the screen."))
@@ -1211,8 +1247,9 @@ class MainWindow(Gtk.Window):
         ocr_check.set_active(self.config.get("features.ocr_enabled", True))
         features_box.pack_start(ocr_check, False, False, 0)
         
-        # Expert mode
-        expert_check = Gtk.CheckButton(label=_("Expert Mode"))
+        # Expert mode button visibility (the active/inactive mode is toggled
+        # from the window button or the tray menu and stored in app.expert_mode)
+        expert_check = Gtk.CheckButton(label=_("Show Expert Mode button"))
         expert_check.set_active(self.config.get("features.expert_mode", True))
         features_box.pack_start(expert_check, False, False, 0)
         
@@ -1256,6 +1293,14 @@ class MainWindow(Gtk.Window):
             self.config.set("features.screen_capture", screen_capture_check.get_active())
             self.config.set("features.ocr_enabled", ocr_check.get_active())
             self.config.set("features.expert_mode", expert_check.get_active())
+            if not expert_check.get_active() and self.expert_mode:
+                # Hiding the button must not leave an invisible active mode.
+                self.expert_mode = False
+                self.config.set("app.expert_mode", False)
+                self.expert_btn.get_style_context().remove_class("expert")
+                tray = getattr(self.app, "tray_icon", None)
+                if tray is not None:
+                    tray.update_expert_mode(False)
             self._apply_feature_toggles()
             
             # Save docked mode
@@ -1279,10 +1324,13 @@ class MainWindow(Gtk.Window):
         The offsets are captured BEFORE the insertion, instead of being
         calculated as "char_count - len(message) - N". That calculation
         depended on weak magic numbers and broke with translation asymmetries.
+
+        Returns `(start, end, body_start)`.
         """
         buffer = self.chat_textview.get_buffer()
         start_offset = buffer.get_char_count()
-        text = f"\n[{label}]\n{message}\n\n"
+        header = f"\n[{label}]\n"
+        text = f"{header}{message}\n\n"
         buffer.insert(buffer.get_end_iter(), text)
         end_offset = start_offset + len(text)
         try:
@@ -1294,7 +1342,31 @@ class MainWindow(Gtk.Window):
         except TypeError:
             # If the tag was not created, fall back to inserting plain text.
             logger.warning("Chat tag not available: %s", tag_name)
-        return start_offset, end_offset
+        body_start = start_offset + len(header)
+        self._apply_code_tags(buffer, body_start, message)
+        return start_offset, end_offset, body_start
+
+    def _apply_code_tags(self, buffer, body_start: int, message: str):
+        """Tag fenced blocks and inline code in an already-inserted region.
+
+        Only tags are applied (the text is never re-inserted), so this is safe
+        to run after a streamed response has been written to the buffer.
+        """
+        if not message or ("`" not in message):
+            return
+        char_count = buffer.get_char_count()
+        for start, end, tag in code_ranges(message):
+            span = valid_span(body_start + start, body_start + end, char_count)
+            if span is None:
+                continue
+            try:
+                buffer.apply_tag_by_name(
+                    tag,
+                    buffer.get_iter_at_offset(span[0]),
+                    buffer.get_iter_at_offset(span[1]),
+                )
+            except TypeError:
+                logger.warning("Chat tag not available: %s", tag)
 
     def _add_user_message(self, message: str):
         """Add a user message to the chat"""
@@ -1321,10 +1393,13 @@ class MainWindow(Gtk.Window):
             # so the streaming response is formatted correctly.
             if self._loading_span is not None:
                 self._remove_loading_message()
-                self._append_message(_('AI'), "", "ai-message")
+                _start, _end, body_start = self._append_message(_('AI'), "", "ai-message")
+                # Remembered so the finished response can get its code tags
+                self._ai_body_start = body_start
             buffer.insert(buffer.get_end_iter(), message)
             self._scroll_to_bottom()
         else:
+            self._ai_body_start = None
             self._append_message(_('AI'), message, "ai-message")
 
             # Save to history (only the complete message)
@@ -1542,6 +1617,7 @@ Respond clearly and concisely in English."""
         cancel_event = threading.Event()
         self._cancel_event = cancel_event
         self._active_request = request_id
+        self._ai_body_start = None
 
         # Update state
         self.is_loading = True
@@ -1694,6 +1770,15 @@ Respond clearly and concisely in English."""
         self.streaming = False
 
         if response_text and not cancelled:
+            # The streamed body was inserted chunk by chunk; now that it is
+            # complete, tag its code spans (text is left untouched).
+            body_start = self._ai_body_start
+            self._ai_body_start = None
+            if body_start is not None:
+                self._apply_code_tags(
+                    self.chat_textview.get_buffer(), body_start, response_text
+                )
+
             self.conversation_history.append(
                 {"role": "assistant", "content": response_text}
             )
@@ -1830,6 +1915,8 @@ Respond clearly and concisely in English."""
     def on_expert_mode_toggled(self, button):
         """Toggle expert mode."""
         self.expert_mode = not self.expert_mode
+        # Persist: the mode used to reset to normal on every restart.
+        self.config.set("app.expert_mode", self.expert_mode)
         
         if self.expert_mode:
             self.expert_btn.get_style_context().add_class("expert")

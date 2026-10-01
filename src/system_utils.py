@@ -15,14 +15,51 @@ logger = logging.getLogger(__name__)# Commands whose last argument is a file pat
 _FILE_ARG_COMMANDS = {"cat", "head", "tail", "less", "more", "file", "stat"}
 
 
+def _cpu_value(entry: Dict[str, str]) -> float:
+    """Sort key for the process list.
+
+    `ps` sometimes prints "?" in the %CPU column (kernel threads, some
+    locales); the old inline `float(...)` raised ValueError outside the
+    try/except and broke the whole listing.
+    """
+    try:
+        return float(str(entry.get("cpu", "0")).replace("%", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class SystemUtils:
     """Utilities to interact with the Linux system"""
     
     def __init__(self, config_manager):
         self.config = config_manager
-        self.allowed_commands = set(config_manager.get("permissions.allowed_commands", []))
-        self.allowed_edit_dirs = set(config_manager.get("permissions.allowed_edit_dirs", []))
         self._detect_environment()
+
+    def _permission_set(self, key: str) -> set:
+        """Read a permission list from the config, ignoring bad values.
+
+        A string here (hand-edited config, or a bad environment override) used
+        to become a set of single characters, silently breaking the allowlist.
+        """
+        value = self.config.get(key, [])
+        if not isinstance(value, (list, tuple, set)):
+            logger.warning("Ignoring non-list value for %s", key)
+            return set()
+        return set(value)
+
+    @property
+    def allowed_commands(self) -> set:
+        """Commands the user may run.
+
+        Re-read on every access so editing `permissions.allowed_commands`
+        (or the matching env var) applies without restarting the app.
+        """
+        return self._permission_set("permissions.allowed_commands")
+
+    @property
+    def allowed_edit_dirs(self) -> set:
+        """Directories the assistant may read/write (re-read on access)."""
+        return self._permission_set("permissions.allowed_edit_dirs")
     
     def _detect_environment(self):
         """Detect the environment (X11 vs Wayland) and other system properties"""
@@ -701,7 +738,7 @@ class SystemUtils:
             except Exception as e:
                 logger.warning(f"Could not get process list: {e}")
         
-        return sorted(processes, key=lambda x: float(x['cpu'].replace('%', '')), reverse=True)
+        return sorted(processes, key=_cpu_value, reverse=True)
     
     def get_network_info(self) -> Dict[str, Any]:
         """Get network information."""

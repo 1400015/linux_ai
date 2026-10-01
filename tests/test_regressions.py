@@ -474,6 +474,9 @@ class TestTokenUsagePersistence(unittest.TestCase):
                 client = AIClient(config)
                 try:
                     client._update_token_usage("openrouter", 10, 5)
+                    # Writes are debounced (see TestUsageSaveDebounce); the
+                    # pending change is flushed explicitly here.
+                    client.flush_usage()
                     usage_file = Path(d) / ".config" / "linux_ai_assistant" / "usage.json"
                     self.assertTrue(usage_file.exists())
                     self.assertEqual(json.loads(usage_file.read_text())["openrouter"]["total"], 15)
@@ -486,6 +489,7 @@ class TestTokenUsagePersistence(unittest.TestCase):
             with patch("src.ai_client.Path.home", return_value=Path(d)):
                 first = AIClient(config)
                 first._update_token_usage("groq", 100, 50)
+                first.flush_usage()
                 first.session.close()
 
                 second = AIClient(config)
@@ -774,6 +778,226 @@ class TestCopyEffectiveKeyToConfig(unittest.TestCase):
             config.set_api_key("anthropic", config.get_api_key("anthropic"))
             config.save()
             self.assertEqual(config.get_stored_api_key("anthropic"), "canon-key")
+
+
+# --- Bug 25: overrides por env quebravam o tipo de list/dict ---------------
+
+class TestEnvOverrideComplexTypes(unittest.TestCase):
+    def test_list_override_accepts_json(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+                "LINUX_AI_PERMISSIONS_ALLOWED_COMMANDS": '["ls", "cat"]'},
+                clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            value = config.get("permissions.allowed_commands", [])
+            # Regression: this used to be the string '["ls", "cat"]', and
+            # set(...) then produced a set of characters.
+            self.assertEqual(value, ["ls", "cat"])
+            self.assertEqual(set(value), {"ls", "cat"})
+
+    def test_invalid_json_keeps_the_stored_list(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+                "LINUX_AI_PERMISSIONS_ALLOWED_COMMANDS": "ls;cat"}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertIsInstance(
+                config.get("permissions.allowed_commands", []), list
+            )
+
+    def test_type_mismatch_keeps_the_stored_dict(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+                "LINUX_AI_API_PROVIDERS": '["not", "a", "dict"]'}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertIsInstance(config.get("api.providers", {}), dict)
+
+    def test_malformed_providers_section_does_not_crash_the_client(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            with patch("src.ai_client.Path.home", return_value=Path(d)):
+                client = AIClient(config)
+            try:
+                # Hand-edited config (not the env) can still be malformed.
+                config.config["api"]["providers"] = "oops"
+                self.assertEqual(client._get_api_config("openrouter"), {})
+            finally:
+                client.session.close()
+
+
+# --- Bug 26: render_text_markup perdia os blocos de código -----------------
+
+class TestRenderKeepsCodeBlocks(unittest.TestCase):
+    def test_fenced_block_is_rendered(self):
+        from src.render_core import render_text_markup
+        out = render_text_markup("a\n```python\nprint(1)\n```\nb")
+        self.assertIn("print(1)", out)
+        # The text around the block must survive too.
+        self.assertIn("monospace", out)
+        self.assertTrue(out.startswith("a"))
+        self.assertTrue(out.endswith("b"))
+
+    def test_fenced_block_is_escaped(self):
+        from src.render_core import render_text_markup
+        out = render_text_markup("```\n<script>&\n```")
+        self.assertNotIn("<script>", out)
+        self.assertIn("&lt;script&gt;&amp;", out)
+
+
+# --- Bug 27: nome de tema com travessia de diretório -----------------------
+
+class TestThemeNameValidation(unittest.TestCase):
+    def test_traversal_theme_name_is_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertIsNone(config._load_theme("../../etc/passwd"))
+            self.assertIsNone(config._load_theme(""))
+            self.assertIsNone(config._load_theme("a/b"))
+
+    def test_valid_theme_name_is_still_loaded(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = ConfigManager(str(Path(d) / "config.json"))
+            if "dark" not in config.get_available_themes():
+                self.skipTest("built-in themes are not available here")
+            self.assertIsNotNone(config._load_theme("dark"))
+
+
+# --- Bug 28: ordenação de processos com %CPU inválido ----------------------
+
+class TestProcessListSorting(unittest.TestCase):
+    def test_unknown_cpu_value_does_not_raise(self):
+        from src.system_utils import _cpu_value
+        # Regression: `float('?')` raised ValueError outside the try/except.
+        self.assertEqual(_cpu_value({"cpu": "?"}), 0.0)
+        self.assertEqual(_cpu_value({"cpu": "12.5%"}), 12.5)
+        self.assertEqual(_cpu_value({}), 0.0)
+
+
+# --- Bug 29: permissões eram um snapshot feito no arranque ------------------
+
+class TestPermissionsAreReadLive(unittest.TestCase):
+    class MutableConfig:
+        def __init__(self):
+            self.commands = ["ls"]
+            self.edit_dirs = ["/tmp"]
+
+        def get(self, key, default=None):
+            if key == "permissions.allowed_commands":
+                return self.commands
+            if key == "permissions.allowed_edit_dirs":
+                return self.edit_dirs
+            return default
+
+    def setUp(self):
+        if not hasattr(os, "geteuid"):
+            self.skipTest("geteuid is not available on this platform")
+
+    def test_allowlist_changes_are_picked_up_without_restart(self):
+        config = self.MutableConfig()
+        utils = SystemUtils(config)
+        self.assertEqual(utils.allowed_commands, {"ls"})
+        config.commands = ["ls", "cat"]
+        self.assertEqual(utils.allowed_commands, {"ls", "cat"})
+
+    def test_string_value_is_ignored_instead_of_split_into_characters(self):
+        config = self.MutableConfig()
+        config.commands = "ls;cat"
+        utils = SystemUtils(config)
+        self.assertEqual(utils.allowed_commands, set())
+
+
+# --- Bug 30: chaves novas ausentes do schema --------------------------------
+
+class TestNewSchemaKeys(unittest.TestCase):
+    def test_context_budget_has_defaults(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertEqual(config.get("context.max_messages"), 20)
+            self.assertEqual(config.get("context.max_chars"), 12000)
+
+    def test_expert_mode_state_survives_a_reload(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            config = ConfigManager(str(path))
+            config.set("app.expert_mode", True)
+            config.save()
+            self.assertIs(ConfigManager(str(path)).get("app.expert_mode"), True)
+
+
+# --- Bug 31: blocos de codigo sem realce no chat ---------------------------
+
+class TestCodeRanges(unittest.TestCase):
+    def test_fenced_block_and_inline_code_are_found(self):
+        from src.render_core import code_ranges, CODE_BLOCK_TAG, INLINE_CODE_TAG
+        text = "hi `x` then\n```py\nprint(1)\n```\nbye"
+        ranges = code_ranges(text)
+        tags = {tag for _s, _e, tag in ranges}
+        self.assertIn(CODE_BLOCK_TAG, tags)
+        self.assertIn(INLINE_CODE_TAG, tags)
+        for start, end, _tag in ranges:
+            self.assertLess(start, end)
+            self.assertLessEqual(end, len(text))
+
+    def test_inline_code_inside_a_block_is_not_tagged_twice(self):
+        from src.render_core import code_ranges, INLINE_CODE_TAG
+        text = "```\n`nested`\n```"
+        inline = [r for r in code_ranges(text) if r[2] == INLINE_CODE_TAG]
+        self.assertEqual(inline, [])
+
+    def test_inline_span_excludes_the_backticks(self):
+        from src.render_core import code_ranges, INLINE_CODE_TAG
+        text = "a `code` b"
+        matches = [r for r in code_ranges(text) if r[2] == INLINE_CODE_TAG]
+        self.assertEqual(len(matches), 1)
+        start, end, _tag = matches[0]
+        self.assertEqual(text[start:end], "code")
+
+
+# --- Bug 32: usage.json era escrito (com fsync) em cada pedido ------------
+
+class TestUsageSaveDebounce(unittest.TestCase):
+    def _client(self, directory):
+        config = ConfigManager(str(Path(directory) / "config.json"))
+        with patch("src.ai_client.Path.home", return_value=Path(directory)):
+            return AIClient(config)
+
+    def test_update_is_debounced_and_flush_writes_once(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {}, clear=True):
+            client = self._client(d)
+            calls = []
+
+            def fake_save():
+                calls.append(1)
+                client._usage_dirty = False
+
+            try:
+                client._save_token_usage = fake_save
+                client._update_token_usage("openrouter", 5, 7)
+                # Regression: this wrote the file (with fsync) inline.
+                self.assertEqual(calls, [])
+                self.assertTrue(client._usage_dirty)
+
+                client.flush_usage()
+                self.assertEqual(calls, [1])
+                self.assertFalse(client._usage_dirty)
+
+                # Nothing pending: no second write.
+                client.flush_usage()
+                self.assertEqual(calls, [1])
+            finally:
+                client.session.close()
+
+    def test_reset_writes_immediately(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {}, clear=True):
+            client = self._client(d)
+            calls = []
+            try:
+                client._save_token_usage = lambda: calls.append(1)
+                client._usage_dirty = True
+                client.reset_token_usage()
+                self.assertEqual(calls, [1])
+                self.assertFalse(client._usage_dirty)
+            finally:
+                client.session.close()
 
 
 if __name__ == "__main__":

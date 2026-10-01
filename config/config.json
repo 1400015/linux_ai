@@ -14,6 +14,7 @@
     "dock_mode": "float",
     "dock_edge": "right",
     "button_edge": "right",
+    "expert_mode": false,
     "language": ""
   },
   "api": {
@@ -68,6 +69,10 @@
     "expert_mode": true,
     "file_edit": true,
     "system_info": true
+  },
+  "context": {
+    "max_messages": 20,
+    "max_chars": 12000
   },
   "permissions": {
     "require_sudo": true,

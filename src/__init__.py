@@ -23,13 +23,18 @@ _console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s -
 _console_handler.setFormatter(_console_formatter)
 
 try:
+    from logging.handlers import RotatingFileHandler
     from pathlib import Path
 
     log_dir = Path.home() / ".cache" / "linux_ai_assistant"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "app.log"
 
-    _file_handler = logging.FileHandler(log_file)
+    # Rotate: a plain FileHandler grew app.log without bound (DEBUG records
+    # from every request, forever).
+    _file_handler = RotatingFileHandler(
+        log_file, maxBytes=1024 * 1024, backupCount=3, encoding="utf-8",
+    )
     _file_handler.setLevel(logging.DEBUG)
     _file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     _file_handler.setFormatter(_file_formatter)

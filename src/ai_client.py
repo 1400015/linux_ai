@@ -2,6 +2,7 @@ import json
 import copy
 import os
 import time
+import atexit
 import logging
 import re
 import threading
@@ -13,6 +14,11 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 # Configurar logger
 logger = logging.getLogger(__name__)
+
+# usage.json is rewritten (with fsync) on every request. Batching the writes
+# keeps the I/O out of the request path; a pending change is always flushed at
+# exit, and `reset_token_usage()` still writes immediately.
+USAGE_SAVE_DEBOUNCE_SECONDS = 5.0
 
 _SECRET_QUERY_RE = re.compile(
     r"([?&](?:key|api_key|apikey|access_token|token|sig|signature|password|auth)=)[^&\s]+",
@@ -83,8 +89,12 @@ class AIClient:
         self.session = self._create_session()
         self.token_usage = {}
         self._usage_lock = threading.Lock()
+        self._usage_timer = None
+        self._usage_dirty = False
         self._usage_path = Path.home() / ".config" / "linux_ai_assistant" / "usage.json"
         self._load_token_usage()
+        # Never lose a debounced write at exit
+        atexit.register(self.flush_usage)
         self._load_custom_providers()
     
     def _create_session(self):
@@ -129,7 +139,13 @@ class AIClient:
     def _get_api_config(self, provider: str) -> Dict[str, Any]:
         """Get API configuration for a specific provider"""
         providers = self.config.get("api.providers", {})
-        return providers.get(provider, {})
+        # A malformed value (a hand-edited config.json, or an environment
+        # override) must not crash the request with AttributeError.
+        if not isinstance(providers, dict):
+            logger.warning("api.providers is not an object; ignoring it")
+            return {}
+        entry = providers.get(provider, {})
+        return entry if isinstance(entry, dict) else {}
     
     def _get_api_key(self, provider: str) -> Optional[str]:
         """Get API key for a provider"""
@@ -170,10 +186,27 @@ class AIClient:
             self.token_usage[provider]["input"] += int(input_tokens)
             self.token_usage[provider]["output"] += int(output_tokens)
             self.token_usage[provider]["total"] += int(input_tokens) + int(output_tokens)
-            # Saved while still holding the lock: concurrent mutation during
-            # json.dump would raise "dictionary changed size during iteration".
-            self._save_token_usage()
+            self._schedule_usage_save()
         logger.debug(f"Token usage - {provider}: input={input_tokens}, output={output_tokens}")
+
+    def _schedule_usage_save(self):
+        """Debounced write of usage.json. Caller must hold `_usage_lock`."""
+        self._usage_dirty = True
+        if self._usage_timer is not None:
+            self._usage_timer.cancel()
+        timer = threading.Timer(USAGE_SAVE_DEBOUNCE_SECONDS, self.flush_usage)
+        timer.daemon = True
+        self._usage_timer = timer
+        timer.start()
+
+    def flush_usage(self):
+        """Write usage.json now if there are pending changes."""
+        with self._usage_lock:
+            if self._usage_timer is not None:
+                self._usage_timer.cancel()
+                self._usage_timer = None
+            if self._usage_dirty:
+                self._save_token_usage()
 
     def _record_usage(self, provider: str, data: Dict[str, Any]):
         """Record usage reported by the API itself.
@@ -248,6 +281,8 @@ class AIClient:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp_path, path)
+            # Only forgotten once the write actually succeeded.
+            self._usage_dirty = False
         except Exception as e:
             logger.warning(f"Could not save token usage: {redact_url(str(e))}")
             if temp_path is not None:
@@ -266,7 +301,11 @@ class AIClient:
     def reset_token_usage(self):
         """Reset token count"""
         with self._usage_lock:
+            if self._usage_timer is not None:
+                self._usage_timer.cancel()
+                self._usage_timer = None
             self.token_usage = {}
+            self._usage_dirty = False
             self._save_token_usage()
         logger.info("Token usage reset")
     

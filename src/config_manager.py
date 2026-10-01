@@ -3,6 +3,7 @@ import os
 import base64
 import copy
 import atexit
+import re
 import threading
 from pathlib import Path
 from typing import Any, Optional, Dict, List
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 # every pixel of dragging/resizing). Without debounce, that would mean
 # rewriting the entire config.json hundreds of times per second.
 SAVE_DEBOUNCE_SECONDS = 0.5
+
+# A theme name is used to build a file name (see _load_theme), so it is
+# restricted to the same simple identifier the "Add Theme" dialog accepts.
+_THEME_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class ConfigManager:
@@ -38,6 +43,7 @@ class ConfigManager:
             "dock_mode": "float",
             "dock_edge": "right",
             "button_edge": "right",
+            "expert_mode": False,
             "language": ""
         },
         "api": {
@@ -93,11 +99,18 @@ class ConfigManager:
             "file_edit": True,
             "system_info": True
         },
+        # Context budget sent to the provider on every request.
+        "context": {
+            "max_messages": 20,
+            "max_chars": 12000
+        },
         "permissions": {
             "require_sudo": True,
             "allowed_commands": [
                 "ls", "cat", "grep", "ps", "df", "du", "free", "uname", "neofetch",
-                "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis"
+                "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis",
+                "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig",
+                "nslookup"
             ],
             "allowed_edit_dirs": ["/etc", "/home", "/usr/local", "/opt"]
         },
@@ -126,6 +139,7 @@ class ConfigManager:
             "dock_mode": str,
             "dock_edge": str,
             "button_edge": str,
+            "expert_mode": bool,
             "language": str
         },
         "api": {
@@ -138,6 +152,10 @@ class ConfigManager:
             "expert_mode": bool,
             "file_edit": bool,
             "system_info": bool
+        },
+        "context": {
+            "max_messages": int,
+            "max_chars": int
         },
         "permissions": {
             "require_sudo": bool,
@@ -363,6 +381,27 @@ class ConfigManager:
                 return float(env_value)
             except ValueError:
                 return env_value
+        if isinstance(default, (list, dict)):
+            # Without this, LINUX_AI_PERMISSIONS_ALLOWED_COMMANDS="ls;cat"
+            # returned a string and `set(...)` produced a set of characters
+            # (breaking the command allowlist), and LINUX_AI_API_PROVIDERS
+            # returned a string that crashed _get_api_config(). Environment
+            # variables are strings, so list/dict values must be JSON.
+            try:
+                parsed = json.loads(env_value)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Invalid JSON for %s in %s; keeping the stored value",
+                    key, self._env_name(key),
+                )
+                return default
+            if type(parsed) is not type(default):
+                logger.warning(
+                    "Type mismatch for %s in %s; keeping the stored value",
+                    key, self._env_name(key),
+                )
+                return default
+            return parsed
         return env_value
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -597,6 +636,11 @@ class ConfigManager:
     
     def _load_theme(self, theme_name: str) -> Optional[Dict]:
         """Load theme from file"""
+        # The name becomes a file name: a value such as "../../etc/some.json"
+        # would otherwise read a JSON file outside the themes directories.
+        if not theme_name or not _THEME_NAME_RE.match(str(theme_name)):
+            logger.warning(f"Invalid theme name ignored: {theme_name!r}")
+            return None
         try:
             # Search in user's custom themes
             user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
