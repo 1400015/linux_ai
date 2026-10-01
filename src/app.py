@@ -2,7 +2,7 @@
 """
 Linux AI Assistant - Main application
 
-Um assistente de IA permanent for Linux with interface flutuante,
+A permanent AI assistant for Linux with a floating interface,
 screen capture, expert mode and more.
 """
 
@@ -50,15 +50,15 @@ class LinuxAIAssistant:
     """Main application"""
     
     def __init__(self):
-        logger.info("Inicializar Linux AI Assistant")
+        logger.info("Initializing Linux AI Assistant")
         
         try:
             self.config = ConfigManager()
             logger.info("Configuration loaded")
             
             self.ai_client = AIClient(self.config)
-            logger.info("Cliente de IA inicializado")
-            
+            logger.info("AI client initialized")
+
             self.system_utils = SystemUtils(self.config)
             logger.info("System utilities initialized")
             
@@ -73,15 +73,15 @@ class LinuxAIAssistant:
     
     def run(self):
         """Start the application"""
-        logger.info("Inicializar GTK")
+        logger.info("Initializing GTK")
         
         try:
             # Initialize GTK
             Gtk.init()
-            logger.info("GTK inicializado")
+            logger.info("GTK initialized")
             
-            # Create window principal
-            logger.info("A create window principal")
+            # Create main window
+            logger.info("Creating main window")
             self.main_window = MainWindow(self, self.config, self.ai_client, self.system_utils)
             
             # Create system tray icon
@@ -91,22 +91,22 @@ class LinuxAIAssistant:
             # Create permanent floating button
             self._create_float_button()
             
-            # Show window se auto_start estiver ativo
+            # Show window if auto_start is active
             if self.config.get("app.auto_start", False):
                 self.main_window.show()
-                logger.info("Janela shown (auto_start ativo)")
+                logger.info("Window shown (auto_start active)")
             else:
                 logger.info("Window not shown (auto_start inactive). Use the system tray icon.")
             
-            # Start loop principal
-            logger.info("A start loop main do GTK")
+            # Start main loop
+            logger.info("Starting GTK main loop")
             Gtk.main()
             
         except KeyboardInterrupt:
-            logger.info("Recebido KeyboardInterrupt. A terminar...")
+            logger.info("Received KeyboardInterrupt. Shutting down...")
             self.quit()
         except Exception as e:
-            logger.error(f"Erro no loop principal: {e}", exc_info=True)
+            logger.error(f"Error in main loop: {e}", exc_info=True)
             self.quit()
     
     def quit(self):
@@ -121,10 +121,10 @@ class LinuxAIAssistant:
             if self.tray_icon:
                 if hasattr(self.tray_icon, 'indicator'):
                     self.tray_icon.indicator.set_status(0)
-                    logger.info("AppIndicator desativado")
+                    logger.info("AppIndicator deactivated")
                 elif hasattr(self.tray_icon, 'status_icon'):
                     self.tray_icon.status_icon.set_visible(False)
-                    logger.info("StatusIcon desativado")
+                    logger.info("StatusIcon deactivated")
             
             logger.info("GTK main quit")
             Gtk.main_quit()
@@ -175,20 +175,20 @@ class LinuxAIAssistant:
 
 
 def main():
-    """Ponto de input principal"""
+    """Main entry point"""
     logger.info("Linux AI Assistant - Start")
 
     if not GTK_AVAILABLE:
         message = (
-            "GTK 3 nao esta disponivel. Instala os bindings do sistema:\n"
+            "GTK 3 is not available. Install the system bindings:\n"
             "  Debian/Ubuntu : sudo apt install python3-gi gir1.2-gtk-3.0\n"
             "  Fedora        : sudo dnf install python3-gobject gtk3\n"
             "  Arch          : sudo pacman -S python-gobject gtk3\n"
             "  Void          : sudo xbps-install python3-gobject gtk+3\n"
-            "Depois cria o venv com --system-site-packages (ver README).\n"
-            "Para uso sem interface: python -m src.cli --help"
+            "Then create the venv with --system-site-packages (see README).\n"
+            "For headless use: python -m src.cli --help"
         )
-        print(f"\nErro: {GTK_IMPORT_ERROR}\n\n{message}", file=sys.stderr)
+        print(f"\nError: {GTK_IMPORT_ERROR}\n\n{message}", file=sys.stderr)
         return 1
 
     try:
@@ -197,12 +197,12 @@ def main():
         # Handle signals to quit correctly
         signal.signal(signal.SIGINT, lambda s, f: app.quit())
         signal.signal(signal.SIGTERM, lambda s, f: app.quit())
-        logger.info("Handlers de sinal configurados")
+        logger.info("Signal handlers configured")
         
         app.run()
         
     except Exception as e:
-        logger.error(f"Erro fatal: {e}", exc_info=True)
+        logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
     return 0
 

@@ -22,40 +22,40 @@ from . import dock, file_actions
 from .render_core import placeholder_span, valid_span, header_offset
 from .i18n import _
 
-# Configurar logger
+# Set up logger
 logger = logging.getLogger(__name__)
 
-# Valores vindos de ficheiros de tema sao interpolados no CSS do GTK; validar
-# o formato evita que um JSON malicioso injete regras de estilo arbitrarias.
+# Values coming from theme files are interpolated into GTK's CSS; validating
+# the format prevents a malicious JSON from injecting arbitrary style rules.
 _COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _UNSAFE_CSS_RE = re.compile(r"[;{}\\<>*@]|/\*|\*/")
 _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 _.,'-]{1,64}$")
 
-# Orcamento de contexto: por omissao 12000 caracteres (~3k tokens) e 20 mensagens.
+# Context budget: by default 12000 characters (~3k tokens) and 20 messages.
 MAX_CONTEXT_CHARS = 12000
 MAX_CONTEXT_MESSAGES = 20
 
 
 def safe_color(value, fallback="#1e1e1e"):
-    """Devolve uma cor CSS valida ou `fallback`."""
+    """Return a valid CSS color or `fallback`."""
     if isinstance(value, str) and _COLOR_RE.match(value.strip()):
         return value.strip()
     if value is not None:
-        logger.warning(f"Cor de tema invalida ignorada: {value!r}")
+        logger.warning(f"Invalid theme color ignored: {value!r}")
     return fallback
 
 
 def safe_font_family(value, fallback="Monospace"):
-    """Devolve um nome de fonte seguro para CSS."""
+    """Return a safe font-family name for CSS."""
     if isinstance(value, str) and _FONT_FAMILY_RE.match(value.strip()):
         return value.strip()
     if value is not None:
-        logger.warning(f"Família de fontes de tema invalida ignorada: {value!r}")
+        logger.warning(f"Invalid theme font family ignored: {value!r}")
     return fallback
 
 
 def safe_number(value, fallback, cast, minimum=None, maximum=None):
-    """Converte `value` para numero com limites, ou devolve `fallback`."""
+    """Convert `value` to a number with bounds, or return `fallback`."""
     try:
         number = cast(value)
     except (TypeError, ValueError):
@@ -128,29 +128,29 @@ class MainWindow(Gtk.Window):
         self.streaming = False
         self.is_loading = False
         self.cancel_streaming = False
-        # `_process_message` corre numa thread: `cancel_streaming` e `streaming`
-        # sao lidos e escritos nas duas threads. Um Event da threading fornece
-        # memoria partilhada em vez de booleans soltos.
+        # `_process_message` runs in a thread: `cancel_streaming` and `streaming`
+        # are read and written in both threads. A threading Event provides
+        # shared memory instead of loose booleans.
         self._cancel_event = threading.Event()
         self._state_lock = threading.Lock()
-        # Intervalo (inicio, fim) do placeholder "Thinking..." no buffer
+        # Interval (start, end) of the "Thinking..." placeholder in the buffer
         self._loading_span = None
         
         # Create interface
         self._create_ui()
         
-        # Conectar sinais
+        # Connect signals
         self.connect("delete-event", self.on_delete_event)
         self.connect("configure-event", self.on_configure_event)
         self.connect("size-allocate", self.on_size_allocate)
         
-        # Atalhos de teclado
+        # Keyboard shortcuts
         self._setup_keybindings()
         
         # Load conversation history
         self._load_conversation_history()
         
-        logger.info("Janela main inicializada")
+        logger.info("Main window initialized")
     
     def _setup_notifications(self):
         """Configure system notifications"""
@@ -174,24 +174,24 @@ class MainWindow(Gtk.Window):
                 logger.error(f"Error showing notification: {e}")
     
     def _setup_keybindings(self):
-        """Configurar atalhos de teclado"""
+        """Set up keyboard shortcuts"""
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
         
-        # Ctrl+Enter for enviar
+        # Ctrl+Enter to send
         key, mod = Gtk.accelerator_parse("<Control>Return")
         self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
         
-        # Escape for clear input
+        # Escape to clear input
         key, mod = Gtk.accelerator_parse("Escape")
         accel_group.connect(key, mod,
                           Gtk.AccelFlags.VISIBLE, self.on_clear_input)
         
-        # Ctrl+E for alternar mode especialista
+        # Ctrl+E to toggle expert mode
         key, mod = Gtk.accelerator_parse("<Control>e")
         self.expert_btn.add_accelerator("clicked", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
         
-        # Ctrl+Q for fechar
+        # Ctrl+Q to close
         key, mod = Gtk.accelerator_parse("<Control>q")
         accel_group.connect(key, mod,
                           Gtk.AccelFlags.VISIBLE, lambda *args: self.on_close_clicked())
@@ -201,15 +201,15 @@ class MainWindow(Gtk.Window):
         accel_group.connect(key, mod,
                           Gtk.AccelFlags.VISIBLE, lambda *args: self.on_capture_screen_clicked(None))
         
-        logger.info("Atalhos de teclado configurados")
+        logger.info("Keyboard shortcuts configured")
     
     def on_clear_input(self, *args):
-        """Limpar input ao pressionar Escape"""
+        """Clear input when Escape is pressed"""
         self.input_entry.set_text("")
-        logger.debug("Input limpo")
+        logger.debug("Input cleared")
     
     def _setup_style(self):
-        """Configurar estilo CSS da janela"""
+        """Set up window CSS styling"""
         style_provider = Gtk.CssProvider()
         
         # Get cores do tema
@@ -381,10 +381,10 @@ class MainWindow(Gtk.Window):
             style_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        logger.debug("Estilo CSS aplicado with tema: " + self.config.get("app.theme", "dark"))
+        logger.debug("CSS style applied with theme: " + self.config.get("app.theme", "dark"))
     
     def _create_ui(self):
-        """Criar interface da janela"""
+        """Create the window interface"""
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         main_box.set_property("name", "main-box")
         self.add(main_box)
@@ -503,16 +503,16 @@ class MainWindow(Gtk.Window):
         # Send button
         send_btn = Gtk.Button.new_from_icon_name("go-next", Gtk.IconSize.MENU)
         send_btn.connect("clicked", lambda btn: self.on_send_clicked())
-        send_btn.set_tooltip_text("Enviar (Ctrl+Enter)")
+        send_btn.set_tooltip_text("Send (Ctrl+Enter)")
         button_box.pack_start(send_btn, False, False, 0)
         
-        # Adicionar message de boas-vindas
+        # Add welcome message
         self._add_system_message("Welcome to Linux AI Assistant!\nType a message or press Ctrl+S to capture the screen.")
         
-        # Scroll automatic for baixo
+        # Auto-scroll to bottom
         self._scroll_to_bottom()
         
-        logger.info("UI criada with sucesso")
+        logger.info("UI created successfully")
     
     def on_menu_clicked(self, button):
         """Show options menu"""
@@ -555,9 +555,9 @@ class MainWindow(Gtk.Window):
         # (Done automatically when the dialog opens)
     
     def on_add_theme_clicked(self, button):
-        """Adicionar new tema"""
+        """Add a new theme"""
         dialog = Gtk.Dialog(
-            title="Adicionar Tema",
+            title="Add Theme",
             parent=self,
             flags=0,
             buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OK, Gtk.ResponseType.OK)
@@ -565,7 +565,7 @@ class MainWindow(Gtk.Window):
         
         content = dialog.get_content_area()
         
-        # Nome do tema
+        # Theme name
         name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         name_label = Gtk.Label(label=_("Name:"))
         name_entry = Gtk.Entry()
@@ -581,7 +581,7 @@ class MainWindow(Gtk.Window):
         desc_box.pack_start(desc_entry, True, True, 0)
         content.pack_start(desc_box, False, False, 0)
         
-        # Cores
+        # Colors
         colors_frame = Gtk.Frame(label=_("Colors"))
         colors_grid = Gtk.Grid()
         colors_grid.set_column_spacing(10)
@@ -623,7 +623,7 @@ class MainWindow(Gtk.Window):
                 dialog.destroy()
                 return
             
-            # Create tema
+            # Create theme
             theme = {
                 "name": theme_name,
                 "description": desc_entry.get_text().strip(),
@@ -641,7 +641,7 @@ class MainWindow(Gtk.Window):
                 }
             }
             
-            # Guardar tema
+            # Save theme
             themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
             themes_dir.mkdir(parents=True, exist_ok=True)
             theme_file = themes_dir / f"{theme_name}.json"
@@ -650,19 +650,19 @@ class MainWindow(Gtk.Window):
                 with open(theme_file, 'w', encoding='utf-8') as f:
                     json.dump(theme, f, indent=2, ensure_ascii=False)
                 
-                self.show_notification("Linux AI Assistant", f"Tema '{theme_name}' criado")
+                self.show_notification("Linux AI Assistant", f"Theme '{theme_name}' created")
                 self._populate_themes_list()
                 
             except Exception as e:
-                self.show_notification("Linux AI Assistant", f"Erro a save tema: {e}")
+                self.show_notification("Linux AI Assistant", f"Error saving theme: {e}")
         
         dialog.destroy()
     
     def on_remove_theme_clicked(self, button):
-        """Remover theme selecionado"""
+        """Remove the selected theme"""
         selected_row = self.themes_listbox.get_selected_row()
         if not selected_row:
-            self.show_notification("Linux AI Assistant", "Nenhum theme selecionado")
+            self.show_notification("Linux AI Assistant", "No theme selected")
             return
         
         theme_name = selected_row.get_children()[0].get_text()
@@ -679,7 +679,7 @@ class MainWindow(Gtk.Window):
             flags=0,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.YES_NO,
-            text=f"Remover theme '{theme_name}'?"
+            text=f"Remove theme '{theme_name}'?"
         )
         
         response = dialog.run()
@@ -692,14 +692,14 @@ class MainWindow(Gtk.Window):
             try:
                 if theme_file.exists():
                     theme_file.unlink()
-                    self.show_notification("Linux AI Assistant", f"Tema '{theme_name}' removido")
+                    self.show_notification("Linux AI Assistant", f"Theme '{theme_name}' removed")
                     self._populate_themes_list()
             except Exception as e:
-                self.show_notification("Linux AI Assistant", f"Erro a remover tema: {e}")
+                self.show_notification("Linux AI Assistant", f"Error removing theme: {e}")
     
     def _populate_themes_list(self):
-        """Preencher a list de temas"""
-        # Clear lista
+        """Populate the themes list"""
+        # Clear list
         for child in self.themes_listbox.get_children():
             self.themes_listbox.remove(child)
         
@@ -760,7 +760,7 @@ class MainWindow(Gtk.Window):
         title.set_use_markup(True)
         box.pack_start(title, False, False, 0)
         
-        # Tokens por provedor
+        # Tokens by provider
         for provider, usage in token_usage.items():
             provider_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
             
@@ -850,11 +850,11 @@ class MainWindow(Gtk.Window):
         # Create dialog content
         content = dialog.get_content_area()
         
-        # Notebook for separadores
+        # Notebook for sections
         notebook = Gtk.Notebook()
         content.add(notebook)
         
-        # Separador API
+        # API section
         api_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         api_box.set_border_width(10)
         
@@ -862,7 +862,7 @@ class MainWindow(Gtk.Window):
         api_label.set_use_markup(True)
         api_box.pack_start(api_label, False, False, 0)
         
-        # Provedor
+        # Provider
         provider_label = Gtk.Label(label=_("AI Provider:"))
         api_box.pack_start(provider_label, False, False, 0)
         
@@ -881,14 +881,14 @@ class MainWindow(Gtk.Window):
         api_key_entry.set_invisible_char('*')
         api_key_entry.set_placeholder_text(_("Enter your API Key"))
         
-        # Carregar API key atual
+        # Load current API key
         current_provider = self.config.get("api.default_provider", "openrouter")
         api_key_entry.set_text(self.config.get_api_key(current_provider) or "")
         api_box.pack_start(api_key_entry, False, False, 0)
         
         notebook.append_page(api_box, Gtk.Label(label="API"))
         
-        # Separador Appearance
+        # Appearance section
         ui_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         ui_box.set_border_width(10)
         
@@ -896,7 +896,7 @@ class MainWindow(Gtk.Window):
         ui_label.set_use_markup(True)
         ui_box.pack_start(ui_label, False, False, 0)
         
-        # Opacidade
+        # Opacity
         opacity_label = Gtk.Label(label=_("Window opacity:"))
         ui_box.pack_start(opacity_label, False, False, 0)
         
@@ -912,7 +912,7 @@ class MainWindow(Gtk.Window):
         always_on_top_check.set_active(self.config.get("app.always_on_top", True))
         ui_box.pack_start(always_on_top_check, False, False, 0)
         
-        # Tema
+        # Theme
         theme_label = Gtk.Label(label=_("Theme:"))
         ui_box.pack_start(theme_label, False, False, 0)
         
@@ -932,7 +932,7 @@ class MainWindow(Gtk.Window):
         themes_btn.connect("clicked", self.on_themes_clicked)
         ui_box.pack_start(themes_btn, False, False, 0)
         
-        # Mode docked (dock)
+        # Docked mode (dock)
         dock_check = Gtk.CheckButton(label=_("Docked (reserves screen space)"))
         dock_check.set_active(self.config.get("app.dock_mode", "float") == "dock")
         ui_box.pack_start(dock_check, False, False, 0)
@@ -949,7 +949,7 @@ class MainWindow(Gtk.Window):
         
         notebook.append_page(ui_box, Gtk.Label(label=_("Appearance")))
         
-        # Separador Temas
+        # Themes section
         themes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         themes_box.set_border_width(10)
         
@@ -957,7 +957,7 @@ class MainWindow(Gtk.Window):
         themes_label.set_use_markup(True)
         themes_box.pack_start(themes_label, False, False, 0)
         
-        # Lista de temas
+        # Theme list
         self.themes_listbox = Gtk.ListBox()
         self.themes_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self._populate_themes_list()
@@ -978,7 +978,7 @@ class MainWindow(Gtk.Window):
         
         notebook.append_page(themes_box, Gtk.Label(label=_("Themes")))
         
-        # Separador Funcionalidades
+        # Features section
         features_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         features_box.set_border_width(10)
         
@@ -996,28 +996,28 @@ class MainWindow(Gtk.Window):
         ocr_check.set_active(self.config.get("features.ocr_enabled", True))
         features_box.pack_start(ocr_check, False, False, 0)
         
-        # Mode especialista
+        # Expert mode
         expert_check = Gtk.CheckButton(label=_("Expert Mode"))
         expert_check.set_active(self.config.get("features.expert_mode", True))
         features_box.pack_start(expert_check, False, False, 0)
         
-        notebook.append_page(features_box, Gtk.Label(label="Funcionalidades"))
+        notebook.append_page(features_box, Gtk.Label(label="Features"))
         
         # Show dialog
         dialog.show_all()
         
-        # Guardar settings ao fechar
+        # Save settings on close
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
-            # Guardar provedor
+            # Save provider
             new_provider = provider_combo.get_active_id()
             self.config.set("api.default_provider", new_provider)
             
-            # Guardar API key
+            # Save API key
             api_key = api_key_entry.get_text()
             self.config.set_api_key(new_provider, api_key)
             
-            # Guardar opacidade
+            # Save opacity
             opacity = opacity_scale.get_value()
             self.config.set("app.opacity", opacity)
             self.set_opacity(opacity)
@@ -1027,16 +1027,16 @@ class MainWindow(Gtk.Window):
             self.config.set("app.always_on_top", always_on_top)
             self.set_keep_above(always_on_top)
             
-            # Guardar tema
+            # Save theme
             theme = theme_combo.get_active_id()
             self.config.set("ui.theme", theme)
             
-            # Guardar funcionalidades
+            # Save features
             self.config.set("features.screen_capture", screen_capture_check.get_active())
             self.config.set("features.ocr_enabled", ocr_check.get_active())
             self.config.set("features.expert_mode", expert_check.get_active())
             
-            # Guardar mode ancorado
+            # Save docked mode
             self.config.set("app.dock_mode", "dock" if dock_check.get_active() else "float")
             self.config.set("app.dock_edge", dock_edge_combo.get_active_id() or "right")
             
@@ -1049,26 +1049,30 @@ class MainWindow(Gtk.Window):
         dialog.destroy()
     
     def _append_message(self, label: str, message: str, tag_name: str):
-        """Inserir `\\n[label]\\n<message>\\n\\n` e aplicar `tag_name` a tudo.
+        """Insert `\\n[label]\\n<message>\\n\\n` and apply `tag_name` to all of it.
 
-        Os offsets sao capturados ANTES da insercao, em vez de calculados
-        "char_count - len(message) - N". Esse calculo dependia de numeros
-        magicos fracos e partia-se com assimetrias de traducao.
+        The offsets are captured BEFORE the insertion, instead of being
+        calculated as "char_count - len(message) - N". That calculation
+        depended on weak magic numbers and broke with translation asymmetries.
         """
         buffer = self.chat_textview.get_buffer()
         start_offset = buffer.get_char_count()
         text = f"\n[{label}]\n{message}\n\n"
         buffer.insert(buffer.get_end_iter(), text)
         end_offset = start_offset + len(text)
-        buffer.apply_tag_by_name(
-            tag_name,
-            buffer.get_iter_at_offset(start_offset),
-            buffer.get_iter_at_offset(end_offset),
-        )
+        try:
+            buffer.apply_tag_by_name(
+                tag_name,
+                buffer.get_iter_at_offset(start_offset),
+                buffer.get_iter_at_offset(end_offset),
+            )
+        except TypeError:
+            # If the tag was not created, fall back to inserting plain text.
+            logger.warning("Chat tag not available: %s", tag_name)
         return start_offset, end_offset
 
     def _add_user_message(self, message: str):
-        """Adicionar message do user ao chat"""
+        """Add a user message to the chat"""
         if not message:
             return
 
@@ -1078,18 +1082,18 @@ class MainWindow(Gtk.Window):
         self._save_message_to_history("user", message)
 
         self._scroll_to_bottom()
-        logger.debug(f"Mensagem do user adicionada: {message[:50]}...")
+        logger.debug(f"User message added: {message[:50]}...")
 
     def _add_ai_message(self, message: str, streaming: bool = False):
-        """Adicionar message da IA ao chat"""
+        """Add an AI message to the chat"""
         if self._cancel_event.is_set():
             return
 
         buffer = self.chat_textview.get_buffer()
 
         if streaming and self.streaming:
-            # Substituir o placeholder pelo cabecalho real no primeiro chunk,
-            # para que a resposta em streaming fique correctamente formatada.
+            # Replace the placeholder with the real header on the first chunk,
+            # so the streaming response is formatted correctly.
             if self._loading_span is not None:
                 self._remove_loading_message()
                 self._append_message(_('AI'), "", "ai-message")
@@ -1098,26 +1102,26 @@ class MainWindow(Gtk.Window):
         else:
             self._append_message(_('AI'), message, "ai-message")
 
-            # Guardar em history (apenas message completa)
+            # Save to history (only the complete message)
             if not streaming:
                 self._save_message_to_history("assistant", message)
 
             self._scroll_to_bottom()
 
-        logger.debug(f"Mensagem da IA adicionada: {message[:50]}...")
+        logger.debug(f"AI message added: {message[:50]}...")
 
     def _add_system_message(self, message: str):
-        """Adicionar message do system ao chat"""
+        """Add a system message to the chat"""
         self._append_message(_('System'), message, "system-message")
 
         self._scroll_to_bottom()
-        logger.info(f"Mensagem do sistema: {message}")
+        logger.info(f"System message: {message}")
 
     def _add_loading_message(self, message: str = None):
-        """Add loading message
+        """Add a loading message
 
-        Guardamos o intervalo exato ocupado pelo placeholder para o podermos
-        remover sem tocar no texto ja inserido.
+        We store the exact interval occupied by the placeholder so we can
+        remove it without touching text already inserted.
         """
         if message is None:
             message = _("Thinking...")
@@ -1137,11 +1141,11 @@ class MainWindow(Gtk.Window):
         self._scroll_to_bottom()
 
     def _remove_loading_message(self):
-        """Remover APENAS o placeholder de loading.
+        """Remove ONLY the loading placeholder.
 
-        A versao anterior procurava a ultima linha `[AI]` e apagava ate ao fim
-        do buffer. Como a resposta em streaming usa o mesmo prefixo, isso
-        apagava a resposta inteira do ecra.
+        The previous version searched for the last `[AI]` line and deleted
+        to the end of the buffer. Since the streaming response also starts
+        with `[AI]`, that deleted the entire response from the screen.
         """
         span = self._loading_span
         self._loading_span = None
@@ -1151,7 +1155,7 @@ class MainWindow(Gtk.Window):
         buffer = self.chat_textview.get_buffer()
         valid = valid_span(span[0], span[1], buffer.get_char_count())
         if valid is None:
-            logger.debug("Placeholder de loading ja nao esta no buffer; nada a remover")
+            logger.debug("Loading placeholder is no longer in the buffer; nothing to remove")
             return
 
         start_offset, end_offset = valid
@@ -1165,7 +1169,7 @@ class MainWindow(Gtk.Window):
         GLib.idle_add(self._do_scroll_to_bottom)
     
     def _do_scroll_to_bottom(self):
-        """Executa o scroll for the fundo"""
+        """Perform the scroll to bottom"""
         adjustment = self.chat_scrolled.get_vadjustment()
         adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
         return False
@@ -1177,8 +1181,8 @@ class MainWindow(Gtk.Window):
             if history_file.exists():
                 with open(history_file, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
-                # O historico em disco inclui `timestamp`, que nao e um campo de
-                # mensagem. Normalizar ao carregar evita envia-lo ao provider.
+                # The on-disk history includes `timestamp`, which is not a
+                # message field. Normalizing on load prevents sending it to the provider.
                 if isinstance(loaded, list):
                     self.conversation_history = [
                         {"role": m.get("role", "user"), "content": m.get("content", "")}
@@ -1191,11 +1195,11 @@ class MainWindow(Gtk.Window):
             self.conversation_history = []
 
     def _build_request_messages(self):
-        """Montar a lista de mensagens para a API.
+        """Build the message list for the API.
 
-        Remove o `timestamp` (que existe apenas no historico em disco) e
-        limita o contexto ao orcamento configurado, para que uma conversa
-        longa nao envoye 1000 mensagens em cada turno.
+        It removes `timestamp` (which only exists in the on-disk history) and
+        limits the context to the configured budget, so a long conversation
+        does not send 1000 messages on every turn.
         """
         messages = [{"role": m["role"], "content": m["content"]}
                     for m in self.conversation_history
@@ -1212,7 +1216,7 @@ class MainWindow(Gtk.Window):
 
         if len(messages) > max_messages:
             logger.debug(
-                f"Contexto truncado de {len(messages)} para {max_messages} mensagens"
+                f"Context truncated from {len(messages)} to {max_messages} messages"
             )
             messages = messages[-max_messages:]
 
@@ -1220,7 +1224,7 @@ class MainWindow(Gtk.Window):
         while len(messages) > 2 and total > max_chars:
             removed = messages.pop(0)
             total -= len(removed["content"])
-            logger.debug("Contexto truncado por orcamento de caracteres")
+            logger.debug("Context truncated by character budget")
 
         return messages
     
@@ -1250,15 +1254,15 @@ class MainWindow(Gtk.Window):
             logger.error(f"Error saving history: {e}")
     
     def _get_context_message(self) -> Optional[Dict[str, str]]:
-        """Obter message de contexto with base no modo"""
+        """Get context message based on the current mode"""
         if self.expert_mode:
             return {
                 "role": "system",
-                "content": """Eres a especialista em sistemas Linux with vastos conhecimentos sobre:
+                "content": """You are the Linux systems expert with extensive knowledge of:
 - Configuration of systems and services
-- Management de pacotes (apt, dnf, pacman, xbps, etc.)
-- Configuration de network e firewall
-- Scripting em Bash e Python
+- Package management (apt, dnf, pacman, xbps, etc.)
+- Network and firewall configuration
+- Scripting in Bash and Python
 - Troubleshooting common problems
 - Performance optimization
 - System security
@@ -1280,16 +1284,17 @@ Respond clearly and concisely in English."""
             }
     
     def _get_system_info_for_context(self) -> str:
-        """Get system information for context"""
+        """Get system information for context."""
         try:
             info = self.system_utils.get_system_info()
-            return f"""
-Sistema: {info.get('distro', 'Unknown')}
-Kernel: {info.get('release', 'Unknown')}
-Architecture: {info.get('machine', 'Unknown')}
-Memory: {info.get('memory_used', 'N/A')} used of {info.get('memory_total', 'N/A')}
-CPU: {info.get('cpu_cores', 'N/A')} cores
-"""
+            lines = [
+                f"System: {info.get('distro', 'Unknown')}",
+                f"Kernel: {info.get('release', 'Unknown')}",
+                f"Architecture: {info.get('machine', 'Unknown')}",
+                f"Memory: {info.get('memory_used', 'N/A')} used of {info.get('memory_total', 'N/A')}",
+                f"CPU: {info.get('cpu_cores', 'N/A')} cores",
+            ]
+            return "\n".join(lines) + "\n"
         except Exception as e:
             logger.warning(f"Error getting system info for context: {e}")
             return ""

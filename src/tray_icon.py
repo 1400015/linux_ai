@@ -34,7 +34,7 @@ class TrayIcon:
     def _create_tray_icon(self):
         """Create system tray icon"""
         try:
-            # Tentar usar AppIndicator3 (Ubuntu)
+            # Try AppIndicator3 (Ubuntu)
             self.indicator = AppIndicator3.IndicatorApp.new(
                 "linux-ai-assistant",
                 "system-run",
@@ -47,11 +47,11 @@ class TrayIcon:
             self._create_menu()
             self.indicator.set_menu(self.menu)
             
-            logger.info("AppIndicator3 criado with sucesso")
+            logger.info("AppIndicator3 created successfully")
             
         except (ImportError, AttributeError) as e:
             logger.warning(f"AppIndicator3 not available: {e}. Using StatusIcon.")
-            # Fallback for Gtk.StatusIcon (funciona na maioria dos sistemas)
+            # Fallback for Gtk.StatusIcon (works on most systems)
             self._create_status_icon()
     
     def _create_status_icon(self):
@@ -65,10 +65,10 @@ class TrayIcon:
             if icon:
                 self.status_icon.set_from_pixbuf(icon)
             else:
-                # Create icon simples
+                # Create simple icon
                 try:
                     pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 48, 48)
-                    pixbuf.fill(0x4CAF50FF)  # Verde
+                    pixbuf.fill(0x4CAF50FF)  # Green
                     self.status_icon.set_from_pixbuf(pixbuf)
                 except Exception as e:
                     logger.error(f"Error creating icon: {e}")
@@ -80,33 +80,33 @@ class TrayIcon:
             # Create menu
             self._create_menu()
             
-            logger.info("StatusIcon criado with sucesso")
+            logger.info("StatusIcon created successfully")
             
         except Exception as e:
-            logger.error(f"Erro a create StatusIcon: {e}")
+            logger.error(f"Error creating StatusIcon: {e}")
             raise
     
     def _create_menu(self):
         """Create system tray icon menu"""
         self.menu = Gtk.Menu()
         
-        # Item for mostrar/esconder janela
+        # Item to show/hide window
         self.toggle_item = Gtk.MenuItem(label=_("Show Window"))
         self.toggle_item.connect("activate", self.on_toggle_window)
         self.menu.append(self.toggle_item)
         
-        # Separador
+        # Separator
         self.menu.append(Gtk.SeparatorMenuItem())
         
-        # Item for mode especialista
+        # Item for expert mode
         self.expert_item = Gtk.CheckMenuItem(label=_("Expert Mode"))
         self.expert_item.connect("toggled", self.on_toggle_expert_mode)
         self.menu.append(self.expert_item)
         
-        # Separador
+        # Separator
         self.menu.append(Gtk.SeparatorMenuItem())
         
-        # Item for configurar
+        # Item to configure
         config_item = Gtk.MenuItem(label=_("Settings"))
         config_item.connect("activate", self.on_config_clicked)
         self.menu.append(config_item)
@@ -121,62 +121,62 @@ class TrayIcon:
         stats_item.connect("activate", self.on_stats_clicked)
         self.menu.append(stats_item)
         
-        # Separador
+        # Separator
         self.menu.append(Gtk.SeparatorMenuItem())
         
-        # Item for sair
+        # Item to quit
         quit_item = Gtk.MenuItem(label=_("Quit"))
         quit_item.connect("activate", self.on_quit_clicked)
         self.menu.append(quit_item)
         
         self.menu.show_all()
-        logger.debug("Menu do system tray criado")
+        logger.debug("System tray menu created")
     
     def on_tray_clicked(self, icon):
         """Handler for system tray icon click"""
         if hasattr(self.main_window, 'get_window') and self.main_window.get_window():
             if self.main_window.get_window().get_property("is-active"):
                 self.main_window.hide()
-                self.toggle_item.set_label("Mostrar Janela")
+                self.toggle_item.set_label("Show Window")
             else:
                 self.main_window.show()
                 self.main_window.present()
-                self.toggle_item.set_label("Esconder Janela")
+                self.toggle_item.set_label("Hide Window")
         else:
             self.main_window.show()
             self.main_window.present()
-            self.toggle_item.set_label("Esconder Janela")
+            self.toggle_item.set_label("Hide Window")
         
         logger.debug("System tray icon clicked")
     
     def on_tray_menu(self, icon, button, time):
         """Handler for system tray icon menu"""
         if hasattr(self, 'status_icon'):
-            self.menu.popup_at_pointer(None)  # Popup no cursor
-            logger.debug("Menu do system tray mostrado")
+            self.menu.popup_at_pointer(None)  # Popup at cursor
+            logger.debug("System tray menu shown")
     
     def on_toggle_window(self, item):
-        """Alternar visibilidade da janela"""
+        """Toggle window visibility"""
         if hasattr(self.main_window, 'get_window') and self.main_window.get_window():
             if self.main_window.get_window().get_property("is-active"):
                 self.main_window.hide()
-                self.toggle_item.set_label("Mostrar Janela")
+                self.toggle_item.set_label("Show Window")
             else:
                 self.main_window.show()
                 self.main_window.present()
-                self.toggle_item.set_label("Esconder Janela")
+                self.toggle_item.set_label("Hide Window")
         else:
             self.main_window.show()
             self.main_window.present()
-            self.toggle_item.set_label("Esconder Janela")
+            self.toggle_item.set_label("Hide Window")
         
-        logger.debug("Janela alternada")
+        logger.debug("Window toggled")
     
     def on_toggle_expert_mode(self, item):
-        """Alternar mode especialista"""
+        """Toggle expert mode"""
         self.main_window.on_expert_mode_toggled(None)
         self.expert_item.set_active(self.main_window.expert_mode)
-        logger.debug(f"Modo especialista alternado: {self.main_window.expert_mode}")
+        logger.debug(f"Expert mode toggled: {self.main_window.expert_mode}")
     
     def on_config_clicked(self, item):
         """Open settings window"""
@@ -199,12 +199,12 @@ class TrayIcon:
         self.app.quit()
     
     def update_expert_mode(self, enabled: bool):
-        """Atualizar estado do mode especialista no menu"""
+        """Update the expert mode state in the menu"""
         if hasattr(self, 'expert_item'):
             self.expert_item.set_active(enabled)
-            logger.debug(f"Menu do mode especialista atualizado: {enabled}")
+            logger.debug(f"Expert mode menu updated: {enabled}")
     
     def update_toggle_label(self, visible: bool):
-        """Atualizar label do toggle no menu"""
+        """Update the toggle label in the menu"""
         if hasattr(self, 'toggle_item'):
-            self.toggle_item.set_label("Esconder Janela" if visible else "Mostrar Janela")
+            self.toggle_item.set_label("Hide Window" if visible else "Show Window")

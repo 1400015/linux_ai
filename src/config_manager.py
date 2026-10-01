@@ -13,9 +13,9 @@ from dotenv import load_dotenv
 # Configurar logger
 logger = logging.getLogger(__name__)
 
-# `set()` e chamado a cada evento de `configure-event`/`size-allocate` (isto e,
-# a cada pixel de arrasto/redimensionamento). Sem debounce, isso significaria
-# reescrever o config.json inteiro centenas de vezes por segundo.
+# `set()` is called on every `configure-event`/`size-allocate` event (that is,
+# every pixel of dragging/resizing). Without debounce, that would mean
+# rewriting the entire config.json hundreds of times per second.
 SAVE_DEBOUNCE_SECONDS = 0.5
 
 
@@ -158,7 +158,7 @@ class ConfigManager:
             config_path: Path to the configuration file
         """
         if config_path is None:
-            # Path default: ~/.config/linux_ai_assistant/config.json
+            # Default path: ~/.config/linux_ai_assistant/config.json
             config_dir = Path.home() / ".config" / "linux_ai_assistant"
             config_dir.mkdir(parents=True, exist_ok=True)
             config_path = str(config_dir / "config.json")
@@ -174,7 +174,7 @@ class ConfigManager:
             self._themes_dir = Path(sys.prefix) / "share" / "linux-ai-assistant" / "themes"
         self._load_config()
         self._validate_config()
-        # Garantir que uma alteracao agendada nao se perde ao sair
+        # Ensure a scheduled change is not lost on exit
         atexit.register(self.flush)
     
     def _load_encryption_key(self):
@@ -191,7 +191,7 @@ class ConfigManager:
                     self.config["app"]["encryption_enabled"] = False
                     self.save()
             else:
-                # Gerar new chave
+                # Generate new key
                 try:
                     from cryptography.fernet import Fernet
                     self._encryption_key = Fernet.generate_key()
@@ -209,7 +209,7 @@ class ConfigManager:
                     self.save()
     
     def _encrypt_value(self, value: str) -> str:
-        """Encriptar valor"""
+        """Encrypt value"""
         if not self.config.get("app.encryption_enabled", False) or not self._encryption_key:
             return value
         try:
@@ -217,11 +217,11 @@ class ConfigManager:
             f = Fernet(self._encryption_key)
             return base64.b64encode(f.encrypt(value.encode())).decode()
         except Exception as e:
-            logger.error(f"Erro a encriptar valor: {e}")
+            logger.error(f"Error encrypting value: {e}")
             return value
     
     def _decrypt_value(self, value: str) -> str:
-        """Desencriptar valor"""
+        """Decrypt value"""
         if not self.config.get("app.encryption_enabled", False) or not self._encryption_key:
             return value
         try:
@@ -229,7 +229,7 @@ class ConfigManager:
             f = Fernet(self._encryption_key)
             return f.decrypt(base64.b64decode(value.encode())).decode()
         except Exception as e:
-            logger.warning(f"Erro a desencriptar valor: {e}")
+            logger.warning(f"Error decrypting value: {e}")
             return value
     
     def _load_config(self):
@@ -240,7 +240,7 @@ class ConfigManager:
                     self.config = json.load(f)
                 logger.info(f"Configuration loaded from {self.config_path}")
             else:
-                # Create configuration default
+                # Create default configuration
                 self.config = self._get_default_config()
                 self.save()
                 logger.info("Default configuration created")
@@ -252,10 +252,9 @@ class ConfigManager:
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration
 
-        `copy.deepcopy` e obrigatorio: uma copia rasa partilharia os dicts
-        internos com DEFAULT_CONFIG, fazendo com que uma API key escrita numa
-        instancia aparecesse noutras instancias e contaminasse a constante de
-        classe.
+        `copy.deepcopy` is required: a shallow copy would share the internal
+        dicts with DEFAULT_CONFIG, causing an API key written in one instance
+        to appear in other instances and contaminate the class constant.
         """
         return copy.deepcopy(self.DEFAULT_CONFIG)
     
@@ -289,9 +288,9 @@ class ConfigManager:
     
     def get(self, key: str, default: Any = None) -> Any:
         """
-        Get valor da configuration usando dot notation
-        
-        Exemplo:
+        Get a configuration value using dot notation.
+
+        Example:
             config.get("app.width") -> 400
             config.get("api.providers.openrouter.api_key") -> "..."
         """
@@ -331,11 +330,11 @@ class ConfigManager:
     
     def set(self, key: str, value: Any):
         """
-        Set valor na configuration usando dot notation
-        
+        Set a configuration value using dot notation.
+
         Args:
-            key: Key em dot notation (ex: "app.width")
-            value: Valor a definir
+            key: Key in dot notation (e.g. "app.width").
+            value: Value to set.
         """
         keys = key.split('.')
         current = self.config
@@ -354,11 +353,11 @@ class ConfigManager:
         logger.debug("Configuration updated: %s", key)
 
     def _schedule_save(self):
-        """Agendar uma gravacao (debounce).
+        """Schedule a write (debounce).
 
-        Chamadas consecutivas dentro de SAVE_DEBOUNCE_SECONDS resultam num
-        unico write. `save()` continua a estar disponivel para quem precisar
-        de persistir imediatamente.
+        Consecutive calls within SAVE_DEBOUNCE_SECONDS result in a single
+        write. `save()` remains available for those who need immediate
+        persistence.
         """
         self._dirty = True
         if self._save_timer is not None:
@@ -369,7 +368,7 @@ class ConfigManager:
         timer.start()
 
     def flush(self):
-        """Gravar imediatamente se houver alteracoes pendentes."""
+        """Write immediately if there are pending changes."""
         if self._save_timer is not None:
             self._save_timer.cancel()
             self._save_timer = None
@@ -379,8 +378,8 @@ class ConfigManager:
     def save(self):
         """Save configuration to file
 
-        Escrita atomica (ficheiro temporario + os.replace) para que um
-        crash a meio da escrita nunca deixe um config.json truncado.
+        Atomic write (temp file + os.replace) so a crash in the middle of
+        writing never leaves a truncated config.json.
         """
         try:
             self._dirty = False
@@ -418,12 +417,12 @@ class ConfigManager:
         return self.get(key)
     
     def set_api_key(self, provider: str, api_key: str):
-        """Definir API key for a provedor"""
+        """Set API key for a provider"""
         self.set(f"api.providers.{provider}.api_key", api_key)
-        logger.info(f"API key atualizada for {provider}")
+        logger.info(f"API key updated for {provider}")
     
     def get_window_geometry(self) -> Dict[str, int]:
-        """Obter geometria da janela"""
+        """Get window geometry"""
         return {
             "width": self.get("app.width", 400),
             "height": self.get("app.height", 500),
@@ -432,15 +431,15 @@ class ConfigManager:
         }
     
     def set_window_geometry(self, width: int, height: int, x: int, y: int):
-        """Definir geometria da janela"""
+        """Set window geometry"""
         self.set("app.width", width)
         self.set("app.height", height)
         self.set("app.x_position", x)
         self.set("app.y_position", y)
-        logger.debug(f"Geometria da window atualizada: {width}x{height} @ ({x},{y})")
+        logger.debug(f"Window geometry updated: {width}x{height} @ ({x},{y})")
     
     def get_theme_colors(self) -> Dict[str, str]:
-        """Obter cores do tema"""
+        """Get theme colors"""
         # Check if there are custom themes
         theme_name = self.get("app.theme", "dark")
         custom_theme = self._load_theme(theme_name)
@@ -463,9 +462,9 @@ class ConfigManager:
             }
     
     def _load_theme(self, theme_name: str) -> Optional[Dict]:
-        """Carregar theme do ficheiro"""
+        """Load theme from file"""
         try:
-            # Procurar em themes customizados do utilizador
+            # Search in user's custom themes
             user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
             user_theme_file = user_themes_dir / f"{theme_name}.json"
             
@@ -483,7 +482,7 @@ class ConfigManager:
             return None
             
         except Exception as e:
-            logger.error(f"Erro a load theme {theme_name}: {e}")
+            logger.error(f"Error loading theme {theme_name}: {e}")
             return None
     
     def get_available_themes(self) -> List[str]:
@@ -495,7 +494,7 @@ class ConfigManager:
             for theme_file in self._themes_dir.glob("*.json"):
                 themes.append(theme_file.stem)
         
-        # Themes do utilizador
+        # User themes
         user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
         if user_themes_dir.exists():
             for theme_file in user_themes_dir.glob("*.json"):
@@ -519,17 +518,17 @@ class ConfigManager:
     def enable_encryption(self, enable: bool = True):
         """Enable/disable API key encryption"""
         if enable:
-            # Gerar key se no existir
+            # Generate key if it does not exist
             if not self._encryption_key:
                 self._load_encryption_key()
             self.set("app.encryption_enabled", True)
-            # Re-encriptar todas as API keys
+            # Re-encrypt all API keys
             for provider in self.get("api.providers", {}).keys():
                 api_key = self.get(f"api.providers.{provider}.api_key")
                 if api_key:
                     self.set(f"api.providers.{provider}.api_key", api_key)
         else:
-            # Desencriptar todas as API keys antes de desativar
+            # Decrypt all API keys before disabling
             for provider in self.get("api.providers", {}).keys():
                 api_key = self.get(f"api.providers.{provider}.api_key")
                 if api_key:

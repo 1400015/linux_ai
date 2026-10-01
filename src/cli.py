@@ -341,7 +341,7 @@ Exemplos:
         print("SYSTEM INFORMATION")
         print("=" * 50)
         
-        print("\nSistema Operativo:")
+        print("\nOperating System:")
         print(f"  Name: {info.get('distro', 'Unknown')}")
         print(f"  ID: {info.get('distro_id', 'Unknown')}")
         print(f"  Version: {info.get('release', 'Unknown')}")
@@ -359,7 +359,7 @@ Exemplos:
         print(f"  Available: {info.get('memory_available', 'N/A')}")
         print(f"  Usage: {info.get('memory_percent', 'N/A')}")
         
-        print("\nDisco:")
+        print("\nDisk:")
         print(f"  Total: {info.get('disk_total', 'N/A')}")
         print(f"  Used: {info.get('disk_used', 'N/A')}")
         print(f"  Free: {info.get('disk_free', 'N/A')}")
@@ -367,7 +367,7 @@ Exemplos:
         
         print(f"\nUptime: {info.get('uptime', 'N/A')}")
         
-        print("\nUtilizador:")
+        print("\nUser:")
         print(f"  Name: {info.get('username', 'Unknown')}")
         print(f"  Is root: {info.get('is_root', False)}")
         
@@ -376,7 +376,7 @@ Exemplos:
         print(f"  Display: {info.get('display', 'N/A')}")
         
         if info.get('is_void'):
-            print("\n✓ Sistema: Void Linux")
+            print("\n✓ System: Void Linux")
         if info.get('is_d77void'):
             print("✓ System: d77void")
         
@@ -523,7 +523,7 @@ Exemplos:
             marker = "✓" if is_default else " "
             key_status = "✓" if has_key else "✗"
             
-            print(f"{marker} {provider:<20} Modelo: {model:<30} Key: {key_status}")
+            print(f"{marker} {provider:<20} Model: {model:<30} Key: {key_status}")
         
         print("\n" + "=" * 50 + "\n")
     
@@ -591,15 +591,15 @@ Respond clearly and concisely in English."""
 
 
 def main():
-    """Ponto de input main for CLI"""
+    """Main entry point for CLI"""
     try:
         app = CLIApp()
         app.run()
     except KeyboardInterrupt:
-        print("\n\n✓ Sair...")
+        print("\n\n✓ Exiting...")
         sys.exit(0)
     except Exception as e:
-        print(f"\n✗ Erro: {e}")
+        print(f"\n✗ Error: {e}")
         sys.exit(1)
 
 
