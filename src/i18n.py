@@ -444,3 +444,243 @@ def _(text):
     if not catalog:
         return text
     return catalog.get(text, text)
+
+
+# --------------------------------------------------------------------------
+# Offline assistant templates (moved from offline_assistant.py so all
+# translation catalogs live in one module; English is the fallback).
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Text templates (English + Portuguese; other languages fall back to English)
+# --------------------------------------------------------------------------
+
+OFFLINE_TEXTS = {
+    "en": {
+        "help": (
+            "I am running in offline mode and can help with the local system "
+            "({pretty}, {pkg} package manager, {svc} services) without any API. "
+            "Try things like:\n"
+            "- \"how do I update the system?\"\n"
+            "- \"install <package>\"\n"
+            "- \"enable service <name>\"\n"
+            "- \"set timezone to Europe/Lisbon\"\n"
+            "- \"set hostname to laptop\"\n"
+            "- \"how much disk/memory do I have?\"\n"
+            "- \"network diagnostics\" / \"configure firewall\"\n"
+            "- \"change my shell\" / \"add an alias\"\n"
+            "- \"clean the cache\" / \"autostart an app\"\n"
+        ),
+        "distro": (
+            "This system is {pretty} (id: {distro_id}{like}). "
+            "Package manager: {pkg}. Service manager: {svc}. Kernel: {kernel}."
+        ),
+        "update": "To update {pretty}, run:\n{cmds}",
+        "install_generic": (
+            "To install a package on {pretty}, run:\n{cmd}\n"
+            "Replace <package> with the package name, e.g. \"{example}\"."
+        ),
+        "install_named": "To install '{pkg}', run:\n{cmd}",
+        "remove_generic": (
+            "To remove a package on {pretty}, run:\n{cmd}\n"
+            "Replace <package> with the package name."
+        ),
+        "remove_named": "To remove '{pkg}', run:\n{cmd}",
+        "search_generic": "To search for a package on {pretty}, run:\n{cmd}",
+        "search_named": "To search for '{pkg}', run:\n{cmd}",
+        "services": (
+            "Services on {pretty} are managed with {svc}. Common commands:\n"
+            "- list: {list}\n"
+            "- status: {status}\n"
+            "- enable at boot: {enable}\n"
+            "- start now: {start}\n"
+            "- restart: {restart}\n"
+            "- stop / disable: {stop} / {disable}\n"
+            "Replace <name> with the service name."
+        ),
+        "service_action": "To {action} the service '{svc}', run:\n{cmd}",
+        "service_unknown": (
+            "I could not find a service name in your message. "
+            "Example: \"enable service chronyd\"."
+        ),
+        "timezone": (
+            "On {pretty} ({svc}) the timezone is set with:\n{cmds}\n"
+            "Example: \"set timezone to Europe/Lisbon\"."
+        ),
+        "set_timezone": "To set the timezone to {tz}, run:\n{cmd}",
+        "timezone_manual": (
+            "Automatic timezone configuration is not available for {svc} here. "
+            "Edit /etc/localtime (or /etc/TZ on Alpine) or ask your distribution's docs."
+        ),
+        "hostname": (
+            "On {pretty} ({svc}) the hostname is set with:\n{cmds}\n"
+            "Example: \"set hostname to laptop\"."
+        ),
+        "set_hostname": "To set the hostname to '{host}', run:\n{cmd}",
+        "hostname_manual": (
+            "Automatic hostname configuration is not available for {svc} here. "
+            "Edit /etc/hostname and /etc/hosts, then reboot."
+        ),
+        "disk": "Disk usage:\n{out}\n\nBiggest consumers:\n{cmds}",
+        "disk_none": "Disk usage (run `df -h` yourself):\n{cmds}",
+        "memory": "Memory usage:\n{out}",
+        "memory_none": "Memory usage (run `free -h` yourself):\n{cmds}",
+        "network": (
+            "Network diagnostics (run in a terminal):\n"
+            "- addresses: ip -brief addr\n"
+            "- routes: ip route\n"
+            "- DNS: resolvectl status  (or cat /etc/resolv.conf)\n"
+            "- connectivity: ping -c 3 1.1.1.1\n"
+            "If WiFi is managed by NetworkManager: nmcli device status / nmcli connection show."
+        ),
+        "firewall": (
+            "Firewall on {pretty} ({svc}):\n{cmds}\n"
+            "Check what is already active before changing rules."
+        ),
+        "shell": (
+            "To change your default shell:\n"
+            "- list installed shells: cat /etc/shells\n"
+            "- change: chsh -s /bin/bash  (or /bin/zsh)\n"
+            "The change applies to the next login."
+        ),
+        "alias": (
+            "Aliases live in your shell startup file:\n"
+            "- Bash: ~/.bashrc   - Zsh: ~/.zshrc\n"
+            "Add: alias ll='ls -lah'  then reload it with: source ~/.bashrc"
+        ),
+        "clean": (
+            "To free space on {pretty}:\n{cmds}\n"
+            "- user cache: rm -rf ~/.cache/*  (safe to delete)\n"
+            "- journal (systemd): journalctl --vacuum-size=200M"
+        ),
+        "autostart": (
+            "To start an application automatically at login, create a .desktop "
+            "file in ~/.config/autostart/ (e.g. ~/.config/autostart/myapp.desktop):\n"
+            "[Desktop Entry]\nType=Application\nName=My app\nExec=/path/to/app"
+        ),
+    },
+    "pt": {
+        "help": (
+            "Estou em modo offline e posso ajudar com o sistema local "
+            "({pretty}, gestor de pacotes {pkg}, serviços {svc}) sem qualquer API. "
+            "Experimenta, por exemplo:\n"
+            "- \"como atualizo o sistema?\"\n"
+            "- \"instalar <pacote>\"\n"
+            "- \"ativar serviço <nome>\"\n"
+            "- \"definir fuso horário para Europe/Lisbon\"\n"
+            "- \"definir hostname como portatil\"\n"
+            "- \"quanto espaço/memória tenho?\"\n"
+            "- \"diagnóstico de rede\" / \"configurar firewall\"\n"
+            "- \"mudar a shell\" / \"adicionar um alias\"\n"
+            "- \"limpar a cache\" / \"arrancar app automaticamente\"\n"
+        ),
+        "distro": (
+            "Este sistema é {pretty} (id: {distro_id}{like}). "
+            "Gestor de pacotes: {pkg}. Gestor de serviços: {svc}. Kernel: {kernel}."
+        ),
+        "update": "Para atualizar {pretty}, executa:\n{cmds}",
+        "install_generic": (
+            "Para instalar um pacote em {pretty}, executa:\n{cmd}\n"
+            "Substitui <pacote> pelo nome, por exemplo \"{example}\"."
+        ),
+        "install_named": "Para instalar '{pkg}', executa:\n{cmd}",
+        "remove_generic": (
+            "Para remover um pacote em {pretty}, executa:\n{cmd}\n"
+            "Substitui <pacote> pelo nome."
+        ),
+        "remove_named": "Para remover '{pkg}', executa:\n{cmd}",
+        "search_generic": "Para procurar um pacote em {pretty}, executa:\n{cmd}",
+        "search_named": "Para procurar por '{pkg}', executa:\n{cmd}",
+        "services": (
+            "Os serviços em {pretty} são geridos com {svc}. Comandos comuns:\n"
+            "- listar: {list}\n"
+            "- estado: {status}\n"
+            "- ativar no arranque: {enable}\n"
+            "- iniciar agora: {start}\n"
+            "- reiniciar: {restart}\n"
+            "- parar / desativar: {stop} / {disable}\n"
+            "Substitui <nome> pelo nome do serviço."
+        ),
+        "service_action": "Para {action} o serviço '{svc}', executa:\n{cmd}",
+        "service_unknown": (
+            "Não encontrei o nome de um serviço na tua mensagem. "
+            "Exemplo: \"ativar serviço chronyd\"."
+        ),
+        "timezone": (
+            "Em {pretty} ({svc}) o fuso horário define-se com:\n{cmds}\n"
+            "Exemplo: \"definir fuso horário para Europe/Lisbon\"."
+        ),
+        "set_timezone": "Para definir o fuso horário {tz}, executa:\n{cmd}",
+        "timezone_manual": (
+            "A configuração automática de fuso não está disponível para {svc}. "
+            "Edita /etc/localtime (ou /etc/TZ no Alpine) ou consulta a documentação."
+        ),
+        "hostname": (
+            "Em {pretty} ({svc}) o hostname define-se com:\n{cmds}\n"
+            "Exemplo: \"definir hostname como portatil\"."
+        ),
+        "set_hostname": "Para definir o hostname '{host}', executa:\n{cmd}",
+        "hostname_manual": (
+            "A configuração automática de hostname não está disponível para {svc}. "
+            "Edita /etc/hostname e /etc/hosts e reinicia."
+        ),
+        "disk": "Uso de disco:\n{out}\n\nMaiores ocupantes:\n{cmds}",
+        "disk_none": "Uso de disco (corre `df -h`):\n{cmds}",
+        "memory": "Uso de memória:\n{out}",
+        "memory_none": "Uso de memória (corre `free -h`):\n{cmds}",
+        "network": (
+            "Diagnóstico de rede (corre num terminal):\n"
+            "- endereços: ip -brief addr\n"
+            "- rotas: ip route\n"
+            "- DNS: resolvectl status  (ou cat /etc/resolv.conf)\n"
+            "- conectividade: ping -c 3 1.1.1.1\n"
+            "Se o WiFi for gerido pelo NetworkManager: nmcli device status / nmcli connection show."
+        ),
+        "firewall": (
+            "Firewall em {pretty} ({svc}):\n{cmds}\n"
+            "Vê o que já está ativo antes de alterar regras."
+        ),
+        "shell": (
+            "Para mudar a shell predefinida:\n"
+            "- listar instaladas: cat /etc/shells\n"
+            "- mudar: chsh -s /bin/bash  (ou /bin/zsh)\n"
+            "A alteração aplica-se no próximo login."
+        ),
+        "alias": (
+            "Os aliases ficam no ficheiro de arranque da shell:\n"
+            "- Bash: ~/.bashrc   - Zsh: ~/.zshrc\n"
+            "Acrescenta: alias ll='ls -lah'  e recarrega com: source ~/.bashrc"
+        ),
+        "clean": (
+            "Para libertar espaço em {pretty}:\n{cmds}\n"
+            "- cache do utilizador: rm -rf ~/.cache/*  (seguro apagar)\n"
+            "- journal (systemd): journalctl --vacuum-size=200M"
+        ),
+        "autostart": (
+            "Para iniciar uma aplicação automaticamente no login, cria um ficheiro "
+            ".desktop em ~/.config/autostart/ (ex.: ~/.config/autostart/myapp.desktop):\n"
+            "[Desktop Entry]\nType=Application\nName=A minha app\nExec=/caminho/para/app"
+        ),
+    },
+}
+
+# Localized verb shown to the user per action.
+OFFLINE_SERVICE_ACTIONS = {
+    "en": {"enable": "enable", "start": "start", "restart": "restart",
+           "stop": "stop", "disable": "disable"},
+    "pt": {"enable": "ativar", "start": "iniciar", "restart": "reiniciar",
+           "stop": "parar", "disable": "desativar"},
+}
+
+
+def offline_text(lang, key, **kwargs):
+    """Format an offline-assistant template in `lang`, English fallback."""
+    catalog = OFFLINE_TEXTS.get(lang) or OFFLINE_TEXTS["en"]
+    template = catalog.get(key) or OFFLINE_TEXTS["en"][key]
+    return template.format(**kwargs) if kwargs else template
+
+
+def offline_service_action(lang, action):
+    """Localized verb for a service action, English fallback."""
+    catalog = OFFLINE_SERVICE_ACTIONS.get(lang) or OFFLINE_SERVICE_ACTIONS["en"]
+    return catalog[action]

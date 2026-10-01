@@ -1031,3 +1031,34 @@ class TestOfflineCommandCancellation(unittest.TestCase):
         source = self.source
         self.assertIn("def _offer_offline_commands", source)
         self.assertIn("request_id != self._active_request", source)
+
+
+class TestI18nUnification(unittest.TestCase):
+    """All translation catalogs must live in i18n.py (English fallback)."""
+
+    @classmethod
+    def setUpClass(cls):
+        src = ROOT / "src"
+        cls.i18n = (src / "i18n.py").read_text(encoding="utf-8")
+        cls.offline = (src / "offline_assistant.py").read_text(encoding="utf-8")
+
+    def test_offline_catalogs_live_in_i18n(self):
+        self.assertIn("OFFLINE_TEXTS", self.i18n)
+        self.assertIn("OFFLINE_SERVICE_ACTIONS", self.i18n)
+        self.assertNotIn("_TEXTS: Dict[str, Dict[str, str]] = {", self.offline)
+
+    def test_offline_templates_fall_back_to_english(self):
+        from src.i18n import offline_text
+        self.assertEqual(offline_text("xx", "network"),
+                         offline_text("en", "network"))
+        self.assertIn("Estou em modo offline",
+                      offline_text("pt", "help", pretty="Void Linux",
+                                    pkg="xbps", svc="runit"))
+        self.assertIn("I am running in offline mode",
+                      offline_text("en", "help", pretty="Void Linux",
+                                    pkg="xbps", svc="runit"))
+
+    def test_service_actions_fall_back_to_english(self):
+        from src.i18n import offline_service_action
+        self.assertEqual(offline_service_action("xx", "enable"), "enable")
+        self.assertEqual(offline_service_action("pt", "enable"), "ativar")

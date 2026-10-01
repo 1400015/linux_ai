@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Byte-compile all sources
+        run: python3 -m py_compile src/*.py tests/*.py
+
+      - name: Run test suite
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Lint with pyflakes
+        run: |
+          python3 -m pip install pyflakes
+          python3 -m pyflakes src/*.py
+        continue-on-error: true
