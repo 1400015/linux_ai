@@ -1091,6 +1091,19 @@ class MainWindow(Gtk.Window):
         theme_combo.set_active_id(self.config.get("app.theme", "dark"))
         ui_box.pack_start(theme_combo, False, False, 0)
 
+        # Language selector: qualquer língua não suportada recai em inglês
+        # (i18n.normalize_language); aqui o utilizador redefine explicitamente.
+        lang_label = Gtk.Label(label=_("Language:"))
+        ui_box.pack_start(lang_label, False, False, 0)
+
+        from .i18n import available_languages, LANGUAGE_NAMES
+        lang_combo = Gtk.ComboBoxText()
+        for code in available_languages():
+            lang_combo.append(code, LANGUAGE_NAMES.get(code, code))
+        lang_combo.set_active_id(get_language() if get_language() in
+                                 available_languages() else "en")
+        ui_box.pack_start(lang_combo, False, False, 0)
+
         # Button to manage themes
         themes_btn = Gtk.Button(label=_("Manage Themes"))
         themes_btn.connect("clicked", self.on_themes_clicked)
@@ -1203,6 +1216,14 @@ class MainWindow(Gtk.Window):
                 self.config.set("app.theme", theme)
                 # Rebuild the CSS so the new theme takes effect now
                 self._setup_style()
+
+            # Save language (normalizada: não suportada -> inglês). Os textos
+            # novos (mensagens, diálogos) aplicam-se de imediato; os rótulos
+            # já desenhados aplicam-se após reiniciar.
+            from .i18n import set_language as set_app_language
+            new_lang = lang_combo.get_active_id()
+            if new_lang:
+                set_app_language(new_lang, self.config)
 
             # Save features
             self.config.set("features.screen_capture", screen_capture_check.get_active())

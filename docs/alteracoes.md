@@ -1,5 +1,61 @@
 # Registo de Alterações — linux_ai
 
+
+## Base de conhecimento offline por distribuição + multilingue reforçado (2026-10-01, pós-v1.1.0)
+
+### `src/knowledge_base.py` (novo)
+
+- Base de conhecimento LOCAL (offline, sem rede) por família de distribuição,
+  construída a partir das wikis/manuais oficiais: Void Handbook, Debian Wiki,
+  Ubuntu Server Documentation, Linux Mint, Arch Wiki, Manjaro Wiki, Fedora
+  Docs, Red Hat Docs (RHEL/CentOS/Rocky/Alma), openSUSE Wiki, Alpine Wiki e
+  Gentoo Wiki, mais um perfil genérico.
+- Factos curados por família: gestor de pacotes e comandos, onde ficam os
+  repositórios, como a rede é configurada (netplan vs interfaces vs
+  NetworkManager vs dhcpcd...), como os logs são recolhidos (journald vs
+  syslog vs socklog), hostname, locale, ferramenta de firewall (ufw /
+  firewalld / nftables / iptables) com comandos de estado e exemplo, notas do
+  gestor de serviços (runit/OpenRC/systemd) e bullets "o que torna esta
+  distro diferente".
+- Conteúdo em INGLÊS (fonte); apresentação localizada via i18n. Resolução por
+  `ID` de `/etc/os-release` primeiro e `ID_LIKE` depois; sistema desconhecido
+  sem ancestría reconhecível não inventa factos (perfil genérico só para
+  ID vazio/unknown).
+
+### Novos intents do assistente offline
+
+- "onde estão os ficheiros de configuração?" — locais de configuração da
+  distribuição (repositórios, rede, logs, hostname, locale, serviços).
+- "where are the logs?" — como os logs funcionam NESTA distro + comandos
+  (journalctl no systemd; dmesg no runit/OpenRC).
+- "show repositories" / "onde ficam os repositórios?" — ficheiros de repos.
+- "documentation about X" / "documentação sobre X" — documentação oficial da
+  distro + link de pesquisa na wiki com a query.
+- "firewall" — agora por distribuição (ufw no Ubuntu/Mint, firewalld no
+  Fedora/openSUSE/RHEL, nada pré-instalado no Void/Arch/Alpine com
+  iptables/nftables).
+- "que distro sou?" — enriquecido com as notas da família + link oficial.
+- Todas as respostas da KB terminam com "Reference (Wiki oficial): URL".
+
+### Multilingue
+
+- `SUPPORTED_LANGUAGES` (en, pt, es, fr, de) + `normalize_language()`: língua
+  escolhida (config ou sistema) fora da lista -> INGLÊS automaticamente, com
+  registo no log; redefinível a qualquer momento.
+- Seletor de língua nas Definições > Aparência (nomes nativos: English,
+  Português, Español, Français, Deutsch); grava em `app.language`.
+- Chaves novas da KB em en/pt/es/fr/de (os restantes templates offline
+  continuam en+pt com fallback por chave para inglês).
+
+### Testes
+
+- `tests/test_knowledge.py` (20 testes): consistência da KB (URLs https,
+  documentação obrigatória), resolução ID/ID_LIKE (rocky->rhel,
+  asahi+ID_LIKE arch->arch, nixos->None), respostas por distro (netplan no
+  Ubuntu, /etc/sv no Void, journald no Arch, /var/log/messages no Alpine,
+  ufw/firewalld por família) e fallback de língua (it->en, jp->en,
+  redefinição para fr).
+
 ## v1.1.0 (2026-10-01) — Auditoria completa: segurança, correções e refactoring
 
 Auditoria integral do código (~9.400 linhas) com análise de 4 camadas (UI,

@@ -239,6 +239,7 @@ class Reply:
 
 
 from .i18n import OFFLINE_TEXTS as _TEXTS, OFFLINE_SERVICE_ACTIONS as _SERVICE_ACTIONS, offline_text as _t
+from .knowledge_base import knowledge_for
 
 # Order matters: check the more specific verbs first so "restart" is not
 # mistaken for "start". Word boundaries keep "start" out of "restart".
@@ -287,7 +288,8 @@ _KEYWORDS: Dict[str, List[str]] = {
              "storage"],
     "memory": ["memory", "memória", "memoria", " ram ", "free -h"],
     "network": ["network", "rede", "wifi", "dns", "ip addr", "ping", "internet"],
-    "firewall": ["firewall", "ufw", "nftables", "iptables", "firewalld"],
+    "firewall": ["firewall", "ufw", "nftables", "iptables", "firewalld",
+                 "firewall-cmd"],
     "shell": ["shell", "chsh", "zsh", "default shell"],
     "alias": ["alias", "aliases"],
     "clean": ["clean", "limpar", "cache", "temporários", "temporarios",
@@ -296,6 +298,20 @@ _KEYWORDS: Dict[str, List[str]] = {
                   "startup", "iniciar com o sistema"],
     "distro": ["distro", "distribution", "distribuição", "versão", "versao",
                "kernel", "what linux", "que linux", "que distro"],
+    # Knowledge-base intents: "how does THIS distro do X"
+    "config": ["configuration file", "config file", "where is the config",
+               "config location", "where is it configured", "onde fica a config",
+               "ficheiro de configura", "ficheiros de configura",
+               "arquivo de configura", "fichier de config",
+               "konfigurationsdatei", "onde fica configurado",
+               "onde ficam os ficheiros"],
+    "logs": ["logs", "log files", "where are the logs", "journal", "journalctl",
+             "syslog", "registos", "registro de", "journaux", "protokolle"],
+    "repos": ["repository", "repositories", "repositório", "repositorio",
+              "sources.list", "mirrorlist", " repos ", "repositorios"],
+    "docs": [" wiki ", "documentation", "documentação", "documentacao",
+             "handbook", "official docs", "guia oficial", " manuais ",
+             " manual ", "dokumentation", " where do i find docs"],
     "help": ["help", "ajuda", "what can you do", "o que consegues",
              "o que podes", "comandos disponíveis"],
 }
@@ -322,6 +338,12 @@ _TZ_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_+-]*/[A-Za-z0-9_+/-]+)\b")
 _HOST_RE = re.compile(
     r"(?:hostname|nome da máquina|nome da maquina|nome do computador)"
     r"\s*(?:to|para|como|:|=)?\s+([A-Za-z0-9][A-Za-z0-9-]{0,62})",
+    re.IGNORECASE,
+)
+# Free-text query after a docs/wiki intent ("documentation about ufw")
+_DOCS_QUERY_RE = re.compile(
+    r"(?:documentation|documentação|documentacao|wiki|handbook|manual|guia|"
+    r"dokumentation|docs)\s+(?:about|on|for|sobre|para|de|do|da|zu|:)?\s*(.+)",
     re.IGNORECASE,
 )
 
@@ -374,6 +396,12 @@ class OfflineAssistant:
             os_release, which=which,
             is_systemd_running=is_systemd_running,
         )
+        # Base de conhecimento por distribuição (wikis/manuais oficiais,
+        # locais de configuração, logs, firewall). Uma distro conhecida mas
+        # sem perfil próprio cai no perfil genérico - as respostas continuam
+        # a ter factos e apontadores válidos.
+        self._kb = (knowledge_for(self._distro.distro_id, self._distro.id_like)
+                    or knowledge_for("unknown"))
 
     @property
     def distro(self) -> DistroInfo:
@@ -414,6 +442,11 @@ class OfflineAssistant:
             "alias": lambda: Reply(_t(lang, "alias")),
             "clean": lambda: self._clean_reply(distro, lang),
             "autostart": lambda: Reply(_t(lang, "autostart")),
+            # Knowledge-base intents
+            "config": lambda: Reply(self._config_reply(distro, lang)),
+            "logs": lambda: Reply(self._logs_reply(distro, lang)),
+            "repos": lambda: Reply(self._repos_reply(distro, lang)),
+            "docs": lambda: Reply(self._docs_reply(distro, lang, text)),
         }
         return dispatch[intent]()
 
@@ -455,10 +488,94 @@ class OfflineAssistant:
     def _distro_reply(self, distro: DistroInfo, lang: str) -> str:
         like = f", like: {'/'.join(distro.id_like)}" if distro.id_like else ""
         kernel = distro.kernel or self._run("uname -r") or "unknown"
-        return _t(lang, "distro", pretty=distro.pretty_name,
+        text = _t(lang, "distro", pretty=distro.pretty_name,
                   distro_id=distro.distro_id, like=like,
                   pkg=distro.pkg_manager, svc=distro.service_manager,
                   kernel=kernel)
+        # Base de conhecimento: o que torna ESTA distribuição diferente
+        kb = self._kb
+        if kb is not None and kb.distinct:
+            bullets = "\n".join("  - " + item for item in kb.distinct)
+            text += _t(lang, "distro_notes", pretty=distro.pretty_name,
+                       bullets=bullets)
+        text += self._kb_reference(lang)
+        return text
+
+    # -- knowledge base (wikis/manuais oficiais por distribuição) ----------
+
+    def _kb_reference(self, lang: str) -> str:
+        """Rodapé "Reference" com a documentação oficial da distro."""
+        kb = self._kb
+        if kb is None or not kb.wiki_url:
+            return ""
+        return _t(lang, "reference", wiki_name=kb.wiki_name, wiki_url=kb.wiki_url)
+
+    def _config_reply(self, distro: DistroInfo, lang: str) -> str:
+        """Onde ficam os ficheiros de configuração NESTA distribuição."""
+        kb = self._kb
+        if kb is None:
+            return self._help(distro, lang)
+        rows = [
+            (_t(lang, "Repositories"), kb.repositories),
+            (_t(lang, "Network"), kb.network),
+            (_t(lang, "Logs"), kb.logs),
+            (_t(lang, "Hostname"), kb.hostname),
+            (_t(lang, "Locale"), kb.locale),
+        ]
+        if kb.services_note:
+            rows.append((_t(lang, "Services"), kb.services_note))
+        body = "\n".join(f"  {label}: {content}" for label, content in rows)
+        return _t(lang, "config_files", pretty=distro.pretty_name,
+                  body=body) + self._kb_reference(lang)
+
+    def _logs_reply(self, distro: DistroInfo, lang: str) -> str:
+        kb = self._kb
+        if kb is None or not kb.logs:
+            return self._help(distro, lang)
+        if distro.service_manager == "systemd":
+            cmds = "  journalctl -xe\n  journalctl -u <service>"
+        else:
+            cmds = "  dmesg | tail -50"
+        return (_t(lang, "logs", pretty=distro.pretty_name,
+                   logs=kb.logs, cmds=cmds) + self._kb_reference(lang))
+
+    def _repos_reply(self, distro: DistroInfo, lang: str) -> str:
+        kb = self._kb
+        if kb is None or not kb.repositories:
+            return self._help(distro, lang)
+        return (_t(lang, "repos", pretty=distro.pretty_name,
+                   repos=kb.repositories) + self._kb_reference(lang))
+
+    def _docs_reply(self, distro: DistroInfo, lang: str, text: str) -> str:
+        """Documentação oficial da distribuição, com pesquisa por query."""
+        kb = self._kb
+        if kb is None:
+            return self._help(distro, lang)
+        lines = []
+        if kb.wiki_url:
+            lines.append(f"  {kb.wiki_name}: {kb.wiki_url}")
+        for url in kb.docs_urls:
+            lines.append(f"  - {url}")
+        if not lines:
+            lines.append("  - " + kb.wiki_name)
+        result = _t(lang, "docs", pretty=distro.pretty_name,
+                    body="\n".join(lines))
+        # Query livre: "documentation about ufw" -> link de pesquisa na wiki
+        match = _DOCS_QUERY_RE.search(text)
+        tokens = []
+        if match:
+            for raw in re.split(r"\s+", match.group(1).strip()):
+                token = _valid(raw)
+                if token:
+                    tokens.append(token)
+            tokens = tokens[:6]
+        if tokens and kb.wiki_search_url:
+            from urllib.parse import quote_plus
+            query = " ".join(tokens)
+            url = kb.wiki_search_url.format(query=quote_plus(query))
+            result += _t(lang, "docs_search", wiki_name=kb.wiki_name,
+                         query=query, url=url)
+        return result
 
     def _no_pkg(self, lang: str) -> Reply:
         return Reply(self._help(self._distro, lang))
@@ -602,6 +719,16 @@ class OfflineAssistant:
         return Reply(_t(lang, "memory_none", cmds="  free -h"))
 
     def _firewall_text(self, distro: DistroInfo, lang: str) -> str:
+        kb = self._kb
+        if kb is not None and kb.firewall_tool:
+            status_cmds = "\n".join(
+                "  " + shlex.join(list(cmd)) for cmd in kb.firewall_status
+            )
+            text = _t(lang, "firewall_kb", pretty=distro.pretty_name,
+                      tool=kb.firewall_tool, status_cmds=status_cmds,
+                      allow_cmd=kb.firewall_allow or "n/a")
+            return text + self._kb_reference(lang)
+        # Fallback (sem KB): conselhos genéricos por gestor de serviços
         if distro.service_manager == "systemd":
             cmds = ("  firewall-cmd --state        # firewalld\n"
                     "  ufw status verbose          # ufw (Debian/Ubuntu)\n"

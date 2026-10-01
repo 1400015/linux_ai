@@ -44,6 +44,7 @@ TRANSLATIONS = {
         "Window opacity:": "Opacidade da janela:",
         "Always visible": "Sempre visível",
         "Theme:": "Tema:",
+        "Language:": "Idioma:",
         "Manage Themes": "Gerir Temas",
         "Docked (reserves screen space)": "Ancorado (reserva espaço no ecrã)",
         "Dock edge:": "Borda do dock:",
@@ -150,6 +151,7 @@ TRANSLATIONS = {
         "Window opacity:": "Opacidad de la ventana:",
         "Always visible": "Siempre visible",
         "Theme:": "Tema:",
+        "Language:": "Idioma:",
         "Manage Themes": "Gestionar temas",
         "Docked (reserves screen space)": "Acoplado (reserva espacio en pantalla)",
         "Dock edge:": "Borde del dock:",
@@ -256,6 +258,7 @@ TRANSLATIONS = {
         "Window opacity:": "Opacité de la fenêtre :",
         "Always visible": "Toujours visible",
         "Theme:": "Thème :",
+        "Language:": "Langue :",
         "Manage Themes": "Gérer les thèmes",
         "Docked (reserves screen space)": "Ancré (réserve de l'espace à l'écran)",
         "Dock edge:": "Bord du dock :",
@@ -362,6 +365,7 @@ TRANSLATIONS = {
         "Window opacity:": "Fensterdeckkraft:",
         "Always visible": "Immer sichtbar",
         "Theme:": "Design:",
+        "Language:": "Sprache:",
         "Manage Themes": "Designs verwalten",
         "Docked (reserves screen space)": "Angedockt (reserviert Bildschirmbereich)",
         "Dock edge:": "Dock-Kante:",
@@ -466,6 +470,34 @@ def available_languages():
     return ["en"] + sorted(TRANSLATIONS.keys())
 
 
+# Línguas oficialmente suportadas pela aplicação. Qualquer escolha fora
+# desta lista (config editada à mão, locale de sistema exótico) recai em
+# INGLÊS automaticamente — e o utilizador pode redefinir nas Definições
+# (Appearance > Language) para qualquer uma daqui.
+SUPPORTED_LANGUAGES = ("en", "pt", "es", "fr", "de")
+
+# Nomes nativos para o seletor de língua nas Definições.
+LANGUAGE_NAMES = {
+    "en": "English",
+    "pt": "Português",
+    "es": "Español",
+    "fr": "Français",
+    "de": "Deutsch",
+}
+
+
+def normalize_language(lang, fallback: str = "en") -> str:
+    """Reduce `lang` to a SUPPORTED code, else `fallback` (English).
+
+    "pt-PT", "PT", " it ", "it" não-suportado -> English; None/vazio ->
+    `fallback`.
+    """
+    code = (lang or "")[:2].lower()
+    if code in SUPPORTED_LANGUAGES:
+        return code
+    return fallback
+
+
 def set_language(lang, config=None):
     """Set the active language. Unknown languages fall back to English.
 
@@ -473,7 +505,13 @@ def set_language(lang, config=None):
     only for backward compatibility and no longer stored in a module global.
     """
     global _current_lang
-    _current_lang = (lang or "en")[:2].lower()
+    # Línguas não suportadas vão para inglês (nunca um estado inválido).
+    _current_lang = normalize_language(lang, fallback="en")
+    if (lang or "")[:2].lower() != _current_lang and lang:
+        import logging
+        logging.getLogger(__name__).info(
+            "Language %r is not supported; falling back to English", lang
+        )
     # Persist every explicit choice, including "en": the old `!= "en"` guard
     # made it impossible to switch back to English from another language.
     if config is not None:
@@ -481,7 +519,11 @@ def set_language(lang, config=None):
 
 
 def set_language_from_config(config):
-    """Set the active language from config, defaulting to system locale."""
+    """Set the active language from config, defaulting to system locale.
+
+    Config vazia -> língua do sistema SE suportada; caso contrário (ou
+    config com valor fora da lista) -> inglês, sempre redefinível.
+    """
     global _current_lang
     lang = None
     try:
@@ -490,7 +532,14 @@ def set_language_from_config(config):
         lang = None
     if not lang:
         lang = _system_language()
-    _current_lang = lang[:2].lower()
+    # Normalização: sistema/config não suportados -> inglês.
+    _current_lang = normalize_language(lang, fallback="en")
+    if _current_lang != (lang or "")[:2].lower():
+        import logging
+        logging.getLogger(__name__).info(
+            "Language %r unavailable; using English (changeable in Settings)",
+            lang,
+        )
 
 
 def get_language():
@@ -531,9 +580,33 @@ OFFLINE_TEXTS = {
             "- \"set hostname to laptop\"\n"
             "- \"how much disk/memory do I have?\"\n"
             "- \"network diagnostics\" / \"configure firewall\"\n"
+            "- \"where are the configuration files?\" / \"where are the logs?\"\n"
             "- \"change my shell\" / \"add an alias\"\n"
             "- \"clean the cache\" / \"autostart an app\"\n"
         ),
+        "reference": "\n\nReference ({wiki_name}): {wiki_url}",
+        "config_files": (
+            "Configuration file locations on {pretty}:\n\n{body}"
+        ),
+        "logs": (
+            "Logs on {pretty}:\n{logs}\n\nUseful commands:\n{cmds}"
+        ),
+        "repos": "Repositories on {pretty}:\n{repos}",
+        "docs": (
+            "Official documentation for {pretty}:\n{body}"
+        ),
+        "docs_search": "\n\nSearch the {wiki_name} for \"{query}\": {url}",
+        "firewall_kb": (
+            "Firewall on {pretty}: {tool}\n\nCheck status:\n{status_cmds}\n\n"
+            "Example - allow a port:\n  {allow_cmd}"
+        ),
+        "distro_notes": "\n\nNotes for {pretty}:\n{bullets}",
+        "Repositories": "Repositories",
+        "Network": "Network",
+        "Logs": "Logs",
+        "Hostname": "Hostname",
+        "Locale": "Locale",
+        "Services": "Services",
         "distro": (
             "This system is {pretty} (id: {distro_id}{like}). "
             "Package manager: {pkg}. Service manager: {svc}. Kernel: {kernel}."
@@ -634,9 +707,33 @@ OFFLINE_TEXTS = {
             "- \"definir hostname como portatil\"\n"
             "- \"quanto espaço/memória tenho?\"\n"
             "- \"diagnóstico de rede\" / \"configurar firewall\"\n"
+            "- \"onde estão os ficheiros de configuração?\" / \"onde estão os registos?\"\n"
             "- \"mudar a shell\" / \"adicionar um alias\"\n"
             "- \"limpar a cache\" / \"arrancar app automaticamente\"\n"
         ),
+        "reference": "\n\nReferência ({wiki_name}): {wiki_url}",
+        "config_files": (
+            "Localização dos ficheiros de configuração em {pretty}:\n\n{body}"
+        ),
+        "logs": (
+            "Registos em {pretty}:\n{logs}\n\nComandos úteis:\n{cmds}"
+        ),
+        "repos": "Repositórios em {pretty}:\n{repos}",
+        "docs": (
+            "Documentação oficial de {pretty}:\n{body}"
+        ),
+        "docs_search": "\n\nProcurar \"{query}\" no {wiki_name}: {url}",
+        "firewall_kb": (
+            "Firewall em {pretty}: {tool}\n\nVerificar estado:\n{status_cmds}\n\n"
+            "Exemplo - permitir um porto:\n  {allow_cmd}"
+        ),
+        "distro_notes": "\n\nNotas sobre {pretty}:\n{bullets}",
+        "Repositories": "Repositórios",
+        "Network": "Rede",
+        "Logs": "Registos",
+        "Hostname": "Hostname",
+        "Locale": "Locale",
+        "Services": "Serviços",
         "distro": (
             "Este sistema é {pretty} (id: {distro_id}{like}). "
             "Gestor de pacotes: {pkg}. Gestor de serviços: {svc}. Kernel: {kernel}."
@@ -724,6 +821,81 @@ OFFLINE_TEXTS = {
             ".desktop em ~/.config/autostart/ (ex.: ~/.config/autostart/myapp.desktop):\n"
             "[Desktop Entry]\nType=Application\nName=A minha app\nExec=/caminho/para/app"
         ),
+    },
+    "es": {
+        "reference": "\n\nReferencia ({wiki_name}): {wiki_url}",
+        "config_files": (
+            "Ubicación de los archivos de configuración en {pretty}:\n\n{body}"
+        ),
+        "logs": (
+            "Registros en {pretty}:\n{logs}\n\nComandos útiles:\n{cmds}"
+        ),
+        "repos": "Repositorios en {pretty}:\n{repos}",
+        "docs": (
+            "Documentación oficial de {pretty}:\n{body}"
+        ),
+        "docs_search": "\n\nBuscar \"{query}\" en el {wiki_name}: {url}",
+        "firewall_kb": (
+            "Firewall en {pretty}: {tool}\n\nVerificar estado:\n{status_cmds}\n\n"
+            "Ejemplo - permitir un puerto:\n  {allow_cmd}"
+        ),
+        "distro_notes": "\n\nNotas sobre {pretty}:\n{bullets}",
+        "Repositories": "Repositorios",
+        "Network": "Red",
+        "Logs": "Registros",
+        "Hostname": "Nombre de host",
+        "Locale": "Locale",
+        "Services": "Servicios",
+    },
+    "fr": {
+        "reference": "\n\nRéférence ({wiki_name}) : {wiki_url}",
+        "config_files": (
+            "Emplacement des fichiers de configuration sur {pretty} :\n\n{body}"
+        ),
+        "logs": (
+            "Journaux sur {pretty} :\n{logs}\n\nCommandes utiles :\n{cmds}"
+        ),
+        "repos": "Dépôts sur {pretty} :\n{repos}",
+        "docs": (
+            "Documentation officielle de {pretty} :\n{body}"
+        ),
+        "docs_search": "\n\nRechercher « {query} » dans le {wiki_name} : {url}",
+        "firewall_kb": (
+            "Pare-feu sur {pretty} : {tool}\n\nVérifier l'état :\n{status_cmds}\n\n"
+            "Exemple - autoriser un port :\n  {allow_cmd}"
+        ),
+        "distro_notes": "\n\nNotes sur {pretty} :\n{bullets}",
+        "Repositories": "Dépôts",
+        "Network": "Réseau",
+        "Logs": "Journaux",
+        "Hostname": "Nom d'hôte",
+        "Locale": "Locale",
+        "Services": "Services",
+    },
+    "de": {
+        "reference": "\n\nReferenz ({wiki_name}): {wiki_url}",
+        "config_files": (
+            "Speicherorte der Konfigurationsdateien auf {pretty}:\n\n{body}"
+        ),
+        "logs": (
+            "Protokolle auf {pretty}:\n{logs}\n\nNützliche Befehle:\n{cmds}"
+        ),
+        "repos": "Paketquellen auf {pretty}:\n{repos}",
+        "docs": (
+            "Offizielle Dokumentation für {pretty}:\n{body}"
+        ),
+        "docs_search": "\n\n„{query}“ im {wiki_name} suchen: {url}",
+        "firewall_kb": (
+            "Firewall auf {pretty}: {tool}\n\nStatus prüfen:\n{status_cmds}\n\n"
+            "Beispiel - Port freigeben:\n  {allow_cmd}"
+        ),
+        "distro_notes": "\n\nHinweise zu {pretty}:\n{bullets}",
+        "Repositories": "Paketquellen",
+        "Network": "Netzwerk",
+        "Logs": "Protokolle",
+        "Hostname": "Hostname",
+        "Locale": "Locale",
+        "Services": "Dienste",
     },
 }
 

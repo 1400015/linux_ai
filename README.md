@@ -193,8 +193,8 @@ in `config.json`. Keys are read from `~/.config/linux_ai_assistant/.env`
 
 When no API key is configured, or the selected provider cannot be reached
 (no internet/DNS), the assistant answers from a local knowledge base built
-from `src/offline_assistant.py`. Nothing leaves the machine and no extra
-configuration is needed.
+from `src/offline_assistant.py` and `src/knowledge_base.py`. Nothing leaves
+the machine and no extra configuration is needed.
 
 It detects the distribution from `/etc/os-release` (package manager and
 service manager) and can help with:
@@ -205,13 +205,29 @@ service manager) and can help with:
   (`systemd`, `runit`, `openrc`).
 - **Timezone, locale and hostname** - including ready-to-run commands.
 - **Network and firewall** - diagnostics (addresses, routes, DNS, ping) and
-  the firewall commands that apply to the system.
+  the firewall commands that apply to the system (`ufw`, `firewalld`,
+  `nftables`... per distribution).
 - **Disks and cleanup** - free space, biggest consumers and safe cleanup.
 - **Shell and environment** - default shell and aliases.
+- **Distro knowledge base** - where configuration files live (repositories,
+  network, logs, hostname, locale, services), how logs are collected
+  (journald vs syslog/socklog), where repositories are configured, which
+  firewall tool is in use, and what makes the distribution different - all
+  curated per family from the official wikis/handbooks, with a link to the
+  official documentation in every answer.
 
 Examples: `how do I update the system?`, `install htop`,
 `enable service chronyd`, `set timezone to Europe/Lisbon`,
-`set hostname to laptop`, `quanto espaço em disco tenho?`.
+`set hostname to laptop`, `quanto espaço em disco tenho?`,
+`where are the configuration files?`, `onde estão os registos?`,
+`show repositories`, `documentation about ufw`.
+
+The knowledge base covers the Void, Debian, Ubuntu, Linux Mint, Arch,
+Manjaro, Fedora, RHEL (CentOS/Rocky/Alma), openSUSE, Alpine and Gentoo
+families (resolved by `ID` first, then `ID_LIKE` ancestry; unknown systems
+get generic Linux facts). Sources: Void Handbook, Debian Wiki, Ubuntu Server
+Documentation, Arch Wiki, Manjaro Wiki, Fedora Docs, Red Hat Docs, openSUSE
+Wiki, Alpine Wiki, Gentoo Wiki.
 
 Safety model:
 
@@ -276,11 +292,15 @@ In expert mode, you can ask the AI to:
 
 ## Languages
 
-The UI language is controlled by the `app.language` key in `config.json`
-(e.g. `"pt"`, `"es"`, `"fr"`, `"de"`). If empty, the system locale is used.
+Supported languages: **English, Portuguese, Spanish, French and German**
+(`i18n.SUPPORTED_LANGUAGES`). The UI language comes from `app.language` in
+`config.json`; if empty, the system locale is used. If the configured (or
+system) language is **not supported, English is used automatically** - and
+you can redefine it in **Settings > Appearance > Language** at any time.
 Texts are authored in English; if a language (or a specific text) has no
 translation, the English string is used. To add a new language, add a
-catalog to `TRANSLATIONS` in `src/i18n.py`.
+catalog to `TRANSLATIONS` in `src/i18n.py` and list the code in
+`SUPPORTED_LANGUAGES`.
 
 ## Automatic Startup
 
