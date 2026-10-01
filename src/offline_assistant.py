@@ -362,10 +362,18 @@ class OfflineAssistant:
     """Local, API-free assistant for the running distribution."""
 
     def __init__(self, system_utils=None, config=None,
-                 os_release: Optional[Dict[str, str]] = None):
+                 os_release: Optional[Dict[str, str]] = None,
+                 which=shutil.which,
+                 is_systemd_running: Optional[bool] = None):
         self.system_utils = system_utils
         self.config = config
-        self._distro = detect_distro(os_release)
+        # Sondas injectáveis (mesmo contrato de detect_distro): sem isto, um
+        # host com systemd a correr detetava uma distro "void" como systemd
+        # e os testes dependiam do ambiente onde correm.
+        self._distro = detect_distro(
+            os_release, which=which,
+            is_systemd_running=is_systemd_running,
+        )
 
     @property
     def distro(self) -> DistroInfo:

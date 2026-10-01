@@ -27,7 +27,11 @@ class FakeSystemUtils:
         return self.outputs.get(command.split()[0], (False, "not allowed"))
 
 
-def assistant(distro_id="ubuntu", pretty="Ubuntu 24.04", id_like="debian", su=None):
+def assistant(distro_id="ubuntu", pretty="Ubuntu 24.04", id_like="debian", su=None,
+              which=lambda name: None, is_systemd_running=False):
+    """Fixture determinística: sem sondas injectadas, um runner Linux com
+    systemd a correr detetava "void" como systemd (o CI antigo nunca chegou
+    a correr estes testes — morria no import)."""
     return OfflineAssistant(
         su,
         os_release={
@@ -35,6 +39,8 @@ def assistant(distro_id="ubuntu", pretty="Ubuntu 24.04", id_like="debian", su=No
             "PRETTY_NAME": pretty,
             "ID_LIKE": id_like,
         },
+        which=which,
+        is_systemd_running=is_systemd_running,
     )
 
 
