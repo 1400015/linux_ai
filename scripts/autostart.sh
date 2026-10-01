@@ -32,7 +32,7 @@ Version=1.0
 Type=Application
 Name=Linux AI Assistant
 Comment=Assistente de IA permanente para Linux
-Exec=$PROJECT_DIR/run.sh
+Exec=bash "$PROJECT_DIR/run.sh"
 Icon=$PROJECT_DIR/assets/icon.png
 Terminal=false
 Categories=Utility;System;
@@ -76,12 +76,6 @@ check_autostart() {
 # Função principal
 main() {
     echo -e "${GREEN}"
-    echo "  _    _      _ _       __        __         _   _"
-    echo " | |  | |    | | |       \ \      / /        | | | |"
-    echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
-    echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
-    echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
-    echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
     echo ""
     echo -e "      Linux AI Assistant - Configuração de Inicialização${NC}"
     echo ""

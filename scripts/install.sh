@@ -23,6 +23,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+if command -v xbps-install >/dev/null 2>&1; then
+    exec bash "$SCRIPT_DIR/install_void.sh" "$@"
+fi
+
 # Modo de desenvolvimento
 DEV_MODE=false
 if [ "$1" == "--dev" ]; then
@@ -46,76 +50,25 @@ install_packages() {
         PKG_MANAGER="apt-get"
         UPDATE_CMD="sudo apt-get update"
         INSTALL_CMD="sudo apt-get install -y"
-    elif command_exists dnf; then
-        PKG_MANAGER="dnf"
-        UPDATE_CMD="sudo dnf makecache"
-        INSTALL_CMD="sudo dnf install -y"
-    elif command_exists yum; then
-        PKG_MANAGER="yum"
-        UPDATE_CMD="sudo yum makecache"
-        INSTALL_CMD="sudo yum install -y"
-    elif command_exists pacman; then
-        PKG_MANAGER="pacman"
-        UPDATE_CMD="sudo pacman -Sy"
-        INSTALL_CMD="sudo pacman -S --noconfirm"
-    elif command_exists zypper; then
-        PKG_MANAGER="zypper"
-        UPDATE_CMD="sudo zypper refresh"
-        INSTALL_CMD="sudo zypper install -y"
-    elif command_exists xbps-install; then
-        PKG_MANAGER="xbps"
-        UPDATE_CMD="sudo xbps-install -Su"
-        INSTALL_CMD="sudo xbps-install -Sy"
     else
-        echo -e "${RED}Não foi possível detectar o gestor de pacotes!${NC}"
+        echo "Automatic installation currently supports Debian/Ubuntu and Void Linux."
+        echo "For other distributions, install the dependencies from README.md manually."
         exit 1
     fi
     
     echo -e "${BLUE}Detetado gestor de pacotes: $PKG_MANAGER${NC}"
     
-    # Pacotes necessários (nomes variam conforme a distribuição)
-    if [ "$PKG_MANAGER" = "xbps" ]; then
-        # Void Linux (e d77void)
-        REQUIRED_PACKAGES=(
-            "python3"
-            "python3-pip"
-            "python3-venv"
-            "git"
-            "scrot"
-            "tesseract-ocr"
-            "tesseract-ocr-por"
-            "tesseract-ocr-eng"
-            "libgtk-3"
-            "libgtk-3-devel"
-            "py3-gobject"
-            "py3-cairo"
-            "gobject-introspection"
-            "libappindicator-gtk3"
-        )
-    else
-        # Debian/Ubuntu, Fedora, Arch, openSUSE
-        REQUIRED_PACKAGES=(
-            "python3"
-            "python3-pip"
-            "python3-venv"
-            "git"
-            "scrot"
-            "tesseract-ocr"
-            "tesseract-ocr-por"
-            "tesseract-ocr-eng"
-            "libgtk-3-0"
-            "libgtk-3-dev"
-            "python3-gi"
-            "python3-gi-cairo"
-            "gir1.2-gtk-3.0"
-            "gir1.2-appindicator3-0.1"
-        )
-    fi
-    
+    REQUIRED_PACKAGES=(
+        python3 python3-pip python3-venv git scrot tesseract-ocr
+        tesseract-ocr-por tesseract-ocr-eng libgtk-3-0 python3-gi
+        python3-gi-cairo gir1.2-gtk-3.0 gir1.2-notify-0.7
+        gir1.2-appindicator3-0.1
+    )
+
     # Verificar e instalar pacotes em falta
     MISSING_PACKAGES=()
     for pkg in "${REQUIRED_PACKAGES[@]}"; do
-        if ! command_exists "$pkg" && ! dpkg -l "$pkg" >/dev/null 2>&1 && ! rpm -q "$pkg" >/dev/null 2>&1 && ! xbps-query -x "$pkg" >/dev/null 2>&1; then
+        if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" != "install ok installed" ]; then
             MISSING_PACKAGES+=("$pkg")
         fi
     done
@@ -127,16 +80,8 @@ install_packages() {
         # Atualizar cache
         eval "$UPDATE_CMD"
         
-        # Instalar pacotes (para xbps, precisamos instalar um por um)
-        if [ "$PKG_MANAGER" = "xbps" ]; then
-            for pkg in "${MISSING_PACKAGES[@]}"; do
-                echo -e "${BLUE}A instalar: $pkg${NC}"
-                sudo xbps-install -Sy "$pkg"
-            done
-        else
-            eval "$INSTALL_CMD ${MISSING_PACKAGES[*]}"
-        fi
-        
+        sudo apt-get install -y "${MISSING_PACKAGES[@]}"
+
         echo -e "${GREEN}Pacotes instalados com sucesso!${NC}"
     else
         echo -e "${GREEN}Todos os pacotes necessários já estão instalados!${NC}"
@@ -155,7 +100,7 @@ create_venv() {
     fi
     
     # Criar ambiente virtual
-    python3 -m venv "$VENV_DIR"
+    python3 -m venv --system-site-packages "$VENV_DIR"
     
     # Ativar ambiente virtual e instalar dependências
     source "$VENV_DIR/bin/activate"
@@ -182,7 +127,7 @@ Version=1.0
 Type=Application
 Name=Linux AI Assistant
 Comment=Assistente de IA permanente para Linux
-Exec=$PROJECT_DIR/run.sh
+Exec=bash "$PROJECT_DIR/run.sh"
 Icon=$PROJECT_DIR/assets/icon.png
 Terminal=false
 Categories=Utility;System;
@@ -193,7 +138,9 @@ EOL
     chmod +x "$DESKTOP_FILE"
     
     # Atualizar base de dados de aplicações
-    update-desktop-database "$DESKTOP_DIR"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$DESKTOP_DIR"
+    fi
     
     echo -e "${GREEN}Atalho criado em $DESKTOP_FILE${NC}"
 }
@@ -204,19 +151,12 @@ create_run_script() {
     
     RUN_SCRIPT="$PROJECT_DIR/run.sh"
     
-    cat > "$RUN_SCRIPT" <<EOL
+    cat > "$RUN_SCRIPT" <<'EOL'
 #!/bin/bash
-
-# Script de execução para Linux AI Assistant
-
+set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$PROJECT_DIR/venv"
-
-# Ativar ambiente virtual
-source "$VENV_DIR/bin/activate"
-
-# Executar aplicação
-python "$PROJECT_DIR/src/app.py"
+cd "$PROJECT_DIR"
+exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
 EOL
     
     chmod +x "$RUN_SCRIPT"
@@ -305,12 +245,6 @@ show_final_instructions() {
 # Função principal
 main() {
     echo -e "${GREEN}"
-    echo "  _    _      _ _       __        __         _   _"
-    echo " | |  | |    | | |       \ \      / /        | | | |"
-    echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
-    echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"
-    echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
-    echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
     echo ""
     echo -e "      Linux AI Assistant - Instalação${NC}"
     echo ""
