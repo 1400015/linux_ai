@@ -1,7 +1,7 @@
-"""Testes de regressão para os bugs de segurança e correção corrigidos.
+"""Regression tests for the security and correctness bugs that were fixed.
 
-Cada teste documenta um defeito que existia e que não deve voltar.
-Estes testes correm sem GTK.
+Each test documents a defect that existed and must not come back.
+These tests run without GTK.
 """
 
 import inspect
@@ -49,7 +49,7 @@ class TestSearchFilesIsNotShellBased(unittest.TestCase):
 
     def test_metacharacters_in_search_term_are_literal(self):
         with tempfile.TemporaryDirectory() as tmp:
-            # Um ficheiro cujo nome contem o "payload"
+            # A file whose name contains the "payload"
             (Path(tmp) / "a b;touch pwned.txt").write_text("x")
             utils = SystemUtils(FakeConfig())
             results = utils.search_files("a b;touch", search_path=tmp)
@@ -84,7 +84,7 @@ class TestValidatePath(unittest.TestCase):
         self.utils = SystemUtils(FakeConfig(edit_dirs=["/etc", "/home"]))
 
     def test_prefix_siblings_are_rejected(self):
-        # Regressão: `startswith` aceitava "/etcfoo" e "/homeX".
+        # Regression: `startswith` accepted "/etcfoo" and "/homeX".
         for path in ("/etcfoo/evil", "/homeX/secrets", "/etc../shadow",
                      "/etcbackup/passwd", "/homeless"):
             with self.subTest(path=path):
@@ -100,10 +100,10 @@ class TestValidatePath(unittest.TestCase):
         self.assertTrue(self.utils._validate_path("/home"))
 
     def test_traversal_out_of_allowed_dir_is_rejected(self):
-        # "/etc/../root/..." resolve para /root/... que NAO e permitido
+        # "/etc/../root/..." resolves to /root/... which is NOT allowed
         self.assertFalse(self.utils._validate_path("/etc/../root/.ssh/authorized_keys"))
         self.assertFalse(self.utils._validate_path("/home/user/../../../root/x"))
-        # Normalizacao para dentro de um diretorio permitido continua valida
+        # Normalization back into an allowed directory stays valid
         self.assertTrue(self.utils._validate_path("/home/user/../../etc/shadow"))
 
     def test_dotdot_escaping_through_home(self):
@@ -117,7 +117,7 @@ class TestValidatePath(unittest.TestCase):
             os.symlink(secret, link)
 
             utils = SystemUtils(FakeConfig(edit_dirs=[allowed]))
-            # realpath resolve o link para fora de `allowed`
+            # realpath resolves the link to outside of `allowed`
             self.assertFalse(utils._validate_path(str(link)))
 
     def test_symlink_inside_allowed_dir_is_accepted(self):
@@ -136,7 +136,7 @@ class TestReadWriteFileRespectsSandbox(unittest.TestCase):
             utils = SystemUtils(FakeConfig(edit_dirs=[allowed]))
             ok, msg = utils.write_file("/etc/passwd", "pwned")
             self.assertFalse(ok)
-            self.assertIn("negado", msg)
+            self.assertIn("denied", msg)
 
     def test_read_outside_allowed_dir_is_denied(self):
         utils = SystemUtils(FakeConfig(edit_dirs=["/nonexistent-dir"]))
@@ -144,7 +144,7 @@ class TestReadWriteFileRespectsSandbox(unittest.TestCase):
         self.assertFalse(ok)
 
 
-# --- Bug 3 (novo): `cat` allowlisted contornava a sandbox --------------------
+# --- Bug 3 (new): an allowlisted `cat` bypassed the sandbox --------------------
 
 class TestFileReadingCommandsRespectSandbox(unittest.TestCase):
     def setUp(self):
@@ -184,8 +184,8 @@ class TestProviderDispatchSignatures(unittest.TestCase):
     ]
 
     def test_all_providers_accept_the_dispatch_signature(self):
-        # Regressão: `_chat_local_llm` não aceitava `api_key` e o
-        # dispatcher chamava com 7 argumentos -> TypeError engolido.
+        # Regression: `_chat_local_llm` did not accept `api_key` and the
+        # dispatcher called it with 7 arguments -> swallowed TypeError.
         for provider in AIClient.SUPPORTED_PROVIDERS:
             for prefix in ("_chat_", "_stream_"):
                 method = getattr(AIClient, prefix + provider, None)
@@ -302,7 +302,7 @@ class TestDefaultConfigIsolation(unittest.TestCase):
             self.assertEqual(c1.get("api.providers.openrouter.api_key"), "SEGRED-1")
             self.assertEqual(
                 c2.get("api.providers.openrouter.api_key"), "",
-                "Uma API key de outra instância não pode vazar",
+                "An API key from another instance must not leak",
             )
 
     def test_class_constant_is_not_polluted(self):
@@ -343,7 +343,7 @@ class TestSecretRedaction(unittest.TestCase):
 
     def test_no_provider_logs_raw_key(self):
         source = inspect.getsource(AIClient._make_request)
-        # O logger usa `safe_url` (já sanitizado), nunca o url cru
+        # The logger uses `safe_url` (already sanitized), never the raw url
         self.assertIn("safe_url = redact_url(url)", source)
         self.assertNotIn("{url}", source)
 
@@ -371,7 +371,7 @@ class TestConfigSaveDebounce(unittest.TestCase):
                 config.set("app.x_position", i)
             config.flush()
 
-            self.assertLessEqual(len(calls), 2, "300 set() não podem gerar 300 writes")
+            self.assertLessEqual(len(calls), 2, "300 set() calls must not produce 300 writes")
 
     def test_flush_persists_pending_changes(self):
         with tempfile.TemporaryDirectory() as d:
@@ -415,7 +415,7 @@ class TestContextTrimming(unittest.TestCase):
         try:
             from src.main_window import MainWindow
         except ImportError:
-            self.skipTest("GTK não disponível")
+            self.skipTest("GTK is not available")
 
         with tempfile.TemporaryDirectory() as d:
             history = Path(d) / "history.json"
@@ -444,7 +444,7 @@ class TestContextTrimming(unittest.TestCase):
             try:
                 from src.main_window import MainWindow
             except ImportError:
-                self.skipTest("GTK não disponível")
+                self.skipTest("GTK is not available")
 
             window = MainWindow.__new__(MainWindow)
             window.config = config
@@ -536,7 +536,7 @@ class TestAnthropicMessageMapping(unittest.TestCase):
         self.assertEqual(messages, [{"role": "user", "content": "ola"}])
 
     def test_system_is_not_converted_to_assistant(self):
-        # Regressão: o system prompt era convertido para `assistant`.
+        # Regression: the system prompt was converted to `assistant`.
         _, messages = AIClient._split_anthropic_messages([
             {"role": "system", "content": "instrucoes"},
             {"role": "user", "content": "pergunta"},
@@ -559,25 +559,25 @@ class TestGracefulGtkFailure(unittest.TestCase):
     def test_app_reports_missing_gtk_clearly(self):
         import src.app as app
         if app.GTK_AVAILABLE:
-            self.skipTest("GTK disponível neste ambiente")
+            self.skipTest("GTK is available in this environment")
         self.assertIsNone(app.Gtk)
         self.assertIn("GTK", str(app.GTK_IMPORT_ERROR) + "GTK")
 
     def test_main_window_is_not_imported_without_gtk(self):
         import src.app as app
         if app.GTK_AVAILABLE:
-            self.skipTest("GTK disponível neste ambiente")
+            self.skipTest("GTK is available in this environment")
         self.assertNotIn("src.main_window", sys.modules)
 
 
-# --- Bug 16: sanitizacao de CSS --------------------------------------------
+# --- Bug 16: CSS sanitisation ---------------------------------------------
 
 class TestThemeSanitisation(unittest.TestCase):
     def setUp(self):
         try:
             from src.main_window import safe_color, safe_font_family, safe_number
         except ImportError:
-            self.skipTest("GTK não disponível")
+            self.skipTest("GTK is not available")
         self.safe_color = safe_color
         self.safe_font_family = safe_font_family
         self.safe_number = safe_number

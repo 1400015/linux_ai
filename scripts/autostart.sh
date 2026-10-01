@@ -1,29 +1,29 @@
 #!/bin/bash
 
-# Script para configurar inicialização automática
+# Script to configure automatic startup
 
 set -e
 
-# Cores para output
+# Output colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Diretório do script
+# Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Função para adicionar à inicialização automática
+# Function to add to automatic startup
 add_to_autostart() {
-    echo -e "${YELLOW}A configurar inicialização automática...${NC}"
+    echo -e "${YELLOW}Configuring automatic startup...${NC}"
     
-    # Diretório de autostart
+    # Autostart directory
     AUTOSTART_DIR="$HOME/.config/autostart"
     mkdir -p "$AUTOSTART_DIR"
     
-    # Criar ficheiro .desktop para autostart
+    # Create the .desktop file for autostart
     AUTOSTART_FILE="$AUTOSTART_DIR/linux-ai-assistant.desktop"
     
     cat > "$AUTOSTART_FILE" <<EOL
@@ -31,7 +31,7 @@ add_to_autostart() {
 Version=1.0
 Type=Application
 Name=Linux AI Assistant
-Comment=Assistente de IA permanente para Linux
+Comment=Permanent AI assistant for Linux
 Exec=bash "$PROJECT_DIR/run.sh"
 Icon=$PROJECT_DIR/assets/icon.png
 Terminal=false
@@ -42,42 +42,42 @@ EOL
     
     chmod +x "$AUTOSTART_FILE"
     
-    echo -e "${GREEN}Inicialização automática configurada!${NC}"
-    echo "A aplicação irá iniciar automaticamente na próxima vez que fazer login."
+    echo -e "${GREEN}Automatic startup configured!${NC}"
+    echo "The application will start automatically the next time you log in."
 }
 
-# Função para remover da inicialização automática
+# Function to remove from automatic startup
 remove_from_autostart() {
-    echo -e "${YELLOW}A remover da inicialização automática...${NC}"
+    echo -e "${YELLOW}Removing from automatic startup...${NC}"
     
     AUTOSTART_FILE="$HOME/.config/autostart/linux-ai-assistant.desktop"
     
     if [ -f "$AUTOSTART_FILE" ]; then
         rm "$AUTOSTART_FILE"
-        echo -e "${GREEN}Inicialização automática removida!${NC}"
+        echo -e "${GREEN}Automatic startup removed!${NC}"
     else
-        echo -e "${BLUE}A aplicação já não está configurada para iniciar automaticamente.${NC}"
+        echo -e "${BLUE}The application is not configured to start automatically.${NC}"
     fi
 }
 
-# Função para verificar estado
+# Function to check the current state
 check_autostart() {
     AUTOSTART_FILE="$HOME/.config/autostart/linux-ai-assistant.desktop"
     
     if [ -f "$AUTOSTART_FILE" ]; then
-        echo -e "${GREEN}A aplicação está configurada para iniciar automaticamente.${NC}"
+        echo -e "${GREEN}The application is configured to start automatically.${NC}"
         return 0
     else
-        echo -e "${BLUE}A aplicação NÃO está configurada para iniciar automaticamente.${NC}"
+        echo -e "${BLUE}The application is NOT configured to start automatically.${NC}"
         return 1
     fi
 }
 
-# Função principal
+# Main function
 main() {
     echo -e "${GREEN}"
     echo ""
-    echo -e "      Linux AI Assistant - Configuração de Inicialização${NC}"
+    echo -e "      Linux AI Assistant - Startup Configuration${NC}"
     echo ""
     
     ACTION="${1:-help}"
@@ -93,17 +93,17 @@ main() {
             check_autostart
             ;;
         *)
-            echo "Uso: $0 [enable|disable|check]"
+            echo "Usage: $0 [enable|disable|check]"
             echo ""
-            echo "Comandos:"
-            echo "  enable   - Configurar inicialização automática"
-            echo "  disable  - Remover da inicialização automática"
-            echo "  check    - Verificar estado da inicialização automática"
+            echo "Commands:"
+            echo "  enable   - Configure automatic startup"
+            echo "  disable  - Remove from automatic startup"
+            echo "  check    - Check the automatic startup state"
             echo ""
             check_autostart
             ;;
     esac
 }
 
-# Executar
+# Run
 main "$@"

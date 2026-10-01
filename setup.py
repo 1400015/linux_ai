@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Setup script para Linux AI Assistant.
+Setup script for Linux AI Assistant.
 
-A metadata canónica vive em pyproject.toml; este ficheiro é mantido apenas
-para `python setup.py` e para o recipe XBPS, que o referenciam.
+The canonical metadata lives in pyproject.toml; this file is kept only for
+`python setup.py` and for the XBPS recipe, which references it.
 """
 
 from setuptools import setup
 
-# requirements.txt contém comentários e linhas em branco, que não são
-# requisitos válidos e fariam setup() falhar.
+# requirements.txt contains comments and blank lines, which are not valid
+# requirements and would make setup() fail.
 with open('requirements.txt', encoding='utf-8') as f:
     requirements = [
         line.strip()

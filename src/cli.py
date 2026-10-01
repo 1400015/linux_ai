@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict
 
-# Adicionar src ao path
+# Add src to the path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from .config_manager import ConfigManager
@@ -44,7 +44,7 @@ class CLIApp:
         self.expert_mode = False
     
     def parse_args(self):
-        """Parsear argumentos da linha de comandos"""
+        """Parse the command-line arguments."""
         parser = argparse.ArgumentParser(
             description='Linux AI Assistant - Interface de Linha de Comandos',
             formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -63,38 +63,38 @@ Exemplos:
         
         subparsers = parser.add_subparsers(dest='command', help='Available commands')
         
-        # Comando: chat
-        chat_parser = subparsers.add_parser('chat', help='Conversar with a IA')
-        chat_parser.add_argument('message', nargs='+', help='Mensagem a enviar')
-        chat_parser.add_argument('--provider', '-p', default=None, 
-                                help='AI provider (default: configuration)')
+        # Command: chat
+        chat_parser = subparsers.add_parser('chat', help='Chat with the AI')
+        chat_parser.add_argument('message', nargs='+', help='Message to send')
+        chat_parser.add_argument('--provider', '-p', default=None,
+                                help='AI provider (default: from configuration)')
         chat_parser.add_argument('--model', '-m', default=None,
-                                help='Modelo a usar')
+                                help='Model to use')
         chat_parser.add_argument('--expert', '-e', action='store_true',
-                                help='Usar mode especialista')
+                                help='Use expert mode')
         chat_parser.add_argument('--stream', '-s', action='store_true',
-                                help='Mostrar response em stream')
+                                help='Show the response as a stream')
         chat_parser.add_argument('--no-history', action='store_true',
                                 help='Do not save to history')
         
-        # Comando: capture
-        capture_parser = subparsers.add_parser('capture', help='Capture screen')
+        # Command: capture
+        capture_parser = subparsers.add_parser('capture', help='Capture the screen')
         capture_parser.add_argument('--ocr', action='store_true',
-                                    help='Extrair text da captura')
+                                    help='Extract text from the capture')
         capture_parser.add_argument('--output', '-o', default=None,
                                     help='Output file')
         capture_parser.add_argument('--window', '-w', action='store_true',
-                                    help='Capturar window ativa')
+                                    help='Capture the active window')
         
-        # Comando: expert
-        expert_parser = subparsers.add_parser('expert', help='Modo especialista')
-        expert_parser.add_argument('message', nargs='+', help='Pergunta for the especialista')
+        # Command: expert
+        expert_parser = subparsers.add_parser('expert', help='Expert mode')
+        expert_parser.add_argument('message', nargs='+', help='Question for the expert')
         expert_parser.add_argument('--provider', '-p', default=None,
-                                    help='Provedor de IA')
+                                    help='AI provider')
         expert_parser.add_argument('--model', '-m', default=None,
-                                    help='Modelo a usar')
+                                    help='Model to use')
         
-        # Comando: system
+        # Command: system
         system_parser = subparsers.add_parser('system', help='System information')
         system_subparsers = system_parser.add_subparsers(dest='system_command')
         
@@ -102,66 +102,66 @@ Exemplos:
         system_subparsers.add_parser('info', help='Full system information')
         
         # system commands
-        system_subparsers.add_parser('commands', help='Lista de comandos permitidos')
+        system_subparsers.add_parser('commands', help='List of allowed commands')
         
         # system processes
-        system_subparsers.add_parser('processes', help='Lista de processos')
+        system_subparsers.add_parser('processes', help='List of processes')
         
         # system network
         system_subparsers.add_parser('network', help='Network information')
         
         # system exec
-        exec_parser = system_subparsers.add_parser('exec', help='Executar comando')
-        exec_parser.add_argument('command', nargs='+', help='Comando a executar')
+        exec_parser = system_subparsers.add_parser('exec', help='Run a command')
+        exec_parser.add_argument('command', nargs='+', help='Command to run')
         
-        # Comando: history
+        # Command: history
         history_parser = subparsers.add_parser('history', help='View conversation history')
         history_parser.add_argument('--limit', '-n', type=int, default=20,
                                      help='Number of messages to show')
         history_parser.add_argument('--clear', action='store_true',
                                      help='Clear history')
         
-        # Comando: stats
+        # Command: stats
         stats_parser = subparsers.add_parser('stats', help='Usage statistics')
         stats_parser.add_argument('--reset', action='store_true',
                                    help='Reset statistics')
         
-        # Comando: config
+        # Command: config
         config_parser = subparsers.add_parser('config', help='Configuration')
         config_subparsers = config_parser.add_subparsers(dest='config_command')
         
         # config list
-        config_subparsers.add_parser('list', help='List current configuration')
+        config_subparsers.add_parser('list', help='List the current configuration')
         
         # config set
-        set_parser = config_subparsers.add_parser('set', help='Set configuration value')
+        set_parser = config_subparsers.add_parser('set', help='Set a configuration value')
         set_parser.add_argument('key', help='Configuration key (e.g. api.default_provider)')
-        set_parser.add_argument('value', help='Valor a definir')
+        set_parser.add_argument('value', help='Value to set')
         
         # config get
-        get_parser = config_subparsers.add_parser('get', help='Get configuration value')
+        get_parser = config_subparsers.add_parser('get', help='Get a configuration value')
         get_parser.add_argument('key', help='Configuration key')
         
-        # Comando: providers
-        subparsers.add_parser('providers', help='List available AI providers')
+        # Command: providers
+        subparsers.add_parser('providers', help='List the available AI providers')
         
-        # Comando: tokens
+        # Command: tokens
         tokens_parser = subparsers.add_parser('tokens', help='Token management')
         tokens_subparsers = tokens_parser.add_subparsers(dest='tokens_command')
-        tokens_subparsers.add_parser('usage', help='Mostrar uso de tokens')
-        tokens_subparsers.add_parser('reset', help='Resetar contagem de tokens')
+        tokens_subparsers.add_parser('usage', help='Show token usage')
+        tokens_subparsers.add_parser('reset', help='Reset the token count')
         
         return parser.parse_args()
     
     def run(self):
-        """Run the CLI application"""
+        """Run the CLI application."""
         args = self.parse_args()
         
         if not args.command:
             self.print_help()
             return
         
-        # Processar comando
+        # Process command
         if args.command == 'chat':
             self.handle_chat(args)
         elif args.command == 'capture':
@@ -184,46 +184,46 @@ Exemplos:
             self.print_help()
     
     def print_help(self):
-        """Mostrar ajuda"""
+        """Show the help text."""
         print("""
-Linux AI Assistant - Interface de Linha de Comandos
+Linux AI Assistant - Command-Line Interface
 
 Available commands:
-  chat [mensagem]           - Conversar with a IA
-  capture [options]         - Capture screen
-  expert [mensagem]        - Mode especialista
-  system [subcomando]      - System information
+  chat [message]            - Chat with the AI
+  capture [options]         - Capture the screen
+  expert [message]          - Expert mode
+  system [subcommand]       - System information
   history [options]         - View conversation history
   stats [options]           - Usage statistics
-  config [subcommand]      - Configuration
-  providers                - List provedores de IA
-  tokens [subcomando]      - Token management
+  config [subcommand]       - Configuration
+  providers                 - List the AI providers
+  tokens [subcommand]       - Token management
 
 Use --help with any command for more information.
 
-Exemplos:
+Examples:
   python -m src.cli chat "What is my operating system?"
   python -m src.cli capture --ocr
   python -m src.cli system info
         """)
     
     def handle_chat(self, args):
-        """Processar command chat"""
+        """Process the chat command."""
         message = ' '.join(args.message)
         
         if args.expert:
             self.expert_mode = True
         
-        # Preparar contexto
+        # Prepare context
         context = self._get_context_message()
         full_history = [context] + self.conversation_history if context else list(self.conversation_history)
 
-        # Adicionar message do utilizador
+        # Add the user message
         full_history.append({"role": "user", "content": message})
         
-        # Get resposta
+        # Get the response
         if args.stream:
-            print("\n[IA] ", end="", flush=True)
+            print("\n[AI] ", end="", flush=True)
             response_text = ""
             for chunk in self.ai_client.stream_chat(
                 full_history, 
@@ -240,7 +240,7 @@ Exemplos:
                 model=args.model
             )
             if response_text:
-                print(f"\n[IA]\n{response_text}\n")
+                print(f"\n[AI]\n{response_text}\n")
             else:
                 print("\n[ERROR] Could not get a response\n")
                 return
@@ -252,31 +252,31 @@ Exemplos:
             self._save_history()
     
     def handle_capture(self, args):
-        """Processar command capture"""
+        """Process the capture command."""
         if args.window:
             success, image_path = self.system_utils.capture_active_window(args.output)
         else:
             success, image_path = self.system_utils.capture_screen(args.output)
         
         if success:
-            print(f"✓ Captura saved em: {image_path}")
+            print(f"✓ Capture saved at: {image_path}")
             
             if args.ocr:
-                print("Extraindo text da imagem...")
+                print("Extracting text from the image...")
                 success, text = self.system_utils.extract_text_from_image(image_path)
                 if success:
                     print(f"\n[Screen Capture]\n{text}\n")
                 else:
-                    print(f"✗ Erro ao extrair texto: {text}")
+                    print(f"✗ Error extracting text: {text}")
         else:
-            print(f"✗ Erro ao capturar: {image_path}")
+            print(f"✗ Error while capturing: {image_path}")
     
     def handle_expert(self, args):
-        """Processar command expert"""
+        """Process the expert command."""
         self.expert_mode = True
         message = ' '.join(args.message)
         
-        # Preparar contexto de especialista
+        # Prepare the expert context
         context = self._get_context_message()
         full_history = [context] + self.conversation_history if context else list(self.conversation_history)
         full_history.append({"role": "user", "content": message})
@@ -288,14 +288,14 @@ Exemplos:
         )
         
         if response_text:
-            print(f"\n[Especialista]\n{response_text}\n")
+            print(f"\n[Expert]\n{response_text}\n")
         else:
             print("\n[ERROR] Could not get a response\n")
     
     def handle_system(self, args):
-        """Processar command system"""
+        """Process the system command."""
         if not args.system_command:
-            # Show info completa
+            # Show the full info
             info = self.system_utils.get_system_info()
             self._print_system_info(info)
             return
@@ -305,20 +305,20 @@ Exemplos:
             self._print_system_info(info)
         elif args.system_command == 'commands':
             commands = self.config.get("permissions.allowed_commands", [])
-            print("Comandos permitidos:")
+            print("Allowed commands:")
             for cmd in sorted(commands):
                 print(f"  - {cmd}")
         elif args.system_command == 'processes':
             processes = self.system_utils.get_process_list()
-            print(f"Processos ({len(processes)}):")
-            for proc in processes[:20]:  # Show primeiros 20
+            print(f"Processes ({len(processes)}):")
+            for proc in processes[:20]:  # Show the first 20
                 print(f"  {proc['pid']:>8} {proc['user']:<12} {proc['cpu']:<8} {proc['memory']:<8} {proc['name']}")
             if len(processes) > 20:
-                print(f"  ... e mais {len(processes) - 20} processos")
+                print(f"  ... and {len(processes) - 20} more processes")
         elif args.system_command == 'network':
             network_info = self.system_utils.get_network_info()
             if 'interfaces' in network_info:
-                print("Interfaces de rede:")
+                print("Network interfaces:")
                 for name, stats in network_info['interfaces'].items():
                     print(f"  {name}:")
                     for key, value in stats.items():
@@ -336,7 +336,7 @@ Exemplos:
                 print(f"✗ {output}")
     
     def _print_system_info(self, info: Dict):
-        """Show system information in an organized way"""
+        """Show system information in an organized way."""
         print("\n" + "=" * 50)
         print("SYSTEM INFORMATION")
         print("=" * 50)
@@ -383,7 +383,7 @@ Exemplos:
         print("=" * 50 + "\n")
     
     def handle_history(self, args):
-        """Processar command history"""
+        """Process the history command."""
         history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
         
         if args.clear:
@@ -402,7 +402,7 @@ Exemplos:
                 with open(history_file, 'r', encoding='utf-8') as f:
                     history = json.load(f)
                 
-                # Show last N mensagens
+                # Show the last N messages
                 limit = min(args.limit, len(history))
                 messages = history[-limit:]
                 
@@ -412,10 +412,10 @@ Exemplos:
                     content = msg.get("content", "")
                     timestamp = msg.get("timestamp", 0)
                     
-                    # Formatar timestamp
+                    # Format the timestamp
                     timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
                     
-                    # Truncar content se for muito longo
+                    # Truncate the content if it is too long
                     if len(content) > 100:
                         content = content[:100] + "..."
                     
@@ -426,7 +426,7 @@ Exemplos:
             print(f"✗ Error loading history: {e}")
     
     def handle_stats(self, args):
-        """Processar command stats"""
+        """Process the stats command."""
         token_usage = self.ai_client.get_token_usage()
         
         print("\n" + "=" * 50)
@@ -434,7 +434,7 @@ Exemplos:
         print("=" * 50 + "\n")
         
         if token_usage:
-            print("Uso de tokens por provedor:\n")
+            print("Token usage by provider:\n")
             for provider, usage in token_usage.items():
                 print(f"  {provider}:")
                 print(f"    Input tokens:  {usage.get('input', 0):>10}")
@@ -451,7 +451,7 @@ Exemplos:
         print("=" * 50 + "\n")
     
     def handle_config(self, args):
-        """Processar command config"""
+        """Process the config command."""
         if not args.config_command:
             # List configuration
             config = self.config.config
@@ -466,7 +466,7 @@ Exemplos:
                 print("✗ You must specify both key and value")
                 return
             
-            # Converter valor
+            # Convert the value
             value = args.value
             if value.lower() in ('true', 'false'):
                 value = value.lower() == 'true'
@@ -477,7 +477,7 @@ Exemplos:
             
             self.config.set(args.key, value)
             self.config.flush()
-            # Nunca devolver uma API key em claro para o terminal/shell history
+            # Never return an API key in cleartext to the terminal/shell history
             if "api_key" in args.key.lower():
                 shown = "*" * 12
             else:
@@ -491,19 +491,19 @@ Exemplos:
             print(f"{args.key}: {value}")
     
     def _print_config(self, config: Dict, indent: int = 0):
-        """Show configuration in an organized way"""
+        """Show configuration in an organized way."""
         for key, value in config.items():
             if isinstance(value, dict):
                 print("  " * indent + f"{key}:")
                 self._print_config(value, indent + 1)
             else:
-                # Esconder API keys (tamanho fixo: nao revela o comprimento)
+                # Hide API keys (fixed size: does not reveal the length)
                 if 'api_key' in key and value:
                     value = "********"
                 print("  " * indent + f"{key}: {value}")
     
     def handle_providers(self, args):
-        """Processar command providers"""
+        """Process the providers command."""
         providers = self.ai_client.get_supported_providers()
         
         print("\n" + "=" * 50)
@@ -528,12 +528,12 @@ Exemplos:
         print("\n" + "=" * 50 + "\n")
     
     def handle_tokens(self, args):
-        """Processar command tokens"""
+        """Process the tokens command."""
         if not args.tokens_command or args.tokens_command == 'usage':
             token_usage = self.ai_client.get_token_usage()
             
             print("\n" + "=" * 50)
-            print("USO DE TOKENS")
+            print("TOKEN USAGE")
             print("=" * 50 + "\n")
             
             if token_usage:
@@ -550,18 +550,18 @@ Exemplos:
         
         elif args.tokens_command == 'reset':
             self.ai_client.reset_token_usage()
-            print("✓ Contagem de tokens resetada")
+            print("✓ Token count reset")
     
     def _get_context_message(self) -> Optional[Dict[str, str]]:
-        """Obter message de contexto with base no modo"""
+        """Get the context message based on the current mode."""
         if self.expert_mode:
             return {
                 "role": "system",
-                "content": """Eres a especialista em sistemas Linux with vastos conhecimentos sobre:
+                "content": """You are the Linux systems expert with extensive knowledge of:
 - Configuration of systems and services
-- Management de pacotes (apt, dnf, pacman, xbps, etc.)
-- Configuration de network e firewall
-- Scripting em Bash e Python
+- Package management (apt, dnf, pacman, xbps, etc.)
+- Network and firewall configuration
+- Scripting in Bash and Python
 - Troubleshooting common problems
 - Performance optimization
 - System security
@@ -580,7 +580,7 @@ Respond clearly and concisely in English."""
             }
     
     def _save_history(self):
-        """Save conversation history"""
+        """Save the conversation history."""
         history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
         try:
             history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -591,7 +591,7 @@ Respond clearly and concisely in English."""
 
 
 def main():
-    """Main entry point for CLI"""
+    """Main entry point for the CLI."""
     try:
         app = CLIApp()
         app.run()

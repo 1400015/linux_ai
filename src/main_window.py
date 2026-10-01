@@ -497,7 +497,7 @@ class MainWindow(Gtk.Window):
         # Expert mode button
         self.expert_btn = Gtk.Button.new_from_icon_name("system-run", Gtk.IconSize.MENU)
         self.expert_btn.connect("clicked", self.on_expert_mode_toggled)
-        self.expert_btn.set_tooltip_text("Modo Especialista (Ctrl+E)")
+        self.expert_btn.set_tooltip_text("Expert Mode (Ctrl+E)")
         button_box.pack_start(self.expert_btn, False, False, 0)
         
         # Send button
@@ -1315,37 +1315,37 @@ Respond clearly and concisely in English."""
         
         self.input_entry.set_text("")
         
-        # Adicionar message do utilizador
+        # Add the user message
         self._add_user_message(text)
         
         # Add the message to the history
         self.conversation_history.append({"role": "user", "content": text})
         
-        # Update estado
+        # Update state
         self.is_loading = True
         self.streaming = True
         self.cancel_streaming = False
         self._cancel_event.clear()
         self.cancel_btn.set_sensitive(True)
         self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
-        self.status_icon.set_tooltip_text("Processando...")
+        self.status_icon.set_tooltip_text("Processing...")
 
-        # Processar em thread separado for no bloquear a UI
+        # Process in a separate thread so the UI is not blocked
         threading.Thread(target=self._process_message, args=(text,), daemon=True).start()
 
     def _process_message(self, message: str):
-        """Processar message e get response da IA"""
+        """Process the message and get the AI response."""
         GLib.idle_add(self._add_loading_message)
 
         try:
-            # Preparar contexto
+            # Prepare context
             context = self._get_context_message()
 
-            # Historico ja truncado e sem timestamps
+            # History already truncated and without timestamps
             messages = self._build_request_messages()
             full_history = ([context] + messages) if context else messages
 
-            # Get response da IA
+            # Get the AI response
             self.streaming = True
             self.current_response = ""
 
@@ -1363,7 +1363,7 @@ Respond clearly and concisely in English."""
             if not self._cancel_event.is_set():
                 self.conversation_history.append({"role": "assistant", "content": response_text})
 
-                # Oferecer write de ficheiros em mode especialista
+                # Offer file writes in expert mode
                 # GTK is not thread-safe: show dialogs from the main loop
                 if self.expert_mode and response_text:
                     def _offer_blocks():
@@ -1379,42 +1379,42 @@ Respond clearly and concisely in English."""
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
-            GLib.idle_add(self._add_system_message, f"Erro: {e}")
+            GLib.idle_add(self._add_system_message, f"Error: {e}")
             GLib.idle_add(self._on_message_processed)
     
     def _update_ai_message(self, chunk: str, streaming: bool):
-        """Atualizar message da IA"""
+        """Update the AI message."""
         self._add_ai_message(chunk, streaming)
         return False
     
     def _on_message_processed(self):
-        """Callback when message is processed"""
+        """Callback when the message is processed."""
         self.is_loading = False
         self.cancel_streaming = False
         self.cancel_btn.set_sensitive(False)
         self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
 
-        # Remover message de loading (no-op se ja foi substituida pela resposta)
+        # Remove the loading message (no-op if already replaced by the response)
         self._remove_loading_message()
         
-        # Show notification se no estiver ativa
+        # Show a notification if the window is not active
         if not self.get_window().get_property("is-active"):
-            self.show_notification("Linux AI Assistant", "Nova response recebida")
+            self.show_notification("Linux AI Assistant", "New response received")
     
     def on_cancel_streaming(self, button):
-        """Cancelar streaming atual"""
+        """Cancel the current streaming."""
         self._cancel_event.set()
         self.cancel_streaming = True
         self.is_loading = False
         self.streaming = False
         self.cancel_btn.set_sensitive(False)
         self.status_icon.set_from_icon_name("dialog-error", Gtk.IconSize.MENU)
-        self.status_icon.set_tooltip_text("Cancelado")
+        self.status_icon.set_tooltip_text("Cancelled")
         
-        self._add_system_message("Streaming cancelado")
+        self._add_system_message("Streaming cancelled")
         self._remove_loading_message()
-        logger.info("Streaming cancelado pelo utilizador")
+        logger.info("Streaming cancelled by the user")
     
     def on_capture_screen_clicked(self, button):
         """Handler for screen capture"""
@@ -1434,16 +1434,16 @@ Respond clearly and concisely in English."""
                 if success:
                     GLib.idle_add(self._add_system_message, f"Screen captured: {image_path}")
                     
-                    # Extrair texto
+                    # Extract text
                     if self.config.get("features.ocr_enabled", True):
-                        GLib.idle_add(self._add_system_message, "A extrair text da imagem...")
+                        GLib.idle_add(self._add_system_message, "Extracting text from the image...")
                         success, text = self.system_utils.extract_text_from_image(image_path)
                         
                         if success and text:
-                            # Limitar text for no sobrecarregar
+                            # Limit the text so it does not overload the UI
                             max_length = 2000
                             if len(text) > max_length:
-                                text = text[:max_length] + "\n\n... (texto truncado)"
+                                text = text[:max_length] + "\n\n... (text truncated)"
                             
                             GLib.idle_add(self._add_user_message, f"[Screen capture]\n{text}")
                             GLib.idle_add(self._update_conversation_history, "user", f"[Screen capture]\n{text}")
@@ -1462,47 +1462,47 @@ Respond clearly and concisely in English."""
                     
             except Exception as e:
                 logger.error(f"Error in screen capture: {e}", exc_info=True)
-                GLib.idle_add(self._add_system_message, f"Erro: {e}")
+                GLib.idle_add(self._add_system_message, f"Error: {e}")
             finally:
                 GLib.idle_add(self._on_capture_complete)
         
         threading.Thread(target=capture_and_process, daemon=True).start()
     
     def _on_capture_complete(self):
-        """Callback when capture is completed"""
+        """Callback when the capture is completed."""
         self.is_loading = False
         self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
     
     def _update_conversation_history(self, role: str, content: str):
-        """Update conversation history"""
+        """Update the conversation history."""
         self.conversation_history.append({"role": role, "content": content})
         return False
     
     def on_expert_mode_toggled(self, button):
-        """Alternar mode especialista"""
+        """Toggle expert mode."""
         self.expert_mode = not self.expert_mode
         
         if self.expert_mode:
             self.expert_btn.get_style_context().add_class("expert")
             self._add_system_message("Expert Mode ENABLED - Helping with system configuration")
-            self.show_notification("Linux AI Assistant", "Modo Especialista Ativado")
+            self.show_notification("Linux AI Assistant", "Expert Mode enabled")
         else:
             self.expert_btn.get_style_context().remove_class("expert")
-            self._add_system_message("Modo Especialista DESATIVADO")
-            self.show_notification("Linux AI Assistant", "Modo Especialista Desativado")
+            self._add_system_message("Expert Mode DISABLED")
+            self.show_notification("Linux AI Assistant", "Expert Mode disabled")
         
-        # Clear history for new context
+        # Clear the history for the new context
         self.conversation_history = []
-        logger.info(f"Modo especialista {'ativado' if self.expert_mode else 'desativado'}")
+        logger.info(f"Expert mode {'enabled' if self.expert_mode else 'disabled'}")
     
     def on_close_clicked(self):
-        """Handler for fechar janela"""
+        """Handler for closing the window."""
         self.on_delete_event(None, None)
     
     def on_delete_event(self, widget, event):
-        """Handler for fechar janela"""
-        # Guardar geometria da janela
+        """Handler for closing the window."""
+        # Save the window geometry
         if hasattr(self, 'get_window') and self.get_window():
             geometry = self.get_window().get_geometry()
             self.config.set_window_geometry(
