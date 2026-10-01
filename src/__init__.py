@@ -32,6 +32,3 @@ except Exception as e:
     print(f"Warning: Could not set up file logging: {e}")
 
 logger.addHandler(console_handler)
-
-# Import modules so that logging is available
-from . import ai_client, config_manager, system_utils, main_window, tray_icon, app

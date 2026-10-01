@@ -1,4 +1,6 @@
 import os
+import getpass
+import shutil
 import shlex
 import subprocess
 import platform
@@ -25,7 +27,7 @@ class SystemUtils:
         self.is_wayland = os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
         self.is_x11 = os.environ.get("DISPLAY") is not None
         self.is_root = os.geteuid() == 0
-        self.username = os.getlogin()
+        self.username = getpass.getuser()
         
         logger.info(f"Ambiente detetado: {'Wayland' if self.is_wayland else 'X11'}")
         logger.info(f"Utilizador: {self.username}, Root: {self.is_root}")
@@ -616,6 +618,10 @@ class SystemUtils:
             import pytesseract
             from PIL import Image
             
+            pytesseract.pytesseract.tesseract_cmd = (
+                shutil.which("tesseract") or shutil.which("tesseract-ocr") or "tesseract"
+            )
+
             # Verificar se file existe
             if not os.path.exists(image_path):
                 return False, f"File not found: {image_path}"
@@ -643,9 +649,20 @@ class SystemUtils:
                 logger.error(f"Erro no pytesseract: {e}")
                 return False, f"Erro no OCR: {e}"
                 
-        except ImportError as e:
-            logger.error(f"pytesseract or PIL not installed: {e}")
-            return False, "pytesseract or PIL not installed (install with: pip install pytesseract pillow)"
+        except ImportError:
+            binary = shutil.which("tesseract") or shutil.which("tesseract-ocr")
+            if not binary:
+                return False, "Tesseract OCR is not installed"
+            try:
+                result = subprocess.run(
+                    [binary, image_path, "stdout", "-l", lang],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode != 0:
+                    return False, result.stderr.strip()
+                return True, result.stdout.strip()
+            except (OSError, subprocess.TimeoutExpired) as e:
+                return False, f"OCR failed: {e}"
         except Exception as e:
             logger.error(f"Erro ao extrair texto: {e}")
             return False, f"Erro ao extrair texto: {e}"

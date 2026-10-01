@@ -134,13 +134,9 @@ class MainWindow(Gtk.Window):
         key, mod = Gtk.accelerator_parse("<Control>Return")
         self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
         
-        # Ctrl+Shift+Enter for new linha
-        key, mod = Gtk.accelerator_parse("<Control><Shift>Return")
-        self.input_entry.add_accelerator("insert-at-cursor", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
-        
         # Escape for clear input
         key, mod = Gtk.accelerator_parse("Escape")
-        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
+        accel_group.connect(key, mod,
                           Gtk.AccelFlags.VISIBLE, self.on_clear_input)
         
         # Ctrl+E for alternar mode especialista
@@ -149,12 +145,12 @@ class MainWindow(Gtk.Window):
         
         # Ctrl+Q for fechar
         key, mod = Gtk.accelerator_parse("<Control>q")
-        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
+        accel_group.connect(key, mod,
                           Gtk.AccelFlags.VISIBLE, lambda *args: self.on_close_clicked())
         
         # Ctrl+S to capture screen
         key, mod = Gtk.accelerator_parse("<Control>s")
-        accel_group.connect(accel_group.find_entry_keyval(key, mod), 
+        accel_group.connect(key, mod,
                           Gtk.AccelFlags.VISIBLE, lambda *args: self.on_capture_screen_clicked(None))
         
         logger.info("Atalhos de teclado configurados")

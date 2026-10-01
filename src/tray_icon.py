@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
 try:
     gi.require_version('Gtk', '3.0')
     gi.require_version('AppIndicator3', '0.1')
-    from gi.repository import Gtk, AppIndicator3
-except ImportError:
+    from gi.repository import Gtk, GdkPixbuf, AppIndicator3
+except (ImportError, ValueError):
+    AppIndicator3 = None
     # Fallback for sistemas sem AppIndicator3
     gi.require_version('Gtk', '3.0')
     gi.require_version('Gdk', '3.0')
