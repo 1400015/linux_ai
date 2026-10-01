@@ -17,5 +17,5 @@ for dir in /app/lib/python3*/site-packages; do
 done
 export PYTHONPATH
 
-cd "$APP_DIR"
+cd "$APP_DIR" || exit 1
 exec python3 -m src.app "$@"

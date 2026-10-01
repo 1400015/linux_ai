@@ -105,6 +105,7 @@ create_venv() {
     python3 -m venv --system-site-packages "$VENV_DIR"
     
     # Activate the virtual environment and install the dependencies
+    # shellcheck disable=SC1091  # gerado por python3 -m venv
     source "$VENV_DIR/bin/activate"
     pip install --upgrade pip
     pip install -r "$PROJECT_DIR/requirements.txt"
@@ -159,7 +160,7 @@ create_run_script() {
 #!/bin/bash
 set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" || exit 1
 if [ -x "$PROJECT_DIR/venv/bin/python" ]; then
     exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
 fi

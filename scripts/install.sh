@@ -41,14 +41,11 @@ command_exists() {
 
 # Function to install packages
 install_packages() {
-    local packages=("$@")
-    
     echo -e "${YELLOW}Checking the system dependencies...${NC}"
     
     # Detect the distribution
     if command_exists apt-get; then
         PKG_MANAGER="apt-get"
-        UPDATE_CMD="sudo apt-get update"
     else
         echo "Automatic installation currently supports Debian/Ubuntu and Void Linux."
         echo "For other distributions, install the dependencies from README.md manually."
@@ -102,6 +99,7 @@ create_venv() {
     python3 -m venv --system-site-packages "$VENV_DIR"
     
     # Activate the virtual environment and install the dependencies
+    # shellcheck disable=SC1091  # gerado por python3 -m venv
     source "$VENV_DIR/bin/activate"
     pip install --upgrade pip
     pip install -r "$PROJECT_DIR/requirements.txt"
@@ -156,7 +154,7 @@ create_run_script() {
 #!/bin/bash
 set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" || exit 1
 if [ -x "$PROJECT_DIR/venv/bin/python" ]; then
     exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
 fi
