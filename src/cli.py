@@ -216,8 +216,8 @@ Exemplos:
         
         # Preparar contexto
         context = self._get_context_message()
-        full_history = [context] + self.conversation_history if context else self.conversation_history
-        
+        full_history = [context] + self.conversation_history if context else list(self.conversation_history)
+
         # Adicionar message do utilizador
         full_history.append({"role": "user", "content": message})
         
@@ -278,7 +278,7 @@ Exemplos:
         
         # Preparar contexto de especialista
         context = self._get_context_message()
-        full_history = [context] + self.conversation_history if context else self.conversation_history
+        full_history = [context] + self.conversation_history if context else list(self.conversation_history)
         full_history.append({"role": "user", "content": message})
         
         response_text = self.ai_client.chat(
@@ -476,7 +476,13 @@ Exemplos:
                 value = float(value)
             
             self.config.set(args.key, value)
-            print(f"✓ Configuration updated: {args.key} = {value}")
+            self.config.flush()
+            # Nunca devolver uma API key em claro para o terminal/shell history
+            if "api_key" in args.key.lower():
+                shown = "*" * 12
+            else:
+                shown = value
+            print(f"✓ Configuration updated: {args.key} = {shown}")
         elif args.config_command == 'get':
             if not args.key:
                 print("✗ You must specify a key")
@@ -491,9 +497,9 @@ Exemplos:
                 print("  " * indent + f"{key}:")
                 self._print_config(value, indent + 1)
             else:
-                # Esconder API keys
+                # Esconder API keys (tamanho fixo: nao revela o comprimento)
                 if 'api_key' in key and value:
-                    value = "*" * len(value)
+                    value = "********"
                 print("  " * indent + f"{key}: {value}")
     
     def handle_providers(self, args):

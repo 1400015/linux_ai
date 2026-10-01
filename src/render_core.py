@@ -50,3 +50,36 @@ def render_text_markup(text):
     parts.append(_inline_to_markup(text[pos:]))
     return "".join(parts)
 
+
+# --- Logica do buffer de chat (sem GTK, para ser testavel headless) -----------
+#
+# O placeholder "Thinking..." e a resposta em streaming sao inseridos no mesmo
+# Gtk.TextBuffer. Procurar a linha "[AI]" para apagar era fragil: a resposta
+# tambem comeca por "[AI]", pelo que a busca eliminava a resposta inteira.
+# A solucao e guardar o intervalo exato de offsets do placeholder e apagar
+# apenas esse intervalo.
+
+def placeholder_span(char_count_before, text):
+    """Intervalo (inicio, fim) ocupado por `text` inserido a partir de `char_count_before`."""
+    start = max(0, int(char_count_before))
+    return start, start + len(text)
+
+
+def valid_span(start, end, char_count):
+    """Devolve (start, end) se o intervalo for utilizavel no buffer, ou None.
+
+    Protege contra offsets obsoletos: se o buffer encolheu (ou nada foi
+    inserido), a operacao e um no-op em vez de corromper o texto.
+    """
+    if start is None or end is None:
+        return None
+    start, end = int(start), int(end)
+    if start < 0 or start >= end or end > int(char_count):
+        return None
+    return start, end
+
+
+def header_offset(char_count_before, label):
+    """Offset do fim do cabecalho ``\\n[label]\\n`` dentro de uma mensagem."""
+    return max(0, int(char_count_before)) + len("\n[%s]\n" % label)
+

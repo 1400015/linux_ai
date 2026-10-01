@@ -5,8 +5,11 @@ __version__ = "1.0.0"
 import logging
 import sys
 
-# Create logger principal
-logger = logging.getLogger("linux_ai_assistant")
+# Os modulos usam `logging.getLogger(__name__)`, ou seja, nomes como
+# "src.config_manager". Configurar apenas "linux_ai_assistant" nao atingia
+# nenhum deles (nao e ancestral), pelo que os handlers nunca eram aplicados.
+# Configuramos o logger do pacote "src", que e ancestral de todos.
+logger = logging.getLogger("src")
 logger.setLevel(logging.INFO)
 
 # Handler for console

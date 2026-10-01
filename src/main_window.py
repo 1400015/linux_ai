@@ -2,6 +2,7 @@ import gi
 import os
 import json
 import time
+import re
 import threading
 from typing import Optional, Dict
 from pathlib import Path
@@ -13,17 +14,57 @@ except ImportError:
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-gi.require_version('GdkPixbuf', '2.0')
-gi.require_version('Notify', '0.7')
 
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
+from gi.repository import Gtk, Gdk, GLib, Pango
 import logging
 
 from . import dock, file_actions
+from .render_core import placeholder_span, valid_span, header_offset
 from .i18n import _
 
 # Configurar logger
 logger = logging.getLogger(__name__)
+
+# Valores vindos de ficheiros de tema sao interpolados no CSS do GTK; validar
+# o formato evita que um JSON malicioso injete regras de estilo arbitrarias.
+_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_UNSAFE_CSS_RE = re.compile(r"[;{}\\<>*@]|/\*|\*/")
+_FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 _.,'-]{1,64}$")
+
+# Orcamento de contexto: por omissao 12000 caracteres (~3k tokens) e 20 mensagens.
+MAX_CONTEXT_CHARS = 12000
+MAX_CONTEXT_MESSAGES = 20
+
+
+def safe_color(value, fallback="#1e1e1e"):
+    """Devolve uma cor CSS valida ou `fallback`."""
+    if isinstance(value, str) and _COLOR_RE.match(value.strip()):
+        return value.strip()
+    if value is not None:
+        logger.warning(f"Cor de tema invalida ignorada: {value!r}")
+    return fallback
+
+
+def safe_font_family(value, fallback="Monospace"):
+    """Devolve um nome de fonte seguro para CSS."""
+    if isinstance(value, str) and _FONT_FAMILY_RE.match(value.strip()):
+        return value.strip()
+    if value is not None:
+        logger.warning(f"Família de fontes de tema invalida ignorada: {value!r}")
+    return fallback
+
+
+def safe_number(value, fallback, cast, minimum=None, maximum=None):
+    """Converte `value` para numero com limites, ou devolve `fallback`."""
+    try:
+        number = cast(value)
+    except (TypeError, ValueError):
+        return fallback
+    if minimum is not None and number < minimum:
+        return fallback
+    if maximum is not None and number > maximum:
+        return fallback
+    return number
 
 
 class MainWindow(Gtk.Window):
@@ -87,6 +128,13 @@ class MainWindow(Gtk.Window):
         self.streaming = False
         self.is_loading = False
         self.cancel_streaming = False
+        # `_process_message` corre numa thread: `cancel_streaming` e `streaming`
+        # sao lidos e escritos nas duas threads. Um Event da threading fornece
+        # memoria partilhada em vez de booleans soltos.
+        self._cancel_event = threading.Event()
+        self._state_lock = threading.Lock()
+        # Intervalo (inicio, fim) do placeholder "Thinking..." no buffer
+        self._loading_span = None
         
         # Create interface
         self._create_ui()
@@ -178,21 +226,30 @@ class MainWindow(Gtk.Window):
         if theme_info and 'ui' in theme_info:
             theme_ui = theme_info['ui']
         
-        # Usar valores do theme ou defaults
-        bg_color = colors.get('background', '#1e1e1e')
-        text_color = colors.get('text', '#e0e0e0')
-        accent_color = colors.get('accent', '#4CAF50')
-        secondary_color = colors.get('secondary', '#2d2d2d')
-        tertiary_color = colors.get('tertiary', '#252525')
-        
-        font_family = theme_ui.get('font_family', self.config.get('ui.font_family', 'Monospace'))
-        font_size = theme_ui.get('font_size', self.config.get('ui.font_size', 12))
-        border_radius = theme_ui.get('border_radius', self.config.get('ui.border_radius', 10))
-        
+        # Usar valores validados do theme (ver safe_color/safe_font_family)
+        bg_color = safe_color(colors.get('background'), '#1e1e1e')
+        text_color = safe_color(colors.get('text'), '#e0e0e0')
+        accent_color = safe_color(colors.get('accent'), '#4CAF50')
+        secondary_color = safe_color(colors.get('secondary'), '#2d2d2d')
+        tertiary_color = safe_color(colors.get('tertiary'), '#252525')
+
+        font_family = safe_font_family(
+            theme_ui.get('font_family') or self.config.get('ui.font_family'),
+            'Monospace',
+        )
+        font_size = safe_number(
+            theme_ui.get('font_size') or self.config.get('ui.font_size'),
+            12, int, minimum=4, maximum=72,
+        )
+        border_radius = safe_number(
+            theme_ui.get('border_radius') or self.config.get('ui.border_radius'),
+            10, int, minimum=0, maximum=64,
+        )
+
         # Cores de syntax highlighting
-        user_msg_color = syntax_colors.get('user_message', '#e0e0e0')
-        ai_msg_color = syntax_colors.get('ai_message', '#a0d0a0')
-        system_msg_color = syntax_colors.get('system_message', '#808080')
+        user_msg_color = safe_color(syntax_colors.get('user_message'), '#e0e0e0')
+        ai_msg_color = safe_color(syntax_colors.get('ai_message'), '#a0d0a0')
+        system_msg_color = safe_color(syntax_colors.get('system_message'), '#808080')
         
         css = f"""
         #main-box {{
@@ -991,104 +1048,117 @@ class MainWindow(Gtk.Window):
         
         dialog.destroy()
     
+    def _append_message(self, label: str, message: str, tag_name: str):
+        """Inserir `\\n[label]\\n<message>\\n\\n` e aplicar `tag_name` a tudo.
+
+        Os offsets sao capturados ANTES da insercao, em vez de calculados
+        "char_count - len(message) - N". Esse calculo dependia de numeros
+        magicos fracos e partia-se com assimetrias de traducao.
+        """
+        buffer = self.chat_textview.get_buffer()
+        start_offset = buffer.get_char_count()
+        text = f"\n[{label}]\n{message}\n\n"
+        buffer.insert(buffer.get_end_iter(), text)
+        end_offset = start_offset + len(text)
+        buffer.apply_tag_by_name(
+            tag_name,
+            buffer.get_iter_at_offset(start_offset),
+            buffer.get_iter_at_offset(end_offset),
+        )
+        return start_offset, end_offset
+
     def _add_user_message(self, message: str):
         """Adicionar message do user ao chat"""
         if not message:
             return
-            
-        buffer = self.chat_textview.get_buffer()
-        end_iter = buffer.get_end_iter()
-        
-        buffer.insert(end_iter, f"\n[{_('User')}]\n{message}\n\n")
-        
-        # Aplicar tag
-        start = buffer.get_iter_at_offset(buffer.get_char_count() - len(message) - 12)
-        end = buffer.get_end_iter()
-        buffer.apply_tag_by_name("user-message", start, end)
-        
+
+        self._append_message(_('User'), message, "user-message")
+
         # Save to history
         self._save_message_to_history("user", message)
-        
+
         self._scroll_to_bottom()
         logger.debug(f"Mensagem do user adicionada: {message[:50]}...")
-    
+
     def _add_ai_message(self, message: str, streaming: bool = False):
         """Adicionar message da IA ao chat"""
-        if self.cancel_streaming:
+        if self._cancel_event.is_set():
             return
-            
+
         buffer = self.chat_textview.get_buffer()
-        
+
         if streaming and self.streaming:
-            # Adicionar a message em stream
-            end_iter = buffer.get_end_iter()
-            buffer.insert(end_iter, message)
+            # Substituir o placeholder pelo cabecalho real no primeiro chunk,
+            # para que a resposta em streaming fique correctamente formatada.
+            if self._loading_span is not None:
+                self._remove_loading_message()
+                self._append_message(_('AI'), "", "ai-message")
+            buffer.insert(buffer.get_end_iter(), message)
             self._scroll_to_bottom()
         else:
-            # Nova mensagem
-            end_iter = buffer.get_end_iter()
-            buffer.insert(end_iter, f"\n[{_('AI')}]\n{message}\n\n")
-            
-            # Aplicar tag
-            start = buffer.get_iter_at_offset(buffer.get_char_count() - len(message) - 6)
-            end = buffer.get_end_iter()
-            buffer.apply_tag_by_name("ai-message", start, end)
-            
+            self._append_message(_('AI'), message, "ai-message")
+
             # Guardar em history (apenas message completa)
             if not streaming:
                 self._save_message_to_history("assistant", message)
-            
+
             self._scroll_to_bottom()
-        
+
         logger.debug(f"Mensagem da IA adicionada: {message[:50]}...")
-    
+
     def _add_system_message(self, message: str):
         """Adicionar message do system ao chat"""
-        buffer = self.chat_textview.get_buffer()
-        end_iter = buffer.get_end_iter()
-        
-        buffer.insert(end_iter, f"\n[{_('System')}]\n{message}\n\n")
-        
-        # Aplicar tag
-        start = buffer.get_iter_at_offset(buffer.get_char_count() - len(message) - 10)
-        end = buffer.get_end_iter()
-        buffer.apply_tag_by_name("system-message", start, end)
-        
+        self._append_message(_('System'), message, "system-message")
+
         self._scroll_to_bottom()
         logger.info(f"Mensagem do sistema: {message}")
-    
+
     def _add_loading_message(self, message: str = None):
-        """Add loading message"""
+        """Add loading message
+
+        Guardamos o intervalo exato ocupado pelo placeholder para o podermos
+        remover sem tocar no texto ja inserido.
+        """
         if message is None:
             message = _("Thinking...")
+
         buffer = self.chat_textview.get_buffer()
-        end_iter = buffer.get_end_iter()
-        
-        buffer.insert(end_iter, f"\n[{_('AI')}]\n{message}")
-        
-        # Aplicar tag de loading
-        start = buffer.get_iter_at_offset(buffer.get_char_count() - len(message) - 6)
-        end = buffer.get_end_iter()
-        buffer.apply_tag_by_name("loading", start, end)
-        
+        text = f"\n[{_('AI')}]\n{message}"
+        start_offset = buffer.get_char_count()
+        buffer.insert(buffer.get_end_iter(), text)
+        self._loading_span = placeholder_span(start_offset, text)
+
+        buffer.apply_tag_by_name(
+            "loading",
+            buffer.get_iter_at_offset(start_offset),
+            buffer.get_iter_at_offset(start_offset + len(text)),
+        )
+
         self._scroll_to_bottom()
-    
+
     def _remove_loading_message(self):
-        """Remover message de loading"""
+        """Remover APENAS o placeholder de loading.
+
+        A versao anterior procurava a ultima linha `[AI]` e apagava ate ao fim
+        do buffer. Como a resposta em streaming usa o mesmo prefixo, isso
+        apagava a resposta inteira do ecra.
+        """
+        span = self._loading_span
+        self._loading_span = None
+        if not span:
+            return
+
         buffer = self.chat_textview.get_buffer()
-        start = buffer.get_end_iter()
-        
-        # Search for the last loading message
-        text = buffer.get_text(buffer.get_start_iter(), start)
-        lines = text.split('\n')
-        
-        # Remove the last lines starting with [AI]
-        for i in range(len(lines) - 1, -1, -1):
-            if lines[i].startswith('[' + _('AI') + ']'):
-                # Remove this line and the next one (content)
-                line_start = buffer.get_iter_at_line(i)
-                buffer.delete(line_start, start)
-                break
+        valid = valid_span(span[0], span[1], buffer.get_char_count())
+        if valid is None:
+            logger.debug("Placeholder de loading ja nao esta no buffer; nada a remover")
+            return
+
+        start_offset, end_offset = valid
+        buffer.delete(
+            buffer.get_iter_at_offset(start_offset),
+            buffer.get_iter_at_offset(end_offset),
+        )
     
     def _scroll_to_bottom(self):
         """Auto-scroll to the bottom of the chat"""
@@ -1106,11 +1176,53 @@ class MainWindow(Gtk.Window):
         try:
             if history_file.exists():
                 with open(history_file, 'r', encoding='utf-8') as f:
-                    self.conversation_history = json.load(f)
+                    loaded = json.load(f)
+                # O historico em disco inclui `timestamp`, que nao e um campo de
+                # mensagem. Normalizar ao carregar evita envia-lo ao provider.
+                if isinstance(loaded, list):
+                    self.conversation_history = [
+                        {"role": m.get("role", "user"), "content": m.get("content", "")}
+                        for m in loaded
+                        if isinstance(m, dict) and m.get("content")
+                    ]
                 logger.info(f"History loaded with {len(self.conversation_history)} messages")
         except Exception as e:
             logger.error(f"Error loading history: {e}")
             self.conversation_history = []
+
+    def _build_request_messages(self):
+        """Montar a lista de mensagens para a API.
+
+        Remove o `timestamp` (que existe apenas no historico em disco) e
+        limita o contexto ao orcamento configurado, para que uma conversa
+        longa nao envoye 1000 mensagens em cada turno.
+        """
+        messages = [{"role": m["role"], "content": m["content"]}
+                    for m in self.conversation_history
+                    if m.get("role") and m.get("content")]
+
+        max_messages = safe_number(
+            self.config.get("context.max_messages"), MAX_CONTEXT_MESSAGES,
+            int, minimum=2, maximum=500,
+        )
+        max_chars = safe_number(
+            self.config.get("context.max_chars"), MAX_CONTEXT_CHARS,
+            int, minimum=1000, maximum=400000,
+        )
+
+        if len(messages) > max_messages:
+            logger.debug(
+                f"Contexto truncado de {len(messages)} para {max_messages} mensagens"
+            )
+            messages = messages[-max_messages:]
+
+        total = sum(len(m["content"]) for m in messages)
+        while len(messages) > 2 and total > max_chars:
+            removed = messages.pop(0)
+            total -= len(removed["content"])
+            logger.debug("Contexto truncado por orcamento de caracteres")
+
+        return messages
     
     def _save_message_to_history(self, role: str, content: str):
         """Save message to persistent history"""
@@ -1208,42 +1320,44 @@ CPU: {info.get('cpu_cores', 'N/A')} cores
         self.is_loading = True
         self.streaming = True
         self.cancel_streaming = False
+        self._cancel_event.clear()
         self.cancel_btn.set_sensitive(True)
         self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text("Processando...")
-        
+
         # Processar em thread separado for no bloquear a UI
         threading.Thread(target=self._process_message, args=(text,), daemon=True).start()
-    
+
     def _process_message(self, message: str):
         """Processar message e get response da IA"""
         GLib.idle_add(self._add_loading_message)
-        
+
         try:
             # Preparar contexto
             context = self._get_context_message()
-            
-            # Add context to the history
-            full_history = [context] + self.conversation_history if context else self.conversation_history
-            
+
+            # Historico ja truncado e sem timestamps
+            messages = self._build_request_messages()
+            full_history = ([context] + messages) if context else messages
+
             # Get response da IA
             self.streaming = True
             self.current_response = ""
-            
+
             response_text = ""
             for chunk in self.ai_client.stream_chat(full_history):
-                if self.cancel_streaming:
+                if self._cancel_event.is_set():
                     break
-                
+
                 response_text += chunk
                 GLib.idle_add(self._update_ai_message, chunk, True)
-            
+
             self.streaming = False
-            
+
             # Add to the history
-            if not self.cancel_streaming:
+            if not self._cancel_event.is_set():
                 self.conversation_history.append({"role": "assistant", "content": response_text})
-                
+
                 # Oferecer write de ficheiros em mode especialista
                 # GTK is not thread-safe: show dialogs from the main loop
                 if self.expert_mode and response_text:
@@ -1254,10 +1368,10 @@ CPU: {info.get('cpu_cores', 'N/A')} cores
                         )
                         return False
                     GLib.idle_add(_offer_blocks)
-            
+
             # Update UI
             GLib.idle_add(self._on_message_processed)
-            
+
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             GLib.idle_add(self._add_system_message, f"Erro: {e}")
@@ -1275,9 +1389,9 @@ CPU: {info.get('cpu_cores', 'N/A')} cores
         self.cancel_btn.set_sensitive(False)
         self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
-        
-        # Remover message de loading
-        GLib.idle_add(self._remove_loading_message)
+
+        # Remover message de loading (no-op se ja foi substituida pela resposta)
+        self._remove_loading_message()
         
         # Show notification se no estiver ativa
         if not self.get_window().get_property("is-active"):
@@ -1285,6 +1399,7 @@ CPU: {info.get('cpu_cores', 'N/A')} cores
     
     def on_cancel_streaming(self, button):
         """Cancelar streaming atual"""
+        self._cancel_event.set()
         self.cancel_streaming = True
         self.is_loading = False
         self.streaming = False
@@ -1293,7 +1408,7 @@ CPU: {info.get('cpu_cores', 'N/A')} cores
         self.status_icon.set_tooltip_text("Cancelado")
         
         self._add_system_message("Streaming cancelado")
-        GLib.idle_add(self._remove_loading_message)
+        self._remove_loading_message()
         logger.info("Streaming cancelado pelo utilizador")
     
     def on_capture_screen_clicked(self, button):
@@ -1391,36 +1506,38 @@ CPU: {info.get('cpu_cores', 'N/A')} cores
                 self.get_window().get_position().x,
                 self.get_window().get_position().y
             )
-        
-        # Save history
-        # (Already saved automatically when adding messages)
-        
+        # Persistir qualquer alteracao pendente antes de sair
+        self.config.flush()
+
         # Close application
         logger.info("Janela fechada")
         Gtk.main_quit()
         return True
     
     def on_configure_event(self, widget, event):
-        """Handler for redimensionar/mover janela"""
-        # Save position
-        if hasattr(self, 'get_window') and self.get_window():
-            x, y = self.get_window().get_position()
+        """Handler for redimensionar/mover janela
+
+        `set()` e debounced, por isso mover a janela nao provoca uma escrita
+        de config.json por pixel.
+        """
+        gdk_window = self.get_window()
+        if gdk_window:
+            x, y = gdk_window.get_position()
             self.config.set("app.x_position", x)
             self.config.set("app.y_position", y)
-            
-            # Guardar tamanho
-            geometry = self.get_window().get_geometry()
+
+            geometry = gdk_window.get_geometry()
             self.config.set("app.width", geometry.width)
             self.config.set("app.height", geometry.height)
-        
+
         return True
     
     def on_size_allocate(self, widget, allocation):
         """Handler for when size is allocated"""
-        # Guardar tamanho
-        if hasattr(self, 'get_window') and self.get_window():
-            geometry = self.get_window().get_geometry()
+        gdk_window = self.get_window()
+        if gdk_window:
+            geometry = gdk_window.get_geometry()
             self.config.set("app.width", geometry.width)
             self.config.set("app.height", geometry.height)
-        
+
         return True

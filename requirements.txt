@@ -1,19 +1,19 @@
-# Dependências principais
-# GTK bindings (PyGObject/cairo) must be installed by the system package manager.
+# Dependências de runtime do Linux AI Assistant.
+#
+# Os bindings GTK (PyGObject/cairo) NÃO são instalados via pip: devem vir do
+# gestor de pacotes do sistema e o venv é criado com --system-site-packages.
+# Não instale o pacote PyPI `gi` (não relacionado).
+
 requests>=2.31.0
 pillow>=10.0.0
 pytesseract>=0.3.10
 python-dotenv>=1.0.0
 psutil>=5.9.5
-
-# Nova: Retry mechanism
 tenacity>=8.2.3
-
-# Nova: Logging JSON (opcional)
-python-json-logger>=2.0.7
-
-# Nova: Encriptação (opcional)
-cryptography>=42.0.2
-
-# Nova: Notificações do sistema
 notify2>=0.3.1
+
+# Opcionais (o código degrada com elegância se não estiverem presentes):
+#
+#   cryptography>=42.0.2   encriptação de API keys em config.json
+#                          (`app.encryption_enabled`)
+#   python-json-logger     não é usado pelo projeto; removido

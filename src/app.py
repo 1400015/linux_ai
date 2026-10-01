@@ -16,9 +16,12 @@ try:
     gi.require_version('Gtk', '3.0')
     gi.require_version('Gdk', '3.0')
     from gi.repository import Gtk, Gdk
-except (ImportError, ValueError):
+    GTK_AVAILABLE = True
+except (ImportError, ValueError) as _gtk_error:
     Gtk = None
     Gdk = None
+    GTK_AVAILABLE = False
+    GTK_IMPORT_ERROR = _gtk_error
 
 # Configurar logging cedo
 logging.basicConfig(
@@ -30,13 +33,17 @@ logger = logging.getLogger(__name__)
 # Adicionar src ao path
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Import modules (which set up their own logging)
 from .config_manager import ConfigManager
 from .ai_client import AIClient
 from .system_utils import SystemUtils
-from .main_window import MainWindow
+
+# `main_window`/`tray_icon` so devem ser importados quando o GTK existe: caso
+# contrario `Gtk.init()` rebentaria com um AttributeError pouco claro.
+if GTK_AVAILABLE:
+    from .main_window import MainWindow
+    from .tray_icon import TrayIcon
+
 from . import i18n
-from .tray_icon import TrayIcon
 
 
 class LinuxAIAssistant:
@@ -170,7 +177,20 @@ class LinuxAIAssistant:
 def main():
     """Ponto de input principal"""
     logger.info("Linux AI Assistant - Start")
-    
+
+    if not GTK_AVAILABLE:
+        message = (
+            "GTK 3 nao esta disponivel. Instala os bindings do sistema:\n"
+            "  Debian/Ubuntu : sudo apt install python3-gi gir1.2-gtk-3.0\n"
+            "  Fedora        : sudo dnf install python3-gobject gtk3\n"
+            "  Arch          : sudo pacman -S python-gobject gtk3\n"
+            "  Void          : sudo xbps-install python3-gobject gtk+3\n"
+            "Depois cria o venv com --system-site-packages (ver README).\n"
+            "Para uso sem interface: python -m src.cli --help"
+        )
+        print(f"\nErro: {GTK_IMPORT_ERROR}\n\n{message}", file=sys.stderr)
+        return 1
+
     try:
         app = LinuxAIAssistant()
         
@@ -184,6 +204,7 @@ def main():
     except Exception as e:
         logger.error(f"Erro fatal: {e}", exc_info=True)
         sys.exit(1)
+    return 0
 
 
 if __name__ == "__main__":

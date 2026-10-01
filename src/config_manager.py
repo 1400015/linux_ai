@@ -1,6 +1,9 @@
 import json
 import os
 import base64
+import copy
+import atexit
+import threading
 from pathlib import Path
 from typing import Any, Optional, Dict, List
 import logging
@@ -9,6 +12,11 @@ from dotenv import load_dotenv
 
 # Configurar logger
 logger = logging.getLogger(__name__)
+
+# `set()` e chamado a cada evento de `configure-event`/`size-allocate` (isto e,
+# a cada pixel de arrasto/redimensionamento). Sem debounce, isso significaria
+# reescrever o config.json inteiro centenas de vezes por segundo.
+SAVE_DEBOUNCE_SECONDS = 0.5
 
 
 class ConfigManager:
@@ -159,11 +167,15 @@ class ConfigManager:
         self.config_path = config_path
         self.config = {}
         self._encryption_key = None
+        self._save_timer = None
+        self._dirty = False
         self._themes_dir = Path(__file__).parent.parent / "themes"
         if not self._themes_dir.is_dir():
             self._themes_dir = Path(sys.prefix) / "share" / "linux-ai-assistant" / "themes"
         self._load_config()
         self._validate_config()
+        # Garantir que uma alteracao agendada nao se perde ao sair
+        atexit.register(self.flush)
     
     def _load_encryption_key(self):
         """Load or generate encryption key"""
@@ -232,13 +244,20 @@ class ConfigManager:
                 self.config = self._get_default_config()
                 self.save()
                 logger.info("Default configuration created")
+                self._dirty = False
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error loading configuration: {e}")
             self.config = self._get_default_config()
     
     def _get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration"""
-        return self.DEFAULT_CONFIG.copy()
+        """Get default configuration
+
+        `copy.deepcopy` e obrigatorio: uma copia rasa partilharia os dicts
+        internos com DEFAULT_CONFIG, fazendo com que uma API key escrita numa
+        instancia aparecesse noutras instancias e contaminasse a constante de
+        classe.
+        """
+        return copy.deepcopy(self.DEFAULT_CONFIG)
     
     def _validate_config(self):
         """Validate configuration against schema"""
@@ -264,6 +283,7 @@ class ConfigManager:
                 self._load_encryption_key()
             
             self.save()
+            self._dirty = False
         except Exception as e:
             logger.error(f"Error validating configuration: {e}")
     
@@ -330,16 +350,50 @@ class ConfigManager:
             value = self._encrypt_value(value)
         
         current[keys[-1]] = value
-        self.save()
+        self._schedule_save()
         logger.debug("Configuration updated: %s", key)
-    
+
+    def _schedule_save(self):
+        """Agendar uma gravacao (debounce).
+
+        Chamadas consecutivas dentro de SAVE_DEBOUNCE_SECONDS resultam num
+        unico write. `save()` continua a estar disponivel para quem precisar
+        de persistir imediatamente.
+        """
+        self._dirty = True
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+        timer = threading.Timer(SAVE_DEBOUNCE_SECONDS, self.flush)
+        timer.daemon = True
+        self._save_timer = timer
+        timer.start()
+
+    def flush(self):
+        """Gravar imediatamente se houver alteracoes pendentes."""
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+            self._save_timer = None
+        if self._dirty:
+            self.save()
+
     def save(self):
-        """Save configuration to file"""
+        """Save configuration to file
+
+        Escrita atomica (ficheiro temporario + os.replace) para que um
+        crash a meio da escrita nunca deixe um config.json truncado.
+        """
         try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            self._dirty = False
+            target = Path(self.config_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = target.with_name(target.name + f".tmp{os.getpid()}")
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
-            logger.info(f"Configuration saved to {self.config_path}")
-        except IOError as e:
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, target)
+            logger.debug(f"Configuration saved to {self.config_path}")
+        except (IOError, OSError) as e:
             logger.error(f"Error saving configuration: {e}")
     
     def reload(self):

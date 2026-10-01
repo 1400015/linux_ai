@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-ai-assistant"
+version = "1.0.0"
+description = "Assistente de IA permanente para Linux com interface flutuante"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Linux AI Assistant Team" }]
+keywords = ["linux", "ai", "gtk", "assistant", "desktop"]
+
+dependencies = [
+    "requests>=2.31.0",
+    "pillow>=10.0.0",
+    "pytesseract>=0.3.10",
+    "python-dotenv>=1.0.0",
+    "psutil>=5.9.5",
+    "tenacity>=8.2.3",
+    "notify2>=0.3.1",
+]
+
+[project.optional-dependencies]
+# Encriptação de API keys em config.json (app.encryption_enabled)
+encryption = ["cryptography>=42.0.2"]
+dev = ["ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/1400015/linux_ai"
+Source = "https://github.com/1400015/linux_ai"
+"Bug Reports" = "https://github.com/1400015/linux_ai/issues"
+
+[project.scripts]
+linux-ai-assistant = "src.app:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py38"
+
+[tool.ruff.lint]
+# O projecto usa muitosexcept: vazios; focusing on erros reais.
+select = ["E", "F", "W"]
+ignore = [
+    "E501",   # linhas longas
+    "E722",   # except: vazio intencional em fallbacks
+    "E741",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/app.py" = ["F401"]  #Gtk/Gdk importados condicionalmente
+"src/main_window.py" = ["F401"]
+
+[tool.unittest]
+start-dir = "tests"

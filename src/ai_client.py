@@ -1,12 +1,40 @@
 import json
 import time
 import logging
+import re
+import threading
+from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from requests.exceptions import RequestException, Timeout, ConnectionError
 
 # Configurar logger
 logger = logging.getLogger(__name__)
+
+# Politica de retry para falhas de rede/transientes
+NETWORK_RETRY = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type((RequestException, Timeout, ConnectionError)),
+    reraise=True,
+)
+
+_SECRET_QUERY_RE = re.compile(r"([?&](?:key|api_key|access_token|token)=)[^&\s]+", re.I)
+
+
+class _RetryAfterRateLimit(RequestException):
+    """Sinaliza um 429 que deve ser repetido depois de `Retry-After`.
+
+    Herda de RequestException para que a politica `NETWORK_RETRY` a volte a
+    tentar (ate 3 tentativas), em vez de se propagar imediatamente.
+    """
+
+
+def redact_url(url: str) -> str:
+    """Remove segredos de query strings antes de escrever no log."""
+    if not url:
+        return url
+    return _SECRET_QUERY_RE.sub(r"\1***", url)
 
 
 class AIClient:
@@ -32,7 +60,9 @@ class AIClient:
         self.config = config_manager
         self.session = self._create_session()
         self.token_usage = {}
-        self._setup_retry_strategy()
+        self._usage_lock = threading.Lock()
+        self._usage_path = Path.home() / ".config" / "linux_ai_assistant" / "usage.json"
+        self._load_token_usage()
         self._load_custom_providers()
     
     def _create_session(self):
@@ -46,18 +76,12 @@ class AIClient:
         return session
     
     def _setup_retry_strategy(self):
-        """Configure retry strategy"""
-        self.retry_decorator = retry(
-            stop=stop_after_attempt(self.MAX_RETRIES),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type((RequestException, Timeout, ConnectionError)),
-            reraise=True
-        )
-    
+        """Deprecated: a politica de retry vive em NETWORK_RETRY."""
+        return None
+
     def _load_custom_providers(self):
         """Carregar provedores customizados de plugins"""
         try:
-            from pathlib import Path
             import importlib
             
             plugins_dir = Path(__file__).parent.parent / "plugins"
@@ -104,13 +128,71 @@ class AIClient:
     
     def _update_token_usage(self, provider: str, input_tokens: int, output_tokens: int):
         """Atualizar contagem de tokens"""
-        if provider not in self.token_usage:
-            self.token_usage[provider] = {"input": 0, "output": 0, "total": 0}
-        self.token_usage[provider]["input"] += input_tokens
-        self.token_usage[provider]["output"] += output_tokens
-        self.token_usage[provider]["total"] += input_tokens + output_tokens
+        with self._usage_lock:
+            if provider not in self.token_usage:
+                self.token_usage[provider] = {"input": 0, "output": 0, "total": 0}
+            self.token_usage[provider]["input"] += int(input_tokens)
+            self.token_usage[provider]["output"] += int(output_tokens)
+            self.token_usage[provider]["total"] += int(input_tokens) + int(output_tokens)
+        self._save_token_usage()
         logger.debug(f"Token usage - {provider}: input={input_tokens}, output={output_tokens}")
-    
+
+    def _record_usage(self, provider: str, data: Dict[str, Any]):
+        """Registar o consumo reportado pela propria API.
+
+        Quando a resposta traz `usage`, usa-o em vez da estimativa.
+        """
+        if not isinstance(data, dict):
+            return
+        usage = data.get("usage") or data.get("usageMetadata") or {}
+        if not isinstance(usage, dict):
+            return
+        input_tokens = (
+            usage.get("prompt_tokens")
+            or usage.get("input_tokens")
+            or usage.get("promptTokenCount")
+        )
+        output_tokens = (
+            usage.get("completion_tokens")
+            or usage.get("output_tokens")
+            or usage.get("candidatesTokenCount")
+        )
+        if input_tokens is None and output_tokens is None:
+            return
+        self._update_token_usage(provider, input_tokens or 0, output_tokens or 0)
+
+    def _usage_path_safe(self):
+        try:
+            return self._usage_path
+        except Exception:
+            return None
+
+    def _load_token_usage(self):
+        """Carregar estatisticas de uso de sessoes anteriores."""
+        path = self._usage_path_safe()
+        if not path or not path.exists():
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self.token_usage = data
+                logger.debug(f"Token usage loaded: {list(data)}")
+        except Exception as e:
+            logger.warning(f"Could not load token usage: {e}")
+
+    def _save_token_usage(self):
+        """Persistir estatisticas de uso para que a CLI as consiga mostrar."""
+        path = self._usage_path_safe()
+        if not path:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.token_usage, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not save token usage: {e}")
+
     def get_token_usage(self, provider: str = None) -> Dict[str, Any]:
         """Obter uso de tokens"""
         if provider:
@@ -119,17 +201,20 @@ class AIClient:
     
     def reset_token_usage(self):
         """Resetar contagem de tokens"""
-        self.token_usage = {}
+        with self._usage_lock:
+            self.token_usage = {}
+        self._save_token_usage()
         logger.info("Token usage reset")
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=retry_if_exception_type((RequestException, Timeout, ConnectionError)))
+    @retry(**NETWORK_RETRY)
     def _make_request(self, url: str, payload: Dict, headers: Dict = None, 
                      timeout: int = None, stream: bool = False):
         """Fazer request with retry e error handling"""
         timeout = timeout or self.DEFAULT_TIMEOUT
         merged_headers = {**self.session.headers, **(headers or {})}
-        
+        safe_url = redact_url(url)
+
+        response = None
         try:
             if stream:
                 response = self.session.post(
@@ -140,27 +225,108 @@ class AIClient:
                     url, json=payload, headers=merged_headers, timeout=timeout
                 )
             
-            # Handle rate limiting
+            # Handle rate limiting com um numero limitado de tentativas
             if response.status_code == 429:
-                retry_after = int(response.headers.get('Retry-After', self.RATE_LIMIT_WAIT))
-                logger.warning(f"Rate limit atingido for {url}. A esperar {retry_after} segundos...")
+                retry_after = self._parse_retry_after(response.headers.get('Retry-After'))
+                response.close()
+                if retry_after is None:
+                    raise RequestException(
+                        f"Rate limit excedido ({safe_url}) e sem Retry-After utilizavel"
+                    )
+                logger.warning(
+                    f"Rate limit atingido for {safe_url}. "
+                    f"A esperar {retry_after} segundos..."
+                )
                 time.sleep(retry_after)
-                # Retry manually
-                return self._make_request(url, payload, headers, timeout, stream)
+                raise _RetryAfterRateLimit()
             
             response.raise_for_status()
             return response
             
+        except _RetryAfterRateLimit:
+            # Deixa o tenacity repetir (ate MAX_RATE_LIMIT_RETRIES)
+            raise
         except Timeout as e:
-            logger.error(f"Timeout ao conectar a {url}: {e}")
+            logger.error(f"Timeout ao conectar a {safe_url}: {e}")
             raise
         except RequestException as e:
-            logger.error(f"Erro na request for {url}: {e}")
+            logger.error(f"Erro na request for {safe_url}: {e}")
             raise
         except Exception as e:
-            logger.error(f"Erro inesperado em request for {url}: {e}")
+            if response is not None:
+                response.close()
+            logger.error(f"Erro inesperado em request for {safe_url}: {e}")
             raise
+
+    def _parse_retry_after(self, value: Any) -> Optional[int]:
+        """Interpretar o header Retry-After (segundos ou data HTTP)."""
+        if value is None:
+            return self.RATE_LIMIT_WAIT
+        try:
+            seconds = int(str(value).strip())
+        except (TypeError, ValueError):
+            logger.warning(f"Retry-After invalido: {value!r}. A usar {self.RATE_LIMIT_WAIT}s")
+            return self.RATE_LIMIT_WAIT
+        # Teto defensivo: nao bloquear a thread por horas
+        return max(1, min(seconds, self.RATE_LIMIT_WAIT))
     
+    @staticmethod
+    def _iter_sse_openai_style(response, provider: str):
+        """Iterar um stream SSE estilo OpenAI (`data: {...}`)."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            decoded_line = line.decode("utf-8")
+            if not decoded_line.startswith("data: "):
+                continue
+            data_str = decoded_line[6:]
+            if data_str == "[DONE]":
+                return
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            choices = data.get("choices")
+            if choices:
+                content = choices[0].get("delta", {}).get("content", "")
+                if content:
+                    yield content
+
+    @staticmethod
+    def _iter_sse_anthropic(response):
+        """Iterar um stream SSE da Anthropic."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            decoded_line = line.decode("utf-8")
+            if not decoded_line.startswith("data: "):
+                continue
+            try:
+                data = json.loads(decoded_line[6:])
+            except json.JSONDecodeError:
+                continue
+            delta = data.get("delta")
+            if data.get("type") == "content_block_delta" and isinstance(delta, dict):
+                text = delta.get("text")
+                if text:
+                    yield text
+
+    @staticmethod
+    def _iter_sse_cohere(response):
+        """Iterar um stream SSE da Cohere."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            decoded_line = line.decode("utf-8")
+            if not decoded_line.startswith("data: "):
+                continue
+            try:
+                data = json.loads(decoded_line[6:])
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") in (None, "content-delta") and "text" in data:
+                yield data["text"]
+
     def _validate_messages(self, messages: List[Dict[str, str]]) -> bool:
         """Validar formato das mensagens"""
         if not isinstance(messages, list):
@@ -221,12 +387,13 @@ class AIClient:
             return None
         
         try:
-            # Contar tokens de input
-            input_text = " ".join([msg.get("content", "") for msg in messages])
-            input_tokens = self._count_tokens(input_text)
-            
             logger.info(f"Enviando request for {provider} with modelo {model}")
-            
+
+            # Total acumulado antes da chamada, para saber se o provider
+            # reportou uso real (e evitar contar a estimativa em duplicado).
+            with self._usage_lock:
+                before = self.token_usage.get(provider, {}).get("total", 0)
+
             # Call the provider's specific method
             chat_method = getattr(self, f"_chat_{provider}", None)
             if chat_method:
@@ -234,13 +401,20 @@ class AIClient:
             else:
                 logger.error(f"Unsupported provider: {provider}")
                 return None
-            
-            # Contar tokens de output e update uso
+
+            with self._usage_lock:
+                after = self.token_usage.get(provider, {}).get("total", 0)
+
             if result:
-                output_tokens = self._count_tokens(result)
-                self._update_token_usage(provider, input_tokens, output_tokens)
-                logger.info(f"Resposta recebida ({output_tokens} tokens)")
-            
+                if after > before:
+                    logger.info(f"Resposta recebida ({after - before} tokens, uso da API)")
+                else:
+                    # Provider nao reportou uso: estimar.
+                    input_text = " ".join([msg.get("content", "") for msg in messages])
+                    output_tokens = self._count_tokens(result)
+                    self._update_token_usage(provider, self._count_tokens(input_text), output_tokens)
+                    logger.info(f"Resposta recebida (~{output_tokens} tokens, estimativa)")
+
             return result
             
         except Exception as e:
@@ -251,23 +425,28 @@ class AIClient:
                          base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar with OpenRouter API"""
         url = f"{base_url}/chat/completions"
-        
+
         payload = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens
         }
-        
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": "https://github.com/1400015/linux_ai",
             "X-Title": "Linux AI Assistant"
         }
-        
+
         try:
             response = self._make_request(url, payload, headers, timeout)
-            data = response.json()
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("openrouter", data)
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON da OpenRouter: {e}")
@@ -279,6 +458,23 @@ class AIClient:
             logger.error(f"Erro na OpenRouter: {e}")
             return None
     
+    def _google_safety_settings(self):
+        """Definicoes de seguranca da Google.
+
+        Por omissao NAO enviamos `safetySettings`: a API aplica os seus
+        proprios filtros. `disable_safety_filters: true` no config permite
+        desliga-los explicitamente.
+        """
+        if not self.config.get("api.providers.google_ai_studio.disable_safety_filters", False):
+            return []
+        logger.warning("Filtros de seguranca da Google AI Studio desativados por configuracao")
+        return [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+
     def _chat_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
                                base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar with Google AI Studio API"""
@@ -297,25 +493,24 @@ class AIClient:
             "contents": google_messages,
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-                "stopSequences": ["\n\n"]
+                "maxOutputTokens": max_tokens
             },
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
+            "safetySettings": self._google_safety_settings()
         }
-        
+
         try:
             response = self._make_request(url, payload, timeout=timeout)
-            data = response.json()
-            
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("google_ai_studio", data)
+
             if not data.get("candidates"):
                 logger.warning("Nenhum candidato na response da Google AI Studio")
                 return ""
-            
+
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON da Google AI Studio: {e}")
@@ -327,60 +522,68 @@ class AIClient:
             logger.error(f"Erro na Google AI Studio: {e}")
             return None
     
+    @staticmethod
+    def _split_anthropic_messages(messages: List[Dict[str, str]]):
+        """Separar o prompt de sistema e converter os restantes papeis.
+
+        A Anthropic exige `system` como campo de topo e apenas aceita
+        `user`/`assistant` no array `messages`.
+        """
+        system_parts = []
+        converted = []
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "system":
+                system_parts.append(content)
+            elif role in ("user", "assistant"):
+                converted.append({"role": role, "content": content})
+        return "\n\n".join(system_parts), converted
+
     def _chat_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar with Anthropic Claude API"""
-        # Get version da API do modelo
-        api_version = "2023-06-01"  # Default for Claude
-        if "claude-3" in model:
-            api_version = "2024-03-07"
-        
         url = f"{base_url}/messages"
-        
-        # Converter messages for the formato da Anthropic
-        anthropic_messages = []
-        for msg in messages:
-            role = msg["role"]
-            # Anthropic uses "user" and "assistant" (not "system")
-            if role == "system":
-                role = "assistant"  # ou create a message de system separada
-            anthropic_messages.append({
-                "role": role,
-                "content": msg["content"]
-            })
-        
+        system_prompt, anthropic_messages = self._split_anthropic_messages(messages)
+
         payload = {
             "model": model,
             "messages": anthropic_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "anthropic_version": api_version
         }
-        
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        # `anthropic-version` e um header obrigatorio; `x-api-key` e a autenticacao.
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
-            "x-api-key": api_key
         }
-        
+
         try:
             response = self._make_request(url, payload, headers, timeout)
-            data = response.json()
-            
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("anthropic", data)
+
             if data.get("type") == "error":
                 logger.error(f"Erro da Anthropic: {data.get('error', {}).get('message', 'Unknown')}")
                 return None
-            
+
             # Get content da primeira resposta
-            if data.get("content"):
-                # Se for a lista, pegar o primeiro
-                if isinstance(data["content"], list):
-                    for content in data["content"]:
-                        if content.get("type") == "text":
-                            return content.get("text", "")
-                else:
-                    return data["content"].get("text", "")
-            
+            content = data.get("content")
+            if isinstance(content, list):
+                texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+                return "".join(texts)
+            if isinstance(content, dict):
+                return content.get("text", "")
+            if content:
+                return ""
             return ""
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON da Anthropic: {e}")
@@ -411,12 +614,17 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout)
-            data = response.json()
-            
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("mistral", data)
+
             if not data.get("choices"):
                 logger.warning("Nenhuma escolha na response da Mistral")
                 return ""
-            
+
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON da Mistral: {e}")
@@ -447,12 +655,17 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout)
-            data = response.json()
-            
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("groq", data)
+
             if not data.get("choices"):
                 logger.warning("Nenhuma escolha na response do Groq")
                 return ""
-            
+
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON do Groq: {e}")
@@ -494,12 +707,17 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout)
-            data = response.json()
-            
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("cohere", data)
+
             if not data.get("response"):
                 logger.warning("Nenhuma response da Cohere")
                 return ""
-            
+
             return data["response"]
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON da Cohere: {e}")
@@ -511,21 +729,26 @@ class AIClient:
             logger.error(f"Erro na Cohere: {e}")
             return None
     
-    def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, base_url: str,
-                        temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+    def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                        base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Comunicar with modelo local (Ollama, etc)"""
         url = f"{base_url}/chat/completions"
-        
+
         payload = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens
         }
-        
+
         try:
             response = self._make_request(url, payload, timeout=timeout)
-            data = response.json()
+            try:
+                data = response.json()
+            finally:
+                response.close()
+
+            self._record_usage("local_llm", data)
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
             logger.error(f"Erro a parsear JSON do modelo local: {e}")
@@ -608,21 +831,10 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data: "):
-                        data_str = decoded_line[6:]
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if "choices" in data and len(data["choices"]) > 0:
-                                    content = data["choices"][0].get("delta", {}).get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                continue
+            try:
+                yield from self._iter_sse_openai_style(response, "openrouter")
+            finally:
+                response.close()
         except Exception as e:
             logger.error(f"Erro no stream OpenRouter: {e}")
             yield f"Erro no stream: {e}"
@@ -630,53 +842,32 @@ class AIClient:
     def _stream_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with Anthropic Claude"""
-        api_version = "2023-06-01"
-        if "claude-3" in model:
-            api_version = "2024-03-07"
-        
         url = f"{base_url}/messages"
-        
-        anthropic_messages = []
-        for msg in messages:
-            role = msg["role"]
-            if role == "system":
-                role = "assistant"
-            anthropic_messages.append({
-                "role": role,
-                "content": msg["content"]
-            })
-        
+
+        system_prompt, anthropic_messages = self._split_anthropic_messages(messages)
+
         payload = {
             "model": model,
             "messages": anthropic_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "anthropic_version": api_version,
             "stream": True
         }
-        
+        if system_prompt:
+            payload["system"] = system_prompt
+
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
-            "x-api-key": api_key
         }
         
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data: "):
-                        data_str = decoded_line[6:]
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if data.get("type") == "message_delta":
-                                    if data.get("delta", {}).get("type") == "text_delta":
-                                        yield data["delta"]["text"]
-                            except json.JSONDecodeError:
-                                continue
+            try:
+                yield from self._iter_sse_anthropic(response)
+            finally:
+                response.close()
         except Exception as e:
             logger.error(f"Erro no stream Anthropic: {e}")
             yield f"Erro no stream: {e}"
@@ -701,21 +892,10 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data: "):
-                        data_str = decoded_line[6:]
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if "choices" in data and len(data["choices"]) > 0:
-                                    content = data["choices"][0].get("delta", {}).get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                continue
+            try:
+                yield from self._iter_sse_openai_style(response, "mistral")
+            finally:
+                response.close()
         except Exception as e:
             logger.error(f"Erro no stream Mistral: {e}")
             yield f"Erro no stream: {e}"
@@ -740,21 +920,10 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data: "):
-                        data_str = decoded_line[6:]
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if "choices" in data and len(data["choices"]) > 0:
-                                    content = data["choices"][0].get("delta", {}).get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                continue
+            try:
+                yield from self._iter_sse_openai_style(response, "groq")
+            finally:
+                response.close()
         except Exception as e:
             logger.error(f"Erro no stream Groq: {e}")
             yield f"Erro no stream: {e}"
@@ -787,28 +956,19 @@ class AIClient:
         
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data: "):
-                        data_str = decoded_line[6:]
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if "text" in data:
-                                    yield data["text"]
-                            except json.JSONDecodeError:
-                                continue
+            try:
+                yield from self._iter_sse_cohere(response)
+            finally:
+                response.close()
         except Exception as e:
             logger.error(f"Erro no stream Cohere: {e}")
             yield f"Erro no stream: {e}"
     
-    def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, base_url: str,
-                          temperature: float, max_tokens: int, timeout: int):
+    def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                          base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with modelo local"""
         url = f"{base_url}/chat/completions"
-        
+
         payload = {
             "model": model,
             "messages": messages,
@@ -816,24 +976,13 @@ class AIClient:
             "max_tokens": max_tokens,
             "stream": True
         }
-        
+
         try:
             response = self._make_request(url, payload, timeout=timeout, stream=True)
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data: "):
-                        data_str = decoded_line[6:]
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if "choices" in data and len(data["choices"]) > 0:
-                                    content = data["choices"][0].get("delta", {}).get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                continue
+            try:
+                yield from self._iter_sse_openai_style(response, "local_llm")
+            finally:
+                response.close()
         except Exception as e:
             logger.error(f"Erro no stream do modelo local: {e}")
             yield f"Erro no stream: {e}"

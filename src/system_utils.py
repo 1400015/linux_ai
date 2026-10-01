@@ -12,6 +12,10 @@ import logging
 # Configurar logger
 logger = logging.getLogger(__name__)
 
+# Comandos cujo argumento final é um caminho de ficheiro. Para estes, o
+# caminho passa por `allowed_edit_dirs` tal como `read_file`/`write_file`.
+_FILE_ARG_COMMANDS = {"cat", "head", "tail", "less", "more", "file", "stat"}
+
 
 class SystemUtils:
     """Utilities to interact with the Linux system"""
@@ -42,23 +46,54 @@ class SystemUtils:
             return []
     
     def _validate_path(self, path: str) -> bool:
-        """Validate if a path is allowed"""
+        """Validate if a path is inside one of the allowed directories.
+
+        Both sides are resolved with `realpath` so that relative components
+        ("/etc/../root") and symlinks cannot escape, and compared with
+        `commonpath` so that a sibling sharing a name prefix
+        ("/etcfoo" vs "/etc") is not accepted.
+        """
         try:
-            # Normalizar path
-            path = os.path.normpath(path)
-            path = os.path.abspath(path)
-            
-            # Check if it is in allowed directories
+            real = os.path.realpath(os.path.expanduser(path))
+
             for allowed_dir in self.allowed_edit_dirs:
-                allowed_dir = os.path.normpath(allowed_dir)
-                if path.startswith(allowed_dir):
-                    return True
-            
+                allowed_real = os.path.realpath(os.path.expanduser(allowed_dir))
+                try:
+                    if os.path.commonpath([real, allowed_real]) == allowed_real:
+                        return True
+                except ValueError:
+                    # Caminhos em raízes diferentes (ex.: montagens distintas)
+                    continue
+
             logger.warning(f"Path not allowed: {path}")
             return False
         except Exception as e:
             logger.error(f"Erro a validar path: {e}")
             return False
+
+    def _validate_file_args(self, cmd_parts: List[str]) -> bool:
+        """Validate path arguments of file-reading commands.
+
+        Without this, an allowlisted `cat` would bypass `allowed_edit_dirs`
+        entirely (e.g. `cat /etc/shadow`). Only arguments that look like
+        absolute or home-relative paths are checked, so options such as
+        `-n` or `grep`-style patterns keep working.
+        """
+        cmd_base = cmd_parts[0]
+        if cmd_base not in _FILE_ARG_COMMANDS:
+            return True
+
+        for arg in cmd_parts[1:]:
+            if arg.startswith("-") or arg == "/dev/stdin":
+                continue
+            if not (arg.startswith("/") or arg.startswith("~")):
+                continue
+            if not self._validate_path(arg):
+                logger.warning(
+                    f"Argumento fora das diretorias permitidas para '{cmd_base}': {arg}"
+                )
+                return False
+        return True
     
     def get_system_info(self) -> Dict[str, str]:
         """Get system information"""
@@ -224,6 +259,10 @@ class SystemUtils:
             logger.warning(f"Command not allowed: {cmd_base}")
             return False, f"Command not allowed: {cmd_base}"
         
+        # Comandos que leem ficheiros tambem respeitam allowed_edit_dirs
+        if not self._validate_file_args(cmd_parts):
+            return False, f"Path not allowed: {cmd_base}"
+
         try:
             logger.info(f"A executar comando: {' '.join(cmd_parts)}")
             
@@ -277,6 +316,10 @@ class SystemUtils:
         if cmd_base not in self.allowed_commands:
             return False, f"Command not allowed: {cmd_base}"
         
+        # Comandos que leem ficheiros tambem respeitam allowed_edit_dirs
+        if not self._validate_file_args(cmd_parts):
+            return False, f"Path not allowed: {cmd_base}"
+
         try:
             if password:
                 # Usar sudo with password
@@ -752,33 +795,64 @@ class SystemUtils:
         return info
     
     def search_files(self, search_term: str, search_path: str = "/", max_results: int = 20) -> List[str]:
-        """
-        Procurar ficheiros no sistema
-        
+        """Procurar ficheiros no sistema
+
         Args:
             search_term: Termo a procurar
             search_path: Directory to search in
             max_results: Maximum number of results
-            
+
         Returns:
             Lista de caminhos de ficheiros
         """
         results = []
-        
+
         if not search_term or not isinstance(search_term, str):
             return results
-        
+
         try:
-            # Usar find for procurar
-            cmd = f"find {search_path} -type f -name '*{search_term}*' 2>/dev/null | head -n {max_results}"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-            
-            if result.returncode == 0:
-                results = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            max_results = max(1, int(max_results))
+        except (TypeError, ValueError):
+            max_results = 20
+
+        try:
+            root = os.path.realpath(os.path.expanduser(search_path))
+            if not os.path.isdir(root):
+                logger.warning(f"Diretorio invalido para pesquisa: {search_path}")
+                return results
+
+            # Argumentos em lista: `search_term` nunca e interpretado pelo shell.
+            proc = subprocess.Popen(
+                ["find", root, "-type", "f", "-name", f"*{search_term}*"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            try:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if line:
+                        results.append(line)
+                        if len(results) >= max_results:
+                            break
+            finally:
+                # `find` continua a correr em arvores grandes: encerrar sempre
+                # e fechar o pipe para não esgotar descritores de ficheiro.
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                if proc.stdout is not None:
+                    proc.stdout.close()
+
+            return results
+        except FileNotFoundError:
+            logger.warning("`find` nao esta instalado; pesquisa de ficheiros indisponivel")
+            return results
         except Exception as e:
             logger.error(f"Erro ao procurar ficheiros: {e}")
-        
-        return results
+            return results
     
     def get_file_info(self, filepath: str) -> Dict[str, str]:
         """Get information about a file"""

@@ -60,10 +60,6 @@ class TestPreviewDiff(unittest.TestCase):
             os.unlink(path)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestI18n(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, SRC_DIR)
@@ -89,3 +85,7 @@ class TestI18n(unittest.TestCase):
         import i18n
         i18n.set_language("xyz")
         self.assertEqual(i18n._("Settings"), "Settings")
+
+
+if __name__ == "__main__":
+    unittest.main()
