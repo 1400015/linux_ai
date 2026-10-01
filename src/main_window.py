@@ -1022,6 +1022,43 @@ class MainWindow(Gtk.Window):
         api_key_entry.set_text(self.config.get_api_key(current_provider) or "")
         api_box.pack_start(api_key_entry, False, False, 0)
         
+        # Warn when an environment variable overrides the key: env vars take
+        # precedence over config.json, so saving here would look like a no-op.
+        api_key_warning = Gtk.Label()
+        api_key_warning.set_halign(Gtk.Align.START)
+        api_key_warning.set_line_wrap(True)
+        api_key_warning.set_no_show_all(True)
+        api_box.pack_start(api_key_warning, False, False, 0)
+        
+        # Shown only while an env override is active: brings back the value
+        # that is actually stored in config.json, so it can be inspected.
+        reload_key_btn = Gtk.Button(label=_("Reload saved keys"))
+        reload_key_btn.set_halign(Gtk.Align.START)
+        reload_key_btn.set_no_show_all(True)
+        api_box.pack_start(reload_key_btn, False, False, 0)
+        
+        # Persist the effective (env) key into config.json, so removing the
+        # environment variable later still leaves a working key behind.
+        copy_key_btn = Gtk.Button(label=_("Copy effective key to config"))
+        copy_key_btn.set_halign(Gtk.Align.START)
+        copy_key_btn.set_no_show_all(True)
+        api_box.pack_start(copy_key_btn, False, False, 0)
+        
+        def _refresh_key_warning(provider):
+            override = self.config.get_api_key_env_override(provider)
+            if override:
+                api_key_warning.set_text(
+                    _("Note: the {var} environment variable overrides this key.")
+                    .format(var=override)
+                )
+                api_key_warning.show()
+                reload_key_btn.show()
+                copy_key_btn.show()
+            else:
+                api_key_warning.hide()
+                reload_key_btn.hide()
+                copy_key_btn.hide()
+        
         # The entry always holds the key of the provider shown in the combo.
         # Without this, switching provider saved the previous provider's key
         # under the newly selected provider's name (the entry was never
@@ -1033,8 +1070,31 @@ class MainWindow(Gtk.Window):
             if selected:
                 loaded_provider[0] = selected
                 api_key_entry.set_text(self.config.get_api_key(selected) or "")
+                _refresh_key_warning(selected)
+        
+        def on_reload_saved_keys(button):
+            # Ignore the env override on purpose: show the stored value.
+            api_key_entry.set_text(
+                self.config.get_stored_api_key(loaded_provider[0])
+            )
+        
+        def on_copy_effective_key(button):
+            provider = loaded_provider[0]
+            # While the env var is set, get_api_key() returns it: that is the
+            # key the application is actually using.
+            effective = self.config.get_api_key(provider) or ""
+            self.config.set_api_key(provider, effective)
+            self.config.save()
+            api_key_entry.set_text(effective)
+            logger.info("Effective API key copied to config.json for %s", provider)
+            self.show_notification(
+                "Linux AI Assistant", _("Key copied to config.json")
+            )
         
         provider_combo.connect("changed", on_provider_changed)
+        reload_key_btn.connect("clicked", on_reload_saved_keys)
+        copy_key_btn.connect("clicked", on_copy_effective_key)
+        _refresh_key_warning(current_provider)
         
         notebook.append_page(api_box, Gtk.Label(label="API"))
         

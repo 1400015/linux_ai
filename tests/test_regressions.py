@@ -704,5 +704,77 @@ class TestFileBlockSandbox(unittest.TestCase):
         self.assertIn("not allowed", msg.lower())
 
 
+# --- Bug 22: UI de configuracoes nao avisava de overrides por env -------
+
+class TestApiKeyEnvOverrideReporting(unittest.TestCase):
+    def test_none_when_no_variable_is_set(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertIsNone(config.get_api_key_env_override("openrouter"))
+
+    def test_legacy_variable_is_reported(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "x"}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertEqual(
+                config.get_api_key_env_override("openrouter"),
+                "OPENROUTER_API_KEY",
+            )
+
+    def test_canonical_variable_is_reported(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {
+                    "LINUX_AI_API_PROVIDERS_ANTHROPIC_API_KEY": "x"
+                }, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertEqual(
+                config.get_api_key_env_override("anthropic"),
+                "LINUX_AI_API_PROVIDERS_ANTHROPIC_API_KEY",
+            )
+
+
+# --- Bug 23: "Reload saved keys" deve mostrar o config.json ----------------
+
+class TestStoredApiKeyIgnoresEnvOverride(unittest.TestCase):
+    def test_reload_shows_config_value_not_env_value(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "env-key"}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            config.set_api_key("openrouter", "config-key")
+            # get_api_key() honours the env override (runtime behaviour) ...
+            self.assertEqual(config.get_api_key("openrouter"), "env-key")
+            # ... while the reload helper returns what is stored on disk.
+            self.assertEqual(config.get_stored_api_key("openrouter"), "config-key")
+
+    def test_stored_key_defaults_to_empty_string(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            self.assertEqual(config.get_stored_api_key("cohere"), "")
+
+
+# --- Bug 24: copiar a chave efetiva para o config.json ---------------------
+
+class TestCopyEffectiveKeyToConfig(unittest.TestCase):
+    def test_legacy_override_is_persisted_into_config(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "env-key"}, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            config.set_api_key("openrouter", "old-config-key")
+            # What the "Copy effective key to config" button does:
+            config.set_api_key("openrouter", config.get_api_key("openrouter"))
+            config.save()
+            self.assertEqual(config.get_stored_api_key("openrouter"), "env-key")
+
+    def test_canonical_override_is_persisted_into_config(self):
+        with tempfile.TemporaryDirectory() as d, \
+                patch.dict(os.environ, {
+                    "LINUX_AI_API_PROVIDERS_ANTHROPIC_API_KEY": "canon-key"
+                }, clear=True):
+            config = ConfigManager(str(Path(d) / "config.json"))
+            config.set_api_key("anthropic", config.get_api_key("anthropic"))
+            config.save()
+            self.assertEqual(config.get_stored_api_key("anthropic"), "canon-key")
+
+
 if __name__ == "__main__":
     unittest.main()

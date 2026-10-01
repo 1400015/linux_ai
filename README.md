@@ -127,7 +127,9 @@ The `.env` file is loaded from the same directory as `config.json` without
 replacing existing process environment variables. Empty API key entries fall
 back to the keys saved through the settings dialog. Canonical environment names
 such as `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` take precedence over the
-legacy `OPENROUTER_API_KEY` name.
+legacy `OPENROUTER_API_KEY` name. When an environment variable is active, the
+**Settings → API** tab warns about it and offers **Reload saved keys** and
+**Copy effective key to config**; see [Manual QA: API settings tab](#manual-qa-api-settings-tab).
 
 GTK bindings come from the system packages; use `--system-site-packages` so the
 virtual environment can import them. Do not install the unrelated PyPI `gi`
@@ -417,6 +419,51 @@ MIT License - see [LICENSE](LICENSE) for more details.
 python -m unittest discover -s tests -v
 python -m src.cli --help
 for script in run.sh scripts/*.sh; do bash -n "$script" || exit; done
+```
+
+### Manual QA: API settings tab
+
+The **Settings → API** tab manages the default provider and its key. Since
+environment variables override `config.json`, check both the normal flow and
+the override flow. Open the dialog from `Menu → Settings` and use the helper
+below to inspect what is on disk at any point:
+
+```bash
+python - <<'PY'
+import json, pathlib
+p = pathlib.Path.home() / ".config" / "linux_ai_assistant" / "config.json"
+d = json.loads(p.read_text())
+print("default:", d["api"]["default_provider"])
+print({k: v.get("api_key") for k, v in d["api"]["providers"].items()})
+PY
+```
+
+1. **The key loads for the current provider.** The *AI Provider* combo shows
+   `api.default_provider` and the key field is pre-filled with that provider's
+   key.
+2. **Switching provider reloads the key.** Save a distinct key on two
+   providers, then switch between them in the combo: the field must show each
+   provider's own key (never the previous one).
+3. **Saving writes to the right provider.** Select provider B, type a new key
+   and click **OK**. `api.default_provider` becomes B and only B's key changes;
+   the other provider's key must stay untouched.
+4. **Env overrides are announced.** With `OPENROUTER_API_KEY` (or the canonical
+   `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY`) exported, open Settings and
+   select OpenRouter. The warning *“the … environment variable overrides this
+   key”* appears together with two buttons that are hidden otherwise:
+   - **Reload saved keys** fills the field with the value stored in
+     `config.json`, ignoring the env override.
+   - **Copy effective key to config** writes the effective (env) value into
+     `config.json` and notifies *“Key copied to config.json”*.
+5. **The app picks changes up live.** After saving, send a message without
+   restarting the app: `chat()`/`stream_chat()` read `api.default_provider` on
+   every request.
+
+Steps 2, 3 and 4 are also covered by the automated regression tests:
+
+```bash
+python -m unittest tests.test_regressions.TestStoredApiKeyIgnoresEnvOverride -v
+python -m unittest tests.test_regressions.TestCopyEffectiveKeyToConfig -v
 ```
 
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).

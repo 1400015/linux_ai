@@ -392,6 +392,22 @@ class ConfigManager:
             return self._decrypt_value(value)
         
         return value
+
+    def get_config_value(self, key: str, default: Any = None) -> Any:
+        """Like `get()`, but ignores environment-variable overrides.
+
+        The Settings dialog uses this to show the value that is actually
+        stored in config.json even when an env var is shadowing it.
+        """
+        value = self.config
+        for k in key.split('.'):
+            if isinstance(value, dict) and k in value:
+                value = value[k]
+            else:
+                return default
+        if "api_key" in key and isinstance(value, str):
+            return self._decrypt_value(value)
+        return value
     
     def set(self, key: str, value: Any):
         """
@@ -515,6 +531,29 @@ class ConfigManager:
         """Set API key for a provider"""
         self.set(f"api.providers.{provider}.api_key", api_key)
         logger.info(f"API key updated for {provider}")
+
+    def get_api_key_env_override(self, provider: str) -> Optional[str]:
+        """Name of the environment variable overriding `provider`'s key.
+
+        Environment variables take precedence over config.json, so when one
+        is set the value typed in Settings has no effect. Returning the name
+        lets the UI tell the user instead of silently keeping the old key.
+        """
+        legacy_names = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "google_ai_studio": "GOOGLE_AI_STUDIO_KEY",
+        }
+        legacy_name = legacy_names.get(provider)
+        if legacy_name and os.environ.get(legacy_name):
+            return legacy_name
+        canonical = self._env_name(f"api.providers.{provider}.api_key")
+        if os.environ.get(canonical) is not None:
+            return canonical
+        return None
+
+    def get_stored_api_key(self, provider: str) -> str:
+        """The key persisted in config.json, ignoring env overrides."""
+        return self.get_config_value(f"api.providers.{provider}.api_key") or ""
     
     def get_window_geometry(self) -> Dict[str, int]:
         """Get window geometry"""
