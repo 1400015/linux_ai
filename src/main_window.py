@@ -1684,7 +1684,8 @@ Respond clearly and concisely in English."""
                               response_text, False)
                 if offline_reply.commands and not cancel_event.is_set():
                     GLib.idle_add(self._offer_offline_commands,
-                                  offline_reply.commands)
+                                  offline_reply.commands, request_id,
+                                  cancel_event)
 
             cancelled = cancel_event.is_set()
             GLib.idle_add(self._finalize_response, request_id, response_text, cancelled)
@@ -1706,9 +1707,14 @@ Respond clearly and concisely in English."""
             "Unknown provider", "Invalid message", "Empty message",
         ))
 
-    def _offer_offline_commands(self, commands):
+    def _offer_offline_commands(self, commands, request_id, cancel_event):
         """Ask for confirmation before running privileged offline commands."""
         if not commands:
+            return False
+        # A newer request may already be active by the time this idle
+        # callback runs: confirming a superseded turn would run commands
+        # the user no longer expects.
+        if request_id != self._active_request or cancel_event.is_set():
             return False
 
         dialog = Gtk.Dialog(
@@ -1742,21 +1748,39 @@ Respond clearly and concisely in English."""
 
         threading.Thread(
             target=self._run_offline_commands,
-            args=(commands,),
+            args=(commands, request_id, cancel_event),
             daemon=True,
         ).start()
         return False
 
-    def _run_offline_commands(self, commands):
+    def _run_offline_commands(self, commands, request_id, cancel_event):
         """Run the confirmed commands via pkexec (worker thread)."""
         for command in commands:
+            # Stop as soon as the request is cancelled or superseded:
+            # pkexec prompts must not pop up for a stale turn.
+            if cancel_event.is_set() or request_id != self._active_request:
+                logger.info("Skipping offline command: request was cancelled")
+                return False
             ok, output = offline_assistant.OfflineAssistant.run_privileged(
                 command
             )
             detail = output or (_("Done.") if ok else _("Failed."))
-            GLib.idle_add(
-                self._add_system_message, f"$ {command.display()}\n{detail}"
+            result = f"$ {command.display()}\n{detail}"
+            GLib.idle_add(self._record_offline_result, request_id, result)
+        return False
+
+    def _record_offline_result(self, request_id, result):
+        """Show a command result and keep it in the conversation context.
+
+        Without the history append, follow-up questions had no idea what
+        was executed (the text only reached the chat buffer).
+        """
+        self._add_system_message(result)
+        if request_id == self._active_request:
+            self.conversation_history.append(
+                {"role": "assistant", "content": result}
             )
+            self._save_message_to_history("assistant", result)
         return False
 
     def _finalize_response(self, request_id: int, response_text: str,

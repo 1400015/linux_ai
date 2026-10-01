@@ -1002,3 +1002,32 @@ class TestUsageSaveDebounce(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOfflineCommandCancellation(unittest.TestCase):
+    """The offline command path must not outlive a cancelled request.
+
+    main_window needs GTK, which is not available in every environment,
+    so the source is inspected instead of importing the module.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / "src" / "main_window.py").read_text()
+
+    def test_record_offline_result_appends_to_history(self):
+        source = self.source
+        self.assertIn("def _record_offline_result", source)
+        self.assertIn("conversation_history.append", source)
+        self.assertIn("request_id == self._active_request", source)
+
+    def test_run_offline_commands_checks_cancel_event(self):
+        source = self.source
+        self.assertIn("def _run_offline_commands", source)
+        self.assertIn("cancel_event.is_set()", source)
+        self.assertIn("request_id != self._active_request", source)
+
+    def test_offer_dialog_skips_stale_requests(self):
+        source = self.source
+        self.assertIn("def _offer_offline_commands", source)
+        self.assertIn("request_id != self._active_request", source)
