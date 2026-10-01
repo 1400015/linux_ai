@@ -3,6 +3,7 @@ import os
 import json
 import time
 import re
+import queue
 import threading
 from typing import Optional, Dict
 from pathlib import Path
@@ -101,16 +102,17 @@ class MainWindow(Gtk.Window):
         self.set_keep_above(config_manager.get("app.always_on_top", True))
         self.stick()
         
-        # Docked mode: pin to an edge and reserve screen space
+        # Docked mode: pin to an edge and reserve screen space.
+        # X11 struts need a realized GdkWindow, so the actual application
+        # happens in _on_realize_dock() (below).
+        self._dock_edge = config_manager.get("app.dock_edge", "right")
+        self._dock_width = config_manager.get("app.width", 400)
+        self.dock_method = None
         if config_manager.get("app.dock_mode", "float") == "dock":
             self.set_decorated(False)
-            self.dock_method = dock.apply_dock(
-                self,
-                config_manager.get("app.dock_edge", "right"),
-                config_manager.get("app.width", 400)
-            )
+            self.connect("realize", self._on_realize_dock)
         else:
-            self.dock_method = None
+            self.set_decorated(True)
         
         # Make window resizable
         self.set_resizable(True)
@@ -124,17 +126,26 @@ class MainWindow(Gtk.Window):
         # State variables
         self.expert_mode = False
         self.conversation_history = []
-        self.current_response = ""
         self.streaming = False
         self.is_loading = False
-        self.cancel_streaming = False
-        # `_process_message` runs in a thread: `cancel_streaming` and `streaming`
-        # are read and written in both threads. A threading Event provides
-        # shared memory instead of loose booleans.
+        # Per-request state: each send gets a new id and its own cancel event,
+        # so a cancelled worker can never re-arm itself or corrupt the next
+        # request (see _process_message / _finalize_response).
+        self._request_seq = 0
+        self._active_request = 0
         self._cancel_event = threading.Event()
-        self._state_lock = threading.Lock()
+        # Settings dialog currently open (or None); lets the "Manage Themes"
+        # button switch tabs instead of opening a second dialog.
+        self._settings_notebook = None
         # Interval (start, end) of the "Thinking..." placeholder in the buffer
         self._loading_span = None
+        # History is persisted from a single background writer (FIFO), so the
+        # GTK main loop never blocks on a full file rewrite per message.
+        self._history_queue = queue.SimpleQueue()
+        self._history_writer = threading.Thread(
+            target=self._history_writer_loop, daemon=True
+        )
+        self._history_writer.start()
         
         # Create interface
         self._create_ui()
@@ -163,6 +174,79 @@ class MainWindow(Gtk.Window):
         except Exception as e:
             logger.warning(f"Could not enable notifications: {e}")
     
+    def _on_realize_dock(self, widget):
+        """Apply dock struts once the GdkWindow exists (X11 needs it)."""
+        if self.dock_method == "layer-shell":
+            return  # already applied pre-realize on Wayland
+        self.dock_method = dock.apply_dock(self, self._dock_edge, self._dock_width)
+        logger.info(f"Dock applied via {self.dock_method}")
+
+    def _reapply_dock(self):
+        """Re-apply dock/float settings after they change in the dialog."""
+        mode = self.config.get("app.dock_mode", "float")
+        self._dock_edge = self.config.get("app.dock_edge", "right")
+        self._dock_width = self.config.get("app.width", 400)
+        if mode == "dock":
+            self.set_decorated(False)
+            if self.get_realized():
+                self.dock_method = dock.apply_dock(self, self._dock_edge, self._dock_width)
+                logger.info(f"Dock re-applied via {self.dock_method}")
+            # otherwise _on_realize_dock will handle it
+        else:
+            self.set_decorated(True)
+            dock.apply_float(self)
+            self.dock_method = None
+            logger.info("Dock removed (floating mode)")
+
+    def _apply_feature_toggles(self):
+        """Show/hide the feature buttons according to features.* settings."""
+        if hasattr(self, "capture_btn"):
+            self.capture_btn.set_visible(self.config.get("features.screen_capture", True))
+        if hasattr(self, "expert_btn"):
+            self.expert_btn.set_visible(self.config.get("features.expert_mode", True))
+
+    def _history_writer_loop(self):
+        """Single background writer for history.json (FIFO order, atomic)."""
+        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        while True:
+            entry = self._history_queue.get()
+            if entry is None:  # sentinel: drain requested at shutdown
+                return
+            temp_path = None
+            try:
+                history = []
+                if history_file.exists():
+                    with open(history_file, 'r', encoding='utf-8') as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, list):
+                        history = loaded
+                history.append(entry)
+                # Keep the last 1000 messages
+                history = history[-1000:]
+                history_file.parent.mkdir(parents=True, exist_ok=True)
+                temp_path = history_file.with_name(history_file.name + ".tmp")
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    json.dump(history, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, history_file)
+                logger.debug(f"Message saved to history: {entry.get('role')}")
+            except Exception as e:
+                logger.error(f"Error saving history: {e}")
+                if temp_path is not None:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+
+    def close_history_writer(self, timeout: float = 1.0):
+        """Flush pending history writes and stop the writer thread."""
+        try:
+            self._history_queue.put(None)
+            self._history_writer.join(timeout)
+        except RuntimeError:
+            pass
+
     def show_notification(self, title: str, message: str, icon: str = "dialog-information"):
         """Show system notification"""
         if self.notifications_enabled and notify2 is not None:
@@ -178,7 +262,7 @@ class MainWindow(Gtk.Window):
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
         
-        # Ctrl+Enter to send
+        # Ctrl+Enter also sends (plain Enter already activates the entry)
         key, mod = Gtk.accelerator_parse("<Control>Return")
         self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
         
@@ -397,7 +481,7 @@ class MainWindow(Gtk.Window):
         # Menu button
         menu_btn = Gtk.Button.new_from_icon_name("open-menu", Gtk.IconSize.MENU)
         menu_btn.connect("clicked", self.on_menu_clicked)
-        menu_btn.set_tooltip_text("Menu")
+        menu_btn.set_tooltip_text(_("Menu"))
         header.pack_start(menu_btn, False, False, 0)
         
         # Title
@@ -414,13 +498,13 @@ class MainWindow(Gtk.Window):
         # Close button
         close_btn = Gtk.Button.new_from_icon_name("window-close", Gtk.IconSize.MENU)
         close_btn.connect("clicked", lambda btn: self.on_close_clicked())
-        close_btn.set_tooltip_text("Fechar")
+        close_btn.set_tooltip_text(_("Close"))
         header.pack_end(close_btn, False, False, 0)
         
         # Minimize button
         minimize_btn = Gtk.Button.new_from_icon_name("window-minimize", Gtk.IconSize.MENU)
         minimize_btn.connect("clicked", lambda btn: self.iconify())
-        minimize_btn.set_tooltip_text("Minimizar")
+        minimize_btn.set_tooltip_text(_("Minimize"))
         header.pack_end(minimize_btn, False, False, 0)
         
         # Chat area
@@ -472,7 +556,9 @@ class MainWindow(Gtk.Window):
         
         # Entry for input
         self.input_entry = Gtk.Entry()
-        self.input_entry.set_placeholder_text(_("Type your message... (Ctrl+Enter to send)"))
+        # Both plain Enter and Ctrl+Enter send (the accelerator below also
+        # triggers "activate"), so the old "Ctrl+Enter" hint was misleading.
+        self.input_entry.set_placeholder_text(_("Type your message... (Enter to send)"))
         self.input_entry.connect("activate", self.on_input_activate)
         self.input_entry.set_hexpand(True)
         input_area.pack_start(self.input_entry, True, True, 0)
@@ -484,30 +570,34 @@ class MainWindow(Gtk.Window):
         # Cancel button
         self.cancel_btn = Gtk.Button.new_from_icon_name("process-stop", Gtk.IconSize.MENU)
         self.cancel_btn.connect("clicked", self.on_cancel_streaming)
-        self.cancel_btn.set_tooltip_text("Cancelar")
+        self.cancel_btn.set_tooltip_text(_("Cancel"))
         self.cancel_btn.set_sensitive(False)
         button_box.pack_start(self.cancel_btn, False, False, 0)
         
-        # Screen capture button
+        # Screen capture button (hidden when features.screen_capture is off)
         capture_btn = Gtk.Button.new_from_icon_name("camera-photo", Gtk.IconSize.MENU)
         capture_btn.connect("clicked", self.on_capture_screen_clicked)
-        capture_btn.set_tooltip_text("Capture screen (Ctrl+S)")
+        capture_btn.set_tooltip_text(_("Capture screen (Ctrl+S)"))
         button_box.pack_start(capture_btn, False, False, 0)
+        self.capture_btn = capture_btn
         
-        # Expert mode button
+        # Expert mode button (hidden when features.expert_mode is off)
         self.expert_btn = Gtk.Button.new_from_icon_name("system-run", Gtk.IconSize.MENU)
         self.expert_btn.connect("clicked", self.on_expert_mode_toggled)
-        self.expert_btn.set_tooltip_text("Expert Mode (Ctrl+E)")
+        self.expert_btn.set_tooltip_text(_("Expert Mode (Ctrl+E)"))
         button_box.pack_start(self.expert_btn, False, False, 0)
         
         # Send button
         send_btn = Gtk.Button.new_from_icon_name("go-next", Gtk.IconSize.MENU)
         send_btn.connect("clicked", lambda btn: self.on_send_clicked())
-        send_btn.set_tooltip_text("Send (Ctrl+Enter)")
+        send_btn.set_tooltip_text(_("Send (Enter)"))
         button_box.pack_start(send_btn, False, False, 0)
         
+        # Hide the feature buttons that are disabled in settings
+        self._apply_feature_toggles()
+        
         # Add welcome message
-        self._add_system_message("Welcome to Linux AI Assistant!\nType a message or press Ctrl+S to capture the screen.")
+        self._add_system_message(_("Welcome to Linux AI Assistant!\nType a message or press Ctrl+S to capture the screen."))
         
         # Auto-scroll to bottom
         self._scroll_to_bottom()
@@ -549,10 +639,16 @@ class MainWindow(Gtk.Window):
         self._show_config_dialog()
     
     def on_themes_clicked(self, button):
-        """Open theme management dialog"""
-        self._show_config_dialog()
-        # Selecionar o separador de temas
-        # (Done automatically when the dialog opens)
+        """Open the settings dialog on the Themes tab.
+
+        The "Manage Themes" button lives inside the dialog itself, so
+        reopening it would stack a second modal dialog on top of the first.
+        """
+        if self._settings_notebook is None:
+            self._show_config_dialog()
+            return
+        # Themes is the third page (API, Appearance, Themes, Features)
+        self._settings_notebook.set_current_page(2)
     
     def on_add_theme_clicked(self, button):
         """Add a new theme"""
@@ -618,8 +714,13 @@ class MainWindow(Gtk.Window):
         
         if response == Gtk.ResponseType.OK:
             theme_name = name_entry.get_text().strip()
-            if not theme_name:
-                self.show_notification("Linux AI Assistant", "A theme name is required")
+            # The name becomes a file name: reject anything that is not a
+            # simple identifier (path separators, "..", spaces, etc.).
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", theme_name):
+                self.show_notification(
+                    "Linux AI Assistant",
+                    _("A theme name is required (letters, digits, '-' or '_', max 64)")
+                )
                 dialog.destroy()
                 return
             
@@ -662,15 +763,19 @@ class MainWindow(Gtk.Window):
         """Remove the selected theme"""
         selected_row = self.themes_listbox.get_selected_row()
         if not selected_row:
-            self.show_notification("Linux AI Assistant", "No theme selected")
+            self.show_notification("Linux AI Assistant", _("No theme selected"))
             return
         
-        theme_name = selected_row.get_children()[0].get_text()
+        theme_name = getattr(selected_row, "_theme_id", None)
+        if not theme_name:
+            self.show_notification("Linux AI Assistant", _("No theme selected"))
+            return
         
-        # Do not allow removing built-in themes
+        # Do not allow removing built-in themes (they ship with the app,
+        # under the package's themes dir, not the user's)
         predefined_themes = ["dark", "light", "dracula", "solarized-dark"]
         if theme_name in predefined_themes:
-            self.show_notification("Linux AI Assistant", "Cannot remove built-in themes")
+            self.show_notification("Linux AI Assistant", _("Cannot remove built-in themes"))
             return
         
         # Confirm removal
@@ -690,8 +795,13 @@ class MainWindow(Gtk.Window):
             theme_file = themes_dir / f"{theme_name}.json"
             
             try:
-                if theme_file.exists():
-                    theme_file.unlink()
+                # Resolve and confirm the target really is inside the
+                # user's themes dir before deleting.
+                resolved = theme_file.resolve()
+                if resolved.parent != themes_dir.resolve():
+                    raise ValueError(f"Refusing to delete outside themes dir: {resolved}")
+                if resolved.exists():
+                    resolved.unlink()
                     self.show_notification("Linux AI Assistant", f"Theme '{theme_name}' removed")
                     self._populate_themes_list()
             except Exception as e:
@@ -712,6 +822,9 @@ class MainWindow(Gtk.Window):
             description = theme_info.get("description", "") if theme_info else ""
             
             row = Gtk.ListBoxRow()
+            # Keep the file stem on the row: the visible label is the
+            # display name, which may differ from the file name.
+            row._theme_id = theme_name
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             
             name_label = Gtk.Label(label=display_name)
@@ -726,6 +839,7 @@ class MainWindow(Gtk.Window):
             
             row.add(box)
             self.themes_listbox.add(row)
+            row.show_all()
     
     def on_history_clicked(self, item):
         """Show conversation history"""
@@ -760,7 +874,9 @@ class MainWindow(Gtk.Window):
         title.set_use_markup(True)
         box.pack_start(title, False, False, 0)
         
-        # Tokens by provider
+        # Tokens by provider. The labels are kept so the reset button can
+        # refresh them in place instead of leaving stale numbers on screen.
+        token_labels = []
         for provider, usage in token_usage.items():
             provider_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
             
@@ -773,10 +889,15 @@ class MainWindow(Gtk.Window):
             provider_box.pack_end(tokens_label, True, True, 0)
             
             box.pack_start(provider_box, False, False, 0)
+            token_labels.append((provider, tokens_label))
         
         # Button to reset statistics
+        def _reset_stats(btn):
+            self.ai_client.reset_token_usage()
+            for provider, tokens_label in token_labels:
+                tokens_label.set_text("Input: 0, Output: 0, Total: 0")
         reset_btn = Gtk.Button(label=_("Reset Statistics"))
-        reset_btn.connect("clicked", lambda btn: self.ai_client.reset_token_usage())
+        reset_btn.connect("clicked", _reset_stats)
         reset_btn.set_halign(Gtk.Align.CENTER)
         box.pack_start(reset_btn, False, False, 0)
         
@@ -818,12 +939,15 @@ class MainWindow(Gtk.Window):
                 buffer = textview.get_buffer()
                 for msg in history:
                     role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
+                    # NB: not named `content` - that already holds the
+                    # dialog's content area (shadowing it broke nothing
+                    # only by luck).
+                    text = msg.get("content", "")
                     timestamp = msg.get("timestamp", 0)
                     
                     timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
                     
-                    buffer.insert(buffer.get_end_iter(), f"[{timestamp_str}] [{role}]\n{content}\n\n")
+                    buffer.insert(buffer.get_end_iter(), f"[{timestamp_str}] [{role}]\n{text}\n\n")
             except Exception as e:
                 logger.error(f"Error loading history: {e}")
                 buffer = textview.get_buffer()
@@ -853,6 +977,9 @@ class MainWindow(Gtk.Window):
         # Notebook for sections
         notebook = Gtk.Notebook()
         content.add(notebook)
+        # Kept so on_themes_clicked can jump to the Themes tab instead of
+        # reopening a second (nested) dialog.
+        self._settings_notebook = notebook
         
         # API section
         api_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -959,7 +1086,9 @@ class MainWindow(Gtk.Window):
         
         # Theme list
         self.themes_listbox = Gtk.ListBox()
-        self.themes_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        # SINGLE (not NONE): with NONE the rows can never be selected and
+        # "Remove Theme" always reports "No theme selected".
+        self.themes_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._populate_themes_list()
         themes_box.pack_start(self.themes_listbox, True, True, 0)
         
@@ -1009,13 +1138,14 @@ class MainWindow(Gtk.Window):
         # Save settings on close
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
-            # Save provider
+            # Save provider (get_active_id() is None when nothing matches)
             new_provider = provider_combo.get_active_id()
-            self.config.set("api.default_provider", new_provider)
-            
-            # Save API key
-            api_key = api_key_entry.get_text()
-            self.config.set_api_key(new_provider, api_key)
+            if new_provider:
+                self.config.set("api.default_provider", new_provider)
+
+                # Save API key
+                api_key = api_key_entry.get_text()
+                self.config.set_api_key(new_provider, api_key)
             
             # Save opacity
             opacity = opacity_scale.get_value()
@@ -1029,16 +1159,22 @@ class MainWindow(Gtk.Window):
             
             # Save theme
             theme = theme_combo.get_active_id()
-            self.config.set("ui.theme", theme)
+            if theme:
+                self.config.set("app.theme", theme)
+                # Rebuild the CSS so the new theme takes effect now
+                self._setup_style()
             
             # Save features
             self.config.set("features.screen_capture", screen_capture_check.get_active())
             self.config.set("features.ocr_enabled", ocr_check.get_active())
             self.config.set("features.expert_mode", expert_check.get_active())
+            self._apply_feature_toggles()
             
             # Save docked mode
             self.config.set("app.dock_mode", "dock" if dock_check.get_active() else "float")
             self.config.set("app.dock_edge", dock_edge_combo.get_active_id() or "right")
+            # Apply the new dock/float setting immediately
+            self._reapply_dock()
             
             # Save settings
             self.config.save()
@@ -1047,6 +1183,7 @@ class MainWindow(Gtk.Window):
             self.show_notification("Linux AI Assistant", _("Settings saved successfully"))
         
         dialog.destroy()
+        self._settings_notebook = None
     
     def _append_message(self, label: str, message: str, tag_name: str):
         """Insert `\\n[label]\\n<message>\\n\\n` and apply `tag_name` to all of it.
@@ -1115,7 +1252,7 @@ class MainWindow(Gtk.Window):
         self._append_message(_('System'), message, "system-message")
 
         self._scroll_to_bottom()
-        logger.info(f"System message: {message}")
+        logger.debug(f"System message: {message}")
 
     def _add_loading_message(self, message: str = None):
         """Add a loading message
@@ -1221,7 +1358,9 @@ class MainWindow(Gtk.Window):
             messages = messages[-max_messages:]
 
         total = sum(len(m["content"]) for m in messages)
-        while len(messages) > 2 and total > max_chars:
+        # Floor of 1 (not 2): with exactly two messages over budget the old
+        # loop never popped, so the character limit was silently ignored.
+        while len(messages) > 1 and total > max_chars:
             removed = messages.pop(0)
             total -= len(removed["content"])
             logger.debug("Context truncated by character budget")
@@ -1229,29 +1368,16 @@ class MainWindow(Gtk.Window):
         return messages
     
     def _save_message_to_history(self, role: str, content: str):
-        """Save message to persistent history"""
-        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
-        try:
-            history = []
-            if history_file.exists():
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-            
-            history.append({
-                "timestamp": time.time(),
-                "role": role,
-                "content": content
-            })
-            
-            # Keep the last 1000 messages
-            history = history[-1000:]
-            
-            with open(history_file, 'w', encoding='utf-8') as f:
-                json.dump(history, f, indent=2, ensure_ascii=False)
-            
-            logger.debug(f"Message saved to history: {role}")
-        except Exception as e:
-            logger.error(f"Error saving history: {e}")
+        """Queue the message for the background history writer.
+
+        The rewrite of history.json happens off the main thread; doing it
+        inline stalled the UI on every message while streaming.
+        """
+        self._history_queue.put({
+            "timestamp": time.time(),
+            "role": role,
+            "content": content
+        })
     
     def _get_context_message(self) -> Optional[Dict[str, str]]:
         """Get context message based on the current mode"""
@@ -1321,21 +1447,38 @@ Respond clearly and concisely in English."""
         # Add the message to the history
         self.conversation_history.append({"role": "user", "content": text})
         
+        # Per-request state: fresh id + cancel event. A worker that is
+        # still draining after a cancel can no longer touch this request.
+        self._request_seq += 1
+        request_id = self._request_seq
+        cancel_event = threading.Event()
+        self._cancel_event = cancel_event
+        self._active_request = request_id
+
         # Update state
         self.is_loading = True
         self.streaming = True
-        self.cancel_streaming = False
-        self._cancel_event.clear()
         self.cancel_btn.set_sensitive(True)
         self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
-        self.status_icon.set_tooltip_text("Processing...")
+        self.status_icon.set_tooltip_text(_("Processing..."))
 
         # Process in a separate thread so the UI is not blocked
-        threading.Thread(target=self._process_message, args=(text,), daemon=True).start()
+        threading.Thread(
+            target=self._process_message,
+            args=(text, request_id, cancel_event),
+            daemon=True,
+        ).start()
 
-    def _process_message(self, message: str):
-        """Process the message and get the AI response."""
+    def _process_message(self, message: str, request_id: int,
+                         cancel_event: threading.Event):
+        """Process the message and get the AI response.
+
+        All UI/history mutations are queued to the main loop with
+        `request_id`, so output from a superseded or cancelled request is
+        dropped instead of corrupting the next turn.
+        """
         GLib.idle_add(self._add_loading_message)
+        response_text = ""
 
         try:
             # Prepare context
@@ -1345,84 +1488,110 @@ Respond clearly and concisely in English."""
             messages = self._build_request_messages()
             full_history = ([context] + messages) if context else messages
 
-            # Get the AI response
-            self.streaming = True
-            self.current_response = ""
-
-            response_text = ""
             for chunk in self.ai_client.stream_chat(full_history):
-                if self._cancel_event.is_set():
+                if cancel_event.is_set():
                     break
 
                 response_text += chunk
-                GLib.idle_add(self._update_ai_message, chunk, True)
+                GLib.idle_add(self._update_ai_message, request_id, chunk, True)
 
-            self.streaming = False
-
-            # Add to the history
-            if not self._cancel_event.is_set():
-                self.conversation_history.append({"role": "assistant", "content": response_text})
-
-                # Offer file writes in expert mode
-                # GTK is not thread-safe: show dialogs from the main loop
-                if self.expert_mode and response_text:
-                    def _offer_blocks():
-                        file_actions.offer_file_blocks(
-                            self, response_text,
-                            lambda msg: GLib.idle_add(self._add_system_message, msg)
-                        )
-                        return False
-                    GLib.idle_add(_offer_blocks)
-
-            # Update UI
-            GLib.idle_add(self._on_message_processed)
+            cancelled = cancel_event.is_set()
+            GLib.idle_add(self._finalize_response, request_id, response_text, cancelled)
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             GLib.idle_add(self._add_system_message, f"Error: {e}")
-            GLib.idle_add(self._on_message_processed)
-    
-    def _update_ai_message(self, chunk: str, streaming: bool):
-        """Update the AI message."""
+            # Finalize with whatever was streamed so far: it is already on
+            # screen, and the history must match what the user sees.
+            GLib.idle_add(self._finalize_response, request_id, response_text, False)
+
+    def _finalize_response(self, request_id: int, response_text: str,
+                           cancelled: bool):
+        """Persist the response and settle the UI (main loop only)."""
+        if request_id != self._active_request:
+            # A newer request replaced this one; its output is stale.
+            logger.debug("Dropping result from stale request %s", request_id)
+            return False
+
+        self.streaming = False
+
+        if response_text and not cancelled:
+            self.conversation_history.append(
+                {"role": "assistant", "content": response_text}
+            )
+            # The streaming path only inserts chunks into the buffer, so
+            # without this explicit save the reply never reached history.json.
+            self._save_message_to_history("assistant", response_text)
+
+            # Offer file writes in expert mode. We are already on the main
+            # loop, so the dialogs can be created directly (GTK is not
+            # thread-safe).
+            if self.expert_mode:
+                file_actions.offer_file_blocks(
+                    self, response_text,
+                    lambda msg: GLib.idle_add(self._add_system_message, msg)
+                )
+
+        self._on_message_processed(request_id, cancelled)
+        return False
+
+    def _update_ai_message(self, request_id: int, chunk: str, streaming: bool):
+        """Update the AI message, ignoring output from stale requests."""
+        if request_id != self._active_request:
+            logger.debug("Dropping chunk from stale request %s", request_id)
+            return False
         self._add_ai_message(chunk, streaming)
         return False
     
-    def _on_message_processed(self):
+    def _on_message_processed(self, request_id=None, cancelled=False):
         """Callback when the message is processed."""
+        if request_id is not None and request_id != self._active_request:
+            return False
+
         self.is_loading = False
-        self.cancel_streaming = False
         self.cancel_btn.set_sensitive(False)
-        self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
-        self.status_icon.set_tooltip_text(_("Ready"))
 
         # Remove the loading message (no-op if already replaced by the response)
         self._remove_loading_message()
-        
-        # Show a notification if the window is not active
-        if not self.get_window().get_property("is-active"):
-            self.show_notification("Linux AI Assistant", "New response received")
+
+        if cancelled:
+            # on_cancel_streaming already painted the cancelled state.
+            return False
+
+        self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text(_("Ready"))
+
+        # Show a notification if the window is not active. `is-active` is a
+        # Gtk.Window property (GdkWindow does not have it).
+        if not self.get_property("is-active"):
+            self.show_notification("Linux AI Assistant", _("New response received"))
+        return False
     
     def on_cancel_streaming(self, button):
         """Cancel the current streaming."""
         self._cancel_event.set()
-        self.cancel_streaming = True
         self.is_loading = False
         self.streaming = False
         self.cancel_btn.set_sensitive(False)
         self.status_icon.set_from_icon_name("dialog-error", Gtk.IconSize.MENU)
-        self.status_icon.set_tooltip_text("Cancelled")
+        self.status_icon.set_tooltip_text(_("Cancelled"))
         
-        self._add_system_message("Streaming cancelled")
+        self._add_system_message(_("Streaming cancelled"))
         self._remove_loading_message()
         logger.info("Streaming cancelled by the user")
     
     def on_capture_screen_clicked(self, button):
         """Handler for screen capture"""
+        # The button/shortcut stays available even if the feature was
+        # disabled after startup, so enforce the setting here too.
+        if not self.config.get("features.screen_capture", True):
+            self._add_system_message(_("Screen capture is disabled in settings."))
+            return
         if self.is_loading:
-            self.show_notification("Linux AI Assistant", "Wait for the current message to be processed")
+            self.show_notification("Linux AI Assistant", _("Wait for the current message to be processed"))
             return
             
-        self._add_system_message("Capturing screen...")
+        self._add_system_message(_("Capturing screen..."))
         self.is_loading = True
         self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
         
@@ -1455,7 +1624,7 @@ Respond clearly and concisely in English."""
                     # Remove temporary image
                     try:
                         os.unlink(image_path)
-                    except:
+                    except OSError:
                         pass
                 else:
                     GLib.idle_add(self._add_system_message, f"Error capturing screen: {image_path}")
@@ -1485,15 +1654,20 @@ Respond clearly and concisely in English."""
         
         if self.expert_mode:
             self.expert_btn.get_style_context().add_class("expert")
-            self._add_system_message("Expert Mode ENABLED - Helping with system configuration")
-            self.show_notification("Linux AI Assistant", "Expert Mode enabled")
+            self._add_system_message(_("Expert Mode ENABLED - Helping with system configuration"))
+            self.show_notification("Linux AI Assistant", _("Expert Mode enabled"))
         else:
             self.expert_btn.get_style_context().remove_class("expert")
-            self._add_system_message("Expert Mode DISABLED")
-            self.show_notification("Linux AI Assistant", "Expert Mode disabled")
+            self._add_system_message(_("Expert Mode DISABLED"))
+            self.show_notification("Linux AI Assistant", _("Expert Mode disabled"))
         
         # Clear the history for the new context
         self.conversation_history = []
+        # Keep the tray menu checkbox in sync (it may have been the source,
+        # or the window button may have been)
+        tray = getattr(self.app, "tray_icon", None)
+        if tray is not None:
+            tray.update_expert_mode(self.expert_mode)
         logger.info(f"Expert mode {'enabled' if self.expert_mode else 'disabled'}")
     
     def on_close_clicked(self):
@@ -1502,47 +1676,43 @@ Respond clearly and concisely in English."""
     
     def on_delete_event(self, widget, event):
         """Handler for closing the window."""
-        # Save the window geometry
-        if hasattr(self, 'get_window') and self.get_window():
-            geometry = self.get_window().get_geometry()
-            self.config.set_window_geometry(
-                geometry.width,
-                geometry.height,
-                self.get_window().get_position().x,
-                self.get_window().get_position().y
-            )
+        # Save the window geometry. `GdkWindow.get_geometry()` returns the
+        # client-side rect but its position is relative to the parent, and
+        # `get_position()` on the GdkWindow is not reliable before the window
+        # is mapped; Gtk.Window's accessors return absolute coordinates.
+        try:
+            x, y = self.get_position()
+            width, height = self.get_size()
+            self.config.set_window_geometry(width, height, x, y)
+        except Exception as e:
+            logger.warning(f"Could not save window geometry: {e}")
         # Persistir qualquer alteracao pendente antes de sair
         self.config.flush()
+        # Drain the history writer so the last messages reach history.json
+        self.close_history_writer()
 
-        # Close application
+        # Close application (quit() destroys windows and stops the main loop,
+        # so it also covers quitting from the tray menu).
         logger.info("Janela fechada")
-        Gtk.main_quit()
+        self.app.quit()
         return True
     
     def on_configure_event(self, widget, event):
         """Handler for redimensionar/mover janela
 
-        `set()` e debounced, por isso mover a janela nao provoca uma escrita
-        de config.json por pixel.
+        `set()` ignora valores repetidos e e debounced, por isso mover a
+        janela nao provoca uma escrita de config.json por pixel.
         """
-        gdk_window = self.get_window()
-        if gdk_window:
-            x, y = gdk_window.get_position()
-            self.config.set("app.x_position", x)
-            self.config.set("app.y_position", y)
-
-            geometry = gdk_window.get_geometry()
-            self.config.set("app.width", geometry.width)
-            self.config.set("app.height", geometry.height)
+        self.config.set("app.x_position", event.x)
+        self.config.set("app.y_position", event.y)
+        self.config.set("app.width", event.width)
+        self.config.set("app.height", event.height)
 
         return True
     
     def on_size_allocate(self, widget, allocation):
         """Handler for when size is allocated"""
-        gdk_window = self.get_window()
-        if gdk_window:
-            geometry = gdk_window.get_geometry()
-            self.config.set("app.width", geometry.width)
-            self.config.set("app.height", geometry.height)
+        self.config.set("app.width", allocation.width)
+        self.config.set("app.height", allocation.height)
 
         return True

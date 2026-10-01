@@ -1,25 +1,23 @@
 import json
+import copy
+import os
 import time
 import logging
 import re
 import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from requests.exceptions import RequestException, Timeout, ConnectionError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from requests.exceptions import RequestException, Timeout
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 # Configurar logger
 logger = logging.getLogger(__name__)
 
-# Politica de retry para falhas de rede/transientes
-NETWORK_RETRY = dict(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type((RequestException, Timeout, ConnectionError)),
-    reraise=True,
+_SECRET_QUERY_RE = re.compile(
+    r"([?&](?:key|api_key|apikey|access_token|token|sig|signature|password|auth)=)[^&\s]+",
+    re.I,
 )
-
-_SECRET_QUERY_RE = re.compile(r"([?&](?:key|api_key|access_token|token)=)[^&\s]+", re.I)
 
 
 class _RetryAfterRateLimit(RequestException):
@@ -28,6 +26,31 @@ class _RetryAfterRateLimit(RequestException):
     Herda de RequestException para que a politica `NETWORK_RETRY` a volte a
     tentar (ate 3 tentativas), em vez de se propagar imediatamente.
     """
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Retry only failures that can succeed on a later attempt.
+
+    Permanent client errors (401 invalid key, 404 unknown model, 400 bad
+    payload) must fail fast instead of burning 3 attempts x backoff.
+    """
+    if isinstance(exc, _RetryAfterRateLimit):
+        return True
+    if isinstance(exc, (Timeout, RequestsConnectionError)):
+        return True
+    response = getattr(exc, "response", None)
+    if isinstance(exc, RequestException) and response is not None:
+        return response.status_code >= 500
+    return False
+
+
+# Politica de retry para falhas de rede/transientes
+NETWORK_RETRY = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception(_is_transient),
+    reraise=True,
+)
 
 
 def redact_url(url: str) -> str:
@@ -42,8 +65,7 @@ class AIClient:
     
     # Constants
     DEFAULT_TIMEOUT = 30
-    MAX_RETRIES = 3
-    RATE_LIMIT_WAIT = 60  # seconds
+    RATE_LIMIT_WAIT = 15  # seconds (defensive cap for Retry-After)
     
     # Supported providers
     SUPPORTED_PROVIDERS = [
@@ -75,10 +97,6 @@ class AIClient:
         })
         return session
     
-    def _setup_retry_strategy(self):
-        """Deprecated: the retry policy lives in NETWORK_RETRY."""
-        return None
-
     def _load_custom_providers(self):
         """Load custom providers from plugins"""
         try:
@@ -95,14 +113,16 @@ class AIClient:
                                 module.register_provider(self)
                                 logger.info(f"Plugin loaded: {plugin_file.stem}")
                         except Exception as e:
-                            logger.warning(f"Error loading plugin {plugin_file}: {e}")
+                            logger.warning(f"Error loading plugin {plugin_file}: {redact_url(str(e))}")
         except Exception as e:
-            logger.warning(f"Error loading plugins: {e}")
+            logger.warning(f"Error loading plugins: {redact_url(str(e))}")
     
     def register_provider(self, name: str, chat_func: Callable):
         """Register a new custom provider"""
         if name not in self.SUPPORTED_PROVIDERS:
-            self.SUPPORTED_PROVIDERS.append(name)
+            # Copy-on-write: plugins must not mutate the class-level list
+            # shared by every other AIClient instance in the process.
+            self.SUPPORTED_PROVIDERS = list(self.SUPPORTED_PROVIDERS) + [name]
         setattr(self, f"_chat_{name}", chat_func)
         logger.info(f"Custom provider registered: {name}")
     
@@ -134,7 +154,9 @@ class AIClient:
             self.token_usage[provider]["input"] += int(input_tokens)
             self.token_usage[provider]["output"] += int(output_tokens)
             self.token_usage[provider]["total"] += int(input_tokens) + int(output_tokens)
-        self._save_token_usage()
+            # Saved while still holding the lock: concurrent mutation during
+            # json.dump would raise "dictionary changed size during iteration".
+            self._save_token_usage()
         logger.debug(f"Token usage - {provider}: input={input_tokens}, output={output_tokens}")
 
     def _record_usage(self, provider: str, data: Dict[str, Any]):
@@ -147,63 +169,89 @@ class AIClient:
         usage = data.get("usage") or data.get("usageMetadata") or {}
         if not isinstance(usage, dict):
             return
-        input_tokens = (
-            usage.get("prompt_tokens")
-            or usage.get("input_tokens")
-            or usage.get("promptTokenCount")
-        )
-        output_tokens = (
-            usage.get("completion_tokens")
-            or usage.get("output_tokens")
-            or usage.get("candidatesTokenCount")
-        )
+
+        def _first(*names):
+            # `or` would treat a legitimate 0 as "missing"
+            for name in names:
+                if usage.get(name) is not None:
+                    return usage[name]
+            return None
+
+        input_tokens = _first("prompt_tokens", "input_tokens", "promptTokenCount")
+        output_tokens = _first("completion_tokens", "output_tokens", "candidatesTokenCount")
         if input_tokens is None and output_tokens is None:
             return
         self._update_token_usage(provider, input_tokens or 0, output_tokens or 0)
 
-    def _usage_path_safe(self):
-        try:
-            return self._usage_path
-        except Exception:
-            return None
-
     def _load_token_usage(self):
         """Load usage stats from previous sessions."""
-        path = self._usage_path_safe()
-        if not path or not path.exists():
+        path = self._usage_path
+        if not path.exists():
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, dict):
-                self.token_usage = data
-                logger.debug(f"Token usage loaded: {list(data)}")
+            if not isinstance(data, dict):
+                raise ValueError(f"expected a JSON object, got {type(data).__name__}")
+            # Every entry must look like {"input": n, "output": n, "total": n}:
+            # a malformed value would crash .get() later and silently break
+            # every chat request.
+            clean = {}
+            for provider, entry in data.items():
+                if isinstance(entry, dict) and all(
+                    isinstance(entry.get(field), (int, float))
+                    for field in ("input", "output", "total")
+                ):
+                    clean[provider] = {
+                        "input": int(entry["input"]),
+                        "output": int(entry["output"]),
+                        "total": int(entry["total"]),
+                    }
+                else:
+                    logger.warning(f"Ignoring malformed token usage entry: {provider}")
+            self.token_usage = clean
+            logger.debug(f"Token usage loaded: {list(clean)}")
         except Exception as e:
-            logger.warning(f"Could not load token usage: {e}")
+            logger.warning(f"Could not load token usage: {redact_url(str(e))}")
 
     def _save_token_usage(self):
-        """Persist usage stats so the CLI can show them."""
-        path = self._usage_path_safe()
-        if not path:
-            return
+        """Persist usage stats so the CLI can show them (atomic, 0600).
+
+        Caller must hold `_usage_lock`.
+        """
+        path = self._usage_path
+        temp_path = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self.token_usage, f, indent=2)
+            # Snapshot so the dump cannot race with concurrent updates
+            snapshot = copy.deepcopy(self.token_usage)
+            temp_path = path.with_name(path.name + ".tmp")
+            fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
         except Exception as e:
-            logger.warning(f"Could not save token usage: {e}")
+            logger.warning(f"Could not save token usage: {redact_url(str(e))}")
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
     def get_token_usage(self, provider: str = None) -> Dict[str, Any]:
         """Get token usage"""
-        if provider:
-            return self.token_usage.get(provider, {"input": 0, "output": 0, "total": 0})
-        return self.token_usage
+        with self._usage_lock:
+            if provider:
+                return copy.deepcopy(self.token_usage.get(provider, {"input": 0, "output": 0, "total": 0}))
+            return copy.deepcopy(self.token_usage)
     
     def reset_token_usage(self):
         """Reset token count"""
         with self._usage_lock:
             self.token_usage = {}
-        self._save_token_usage()
+            self._save_token_usage()
         logger.info("Token usage reset")
     
     @retry(**NETWORK_RETRY)
@@ -225,14 +273,11 @@ class AIClient:
                     url, json=payload, headers=merged_headers, timeout=timeout
                 )
             
-            # Handle rate limiting with a limited number of retries
+            # Handle rate limiting: honor Retry-After (capped) and let
+            # tenacity retry within NETWORK_RETRY's attempt budget.
             if response.status_code == 429:
                 retry_after = self._parse_retry_after(response.headers.get('Retry-After'))
                 response.close()
-                if retry_after is None:
-                    raise RequestException(
-                        f"Rate limit exceeded ({safe_url}) with no usable Retry-After"
-                    )
                 logger.warning(
                     f"Rate limit hit for {safe_url}. "
                     f"Waiting {retry_after} seconds..."
@@ -244,18 +289,22 @@ class AIClient:
             return response
             
         except _RetryAfterRateLimit:
-            # Let tenacity retry (up to MAX_RATE_LIMIT_RETRIES)
+            # Let tenacity retry (transient by policy)
             raise
         except Timeout as e:
-            logger.error(f"Timeout connecting to {safe_url}: {e}")
+            logger.error(f"Timeout connecting to {safe_url}: {redact_url(str(e))}")
             raise
         except RequestException as e:
-            logger.error(f"Request error for {safe_url}: {e}")
+            # requests embeds the full original URL in the exception text,
+            # which can carry ?key=<API_KEY> - redact before logging.
+            if response is not None:
+                response.close()
+            logger.error(f"Request error for {safe_url}: {redact_url(str(e))}")
             raise
         except Exception as e:
             if response is not None:
                 response.close()
-            logger.error(f"Unexpected error in request for {safe_url}: {e}")
+            logger.error(f"Unexpected error in request for {safe_url}: {redact_url(str(e))}")
             raise
 
     def _parse_retry_after(self, value: Any) -> Optional[int]:
@@ -271,7 +320,7 @@ class AIClient:
         return max(1, min(seconds, self.RATE_LIMIT_WAIT))
     
     @staticmethod
-    def _iter_sse_openai_style(response, provider: str):
+    def _iter_sse_openai_style(response):
         """Iterate an SSE stream in OpenAI style (`data: {...}`)."""
         for line in response.iter_lines():
             if not line:
@@ -373,8 +422,10 @@ class AIClient:
         
         provider = provider or self.config.get("api.default_provider", "openrouter")
         api_config = self._get_api_config(provider)
-        
-        if not api_config:
+        # Plugins register `_chat_<name>` even without an api.providers entry
+        chat_method = getattr(self, f"_chat_{provider}", None)
+
+        if not api_config and chat_method is None:
             logger.error(f"Unknown provider: {provider}")
             return None
         
@@ -383,7 +434,7 @@ class AIClient:
         base_url = api_config.get("base_url")
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
         
-        if not api_key and provider != "local_llm":
+        if not api_key and provider != "local_llm" and api_config:
             logger.error(f"API key not configured for {provider}")
             return None
         
@@ -396,7 +447,6 @@ class AIClient:
                 before = self.token_usage.get(provider, {}).get("total", 0)
 
             # Call the provider's specific method
-            chat_method = getattr(self, f"_chat_{provider}", None)
             if chat_method:
                 result = chat_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
@@ -419,7 +469,7 @@ class AIClient:
             return result
             
         except Exception as e:
-            logger.error(f"Error communicating with {provider}: {e}", exc_info=True)
+            logger.error(f"Error communicating with {provider}: {redact_url(str(e))}", exc_info=True)
             return None
     
     def _chat_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -450,13 +500,13 @@ class AIClient:
             self._record_usage("openrouter", data)
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing OpenRouter JSON: {e}")
+            logger.error(f"Error parsing OpenRouter JSON: {redact_url(str(e))}")
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from OpenRouter: {e}")
+            logger.error(f"Invalid response format from OpenRouter: {redact_url(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"OpenRouter error: {e}")
+            logger.error(f"OpenRouter error: {redact_url(str(e))}")
             return None
     
     def _google_safety_settings(self):
@@ -479,7 +529,10 @@ class AIClient:
     def _chat_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
                                base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Communicate with the Google AI Studio API"""
-        url = f"{base_url}/models/{model}:generateContent?key={api_key}"
+        # The key goes in a header, never in the query string: URLs leak into
+        # logs, proxies and exception messages.
+        url = f"{base_url}/models/{model}:generateContent"
+        headers = {"x-goog-api-key": api_key}
         
         # Convert messages to Google's format
         google_messages = []
@@ -500,7 +553,7 @@ class AIClient:
         }
 
         try:
-            response = self._make_request(url, payload, timeout=timeout)
+            response = self._make_request(url, payload, headers, timeout)
             try:
                 data = response.json()
             finally:
@@ -583,17 +636,15 @@ class AIClient:
                 return "".join(texts)
             if isinstance(content, dict):
                 return content.get("text", "")
-            if content:
-                return ""
             return ""
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Anthropic JSON: {e}")
+            logger.error(f"Error parsing Anthropic JSON: {redact_url(str(e))}")
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from Anthropic: {e}")
+            logger.error(f"Invalid response format from Anthropic: {redact_url(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"Anthropic error: {e}")
+            logger.error(f"Anthropic error: {redact_url(str(e))}")
             return None
     
     def _chat_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -628,13 +679,13 @@ class AIClient:
 
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Mistral JSON: {e}")
+            logger.error(f"Error parsing Mistral JSON: {redact_url(str(e))}")
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from Mistral: {e}")
+            logger.error(f"Invalid response format from Mistral: {redact_url(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"Mistral error: {e}")
+            logger.error(f"Mistral error: {redact_url(str(e))}")
             return None
     
     def _chat_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -669,37 +720,46 @@ class AIClient:
 
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Groq JSON: {e}")
+            logger.error(f"Error parsing Groq JSON: {redact_url(str(e))}")
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from Groq: {e}")
+            logger.error(f"Invalid response format from Groq: {redact_url(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"Groq error: {e}")
+            logger.error(f"Groq error: {redact_url(str(e))}")
             return None
     
     def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
                      base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Communicate with the Cohere API"""
+        """Communicate with the Cohere API (v1 /chat contract)."""
         url = f"{base_url}/chat"
-        
-        # Convert messages to Cohere's format
-        cohere_messages = []
+
+        # v1 expects a top-level `message` plus `chat_history` with the
+        # role/message pairs - not an OpenAI-style `messages` array.
+        chat_history = []
+        preamble_parts = []
+        last_user_text = ""
         for msg in messages:
             role = msg["role"]
-            # Cohere uses "USER", "ASSISTANT", "SYSTEM"
-            role = role.upper()
-            cohere_messages.append({
-                "role": role,
-                "message": msg["content"]
-            })
-        
+            if role == "system":
+                preamble_parts.append(msg["content"])
+            elif role == "user":
+                chat_history.append({"role": "USER", "message": msg["content"]})
+            elif role == "assistant":
+                chat_history.append({"role": "ASSISTANT", "message": msg["content"]})
+        # The final user turn is the `message`, not part of the history
+        if chat_history and chat_history[-1]["role"] == "USER":
+            last_user_text = chat_history.pop()["message"]
+
         payload = {
             "model": model,
-            "messages": cohere_messages,
+            "message": last_user_text,
+            "chat_history": chat_history,
             "temperature": temperature,
             "max_tokens": max_tokens
         }
+        if preamble_parts:
+            payload["preamble"] = "\n\n".join(preamble_parts)
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -721,13 +781,13 @@ class AIClient:
 
             return data["response"]
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Cohere JSON: {e}")
+            logger.error(f"Error parsing Cohere JSON: {redact_url(str(e))}")
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from Cohere: {e}")
+            logger.error(f"Invalid response format from Cohere: {redact_url(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"Cohere error: {e}")
+            logger.error(f"Cohere error: {redact_url(str(e))}")
             return None
     
     def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -752,13 +812,13 @@ class AIClient:
             self._record_usage("local_llm", data)
             return data["choices"][0]["message"]["content"]
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing local model JSON: {e}")
+            logger.error(f"Error parsing local model JSON: {redact_url(str(e))}")
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from local model: {e}")
+            logger.error(f"Invalid response format from local model: {redact_url(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"Local model error: {e}")
+            logger.error(f"Local model error: {redact_url(str(e))}")
             return None
     
     def stream_chat(self, messages: List[Dict[str, str]], provider: str = None, model: str = None,
@@ -787,8 +847,11 @@ class AIClient:
         
         provider = provider or self.config.get("api.default_provider", "openrouter")
         api_config = self._get_api_config(provider)
-        
-        if not api_config:
+        stream_method = getattr(self, f"_stream_{provider}", None)
+        # Plugins may register only a chat function (fallback below)
+        chat_method = getattr(self, f"_chat_{provider}", None)
+
+        if not api_config and stream_method is None and chat_method is None:
             yield "Unknown provider"
             return
         
@@ -796,10 +859,14 @@ class AIClient:
         api_key = self._get_api_key(provider)
         base_url = api_config.get("base_url")
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
+
+        # Same fast-fail as chat(): do not send `Authorization: Bearer None`
+        if not api_key and provider != "local_llm" and api_config:
+            yield f"API key not configured for {provider}"
+            return
         
         try:
             # Call the provider's specific stream method
-            stream_method = getattr(self, f"_stream_{provider}", None)
             if stream_method:
                 yield from stream_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
@@ -807,9 +874,11 @@ class AIClient:
                 response = self.chat(messages, provider, model, temperature, max_tokens)
                 if response:
                     yield response
+                else:
+                    yield f"Error: no response from {provider} (check the logs)"
         except Exception as e:
-            logger.error(f"Stream error for {provider}: {e}", exc_info=True)
-            yield f"Error: {e}"
+            logger.error(f"Stream error for {provider}: {redact_url(str(e))}", exc_info=True)
+            yield f"Error: {redact_url(str(e))}"
     
     def _stream_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
                            base_url: str, temperature: float, max_tokens: int, timeout: int):
@@ -833,11 +902,11 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                yield from self._iter_sse_openai_style(response, "openrouter")
+                yield from self._iter_sse_openai_style(response)
             finally:
                 response.close()
         except Exception as e:
-            logger.error(f"OpenRouter stream error: {e}")
+            logger.error(f"OpenRouter stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"
     
     def _stream_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -870,7 +939,7 @@ class AIClient:
             finally:
                 response.close()
         except Exception as e:
-            logger.error(f"Anthropic stream error: {e}")
+            logger.error(f"Anthropic stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"
     
     def _stream_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -894,11 +963,11 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                yield from self._iter_sse_openai_style(response, "mistral")
+                yield from self._iter_sse_openai_style(response)
             finally:
                 response.close()
         except Exception as e:
-            logger.error(f"Mistral stream error: {e}")
+            logger.error(f"Mistral stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"
     
     def _stream_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -922,33 +991,42 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                yield from self._iter_sse_openai_style(response, "groq")
+                yield from self._iter_sse_openai_style(response)
             finally:
                 response.close()
         except Exception as e:
-            logger.error(f"Groq stream error: {e}")
+            logger.error(f"Groq stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"
     
     def _stream_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int):
-        """Stream with Cohere."""
+        """Stream with Cohere (v1 contract, same as _chat_cohere)."""
         url = f"{base_url}/chat"
         
-        cohere_messages = []
+        chat_history = []
+        preamble_parts = []
+        last_user_text = ""
         for msg in messages:
-            role = msg["role"].upper()
-            cohere_messages.append({
-                "role": role,
-                "message": msg["content"]
-            })
+            role = msg["role"]
+            if role == "system":
+                preamble_parts.append(msg["content"])
+            elif role == "user":
+                chat_history.append({"role": "USER", "message": msg["content"]})
+            elif role == "assistant":
+                chat_history.append({"role": "ASSISTANT", "message": msg["content"]})
+        if chat_history and chat_history[-1]["role"] == "USER":
+            last_user_text = chat_history.pop()["message"]
         
         payload = {
             "model": model,
-            "messages": cohere_messages,
+            "message": last_user_text,
+            "chat_history": chat_history,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True
         }
+        if preamble_parts:
+            payload["preamble"] = "\n\n".join(preamble_parts)
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -962,7 +1040,7 @@ class AIClient:
             finally:
                 response.close()
         except Exception as e:
-            logger.error(f"Cohere stream error: {e}")
+            logger.error(f"Cohere stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"
     
     def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -981,9 +1059,9 @@ class AIClient:
         try:
             response = self._make_request(url, payload, timeout=timeout, stream=True)
             try:
-                yield from self._iter_sse_openai_style(response, "local_llm")
+                yield from self._iter_sse_openai_style(response)
             finally:
                 response.close()
         except Exception as e:
-            logger.error(f"Local model stream error: {e}")
+            logger.error(f"Local model stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"

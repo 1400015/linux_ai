@@ -7,6 +7,7 @@ These tests run without GTK.
 import inspect
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -159,6 +160,7 @@ class TestFileReadingCommandsRespectSandbox(unittest.TestCase):
 
     def test_cat_inside_allowed_dir_is_allowed(self):
         with tempfile.TemporaryDirectory() as d:
+            self.addCleanup(shutil.rmtree, "/tmp/allowed-only", ignore_errors=True)
             os.makedirs("/tmp/allowed-only", exist_ok=True)
             target = Path("/tmp/allowed-only") / "ok.txt"
             target.write_text("hello")
@@ -199,29 +201,33 @@ class TestProviderDispatchSignatures(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             config = ConfigManager(str(Path(d) / "config.json"))
             config.set("api.default_provider", "local_llm")
-            client = AIClient(config)
-            try:
-                captured = {}
+            # Patch Path.home like the neighbouring usage tests so the token
+            # usage recorded by chat() lands in the temp dir, not the real
+            # ~/.config/linux_ai_assistant/usage.json.
+            with patch("src.ai_client.Path.home", return_value=Path(d)):
+                client = AIClient(config)
+                try:
+                    captured = {}
 
-                def fake_request(url, payload, headers=None, timeout=None, stream=False):
-                    captured["url"] = url
-                    class R:
-                        status_code = 200
-                        def json(self):
-                            return {
-                                "choices": [{"message": {"content": "resposta local"}}],
-                                "usage": {"prompt_tokens": 7, "completion_tokens": 3},
-                            }
-                        def close(self):
-                            pass
-                    return R()
+                    def fake_request(url, payload, headers=None, timeout=None, stream=False):
+                        captured["url"] = url
+                        class R:
+                            status_code = 200
+                            def json(self):
+                                return {
+                                    "choices": [{"message": {"content": "resposta local"}}],
+                                    "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+                                }
+                            def close(self):
+                                pass
+                        return R()
 
-                client._make_request = fake_request
-                out = client.chat([{"role": "user", "content": "oi"}])
-                self.assertEqual(out, "resposta local")
-                self.assertIn("/chat/completions", captured["url"])
-            finally:
-                client.session.close()
+                    client._make_request = fake_request
+                    out = client.chat([{"role": "user", "content": "oi"}])
+                    self.assertEqual(out, "resposta local")
+                    self.assertIn("/chat/completions", captured["url"])
+                finally:
+                    client.session.close()
 
 
 # --- Bug 4: resposta em streaming apagada do ecra ----------------------------
@@ -561,7 +567,11 @@ class TestGracefulGtkFailure(unittest.TestCase):
         if app.GTK_AVAILABLE:
             self.skipTest("GTK is available in this environment")
         self.assertIsNone(app.Gtk)
-        self.assertIn("GTK", str(app.GTK_IMPORT_ERROR) + "GTK")
+        # Regression: GTK_IMPORT_ERROR must hold a real exception (or nothing),
+        # not an arbitrary placeholder that any assertion would accept.
+        self.assertTrue(
+            app.GTK_IMPORT_ERROR is None or isinstance(app.GTK_IMPORT_ERROR, Exception)
+        )
 
     def test_main_window_is_not_imported_without_gtk(self):
         import src.app as app

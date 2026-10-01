@@ -1,3 +1,12 @@
+"""Render helpers for chat text.
+
+`from __future__ import annotations` keeps the PEP 604 unions (`int | None`)
+and builtin generics (`tuple[int, int]`) as strings at runtime, so this
+module imports on Python 3.8 (without it, the annotations are evaluated at
+import time and `X | None` raises TypeError before 3.10).
+"""
+from __future__ import annotations
+
 import os
 import re
 import xml.sax.saxutils

@@ -100,7 +100,15 @@ main() {
             echo "  disable  - Remove from automatic startup"
             echo "  check    - Check the automatic startup state"
             echo ""
-            check_autostart
+            # `check_autostart` returns 1 when not configured; that must not
+            # abort the script under `set -e` nor fail the help path.
+            check_autostart || true
+            if [ "$#" -eq 0 ]; then
+                # No arguments means help: show the usage and succeed
+                exit 0
+            fi
+            # An explicitly unknown argument is a usage error
+            exit 1
             ;;
     esac
 }

@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Check whether it is running as root
-if [ "$EUID" -eq 0 ]; then
+if [ "$(id -u)" -eq 0 ]; then
     echo -e "${RED}Do not run this script as root!${NC}"
     echo "The script will ask for sudo privileges when needed."
     exit 1
@@ -49,7 +49,6 @@ install_packages() {
     if command_exists apt-get; then
         PKG_MANAGER="apt-get"
         UPDATE_CMD="sudo apt-get update"
-        INSTALL_CMD="sudo apt-get install -y"
     else
         echo "Automatic installation currently supports Debian/Ubuntu and Void Linux."
         echo "For other distributions, install the dependencies from README.md manually."
@@ -78,7 +77,7 @@ install_packages() {
         echo -e "${BLUE}Installing packages...${NC}"
         
         # Update the cache
-        eval "$UPDATE_CMD"
+        sudo apt-get update
         
         sudo apt-get install -y "${MISSING_PACKAGES[@]}"
 
@@ -181,9 +180,6 @@ create_icon() {
             # Copy the default icon
             if [ -f "/usr/share/icons/hicolor/64x64/apps/system-run.png" ]; then
                 cp "/usr/share/icons/hicolor/64x64/apps/system-run.png" "$ICON_DIR/icon.png"
-            else
-                # Create an empty file as a placeholder
-                touch "$ICON_DIR/icon.png"
             fi
         fi
     fi
@@ -237,7 +233,7 @@ show_final_instructions() {
     echo ""
     echo -e "${YELLOW}Notes:${NC}"
     echo "  - The assistant runs with normal privileges."
-    echo "  - For features that require sudo, a password will be requested."
+    echo "  - To run system commands, allow them in \"permissions.allowed_commands\" in ~/.config/linux_ai_assistant/config.json."
     echo "  - Expert mode allows editing the configuration files."
     echo ""
 }

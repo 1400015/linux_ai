@@ -36,17 +36,20 @@ Source = "https://github.com/1400015/linux_ai"
 linux-ai-assistant = "src.app:main"
 
 [tool.setuptools]
-packages = ["src"]
+packages = ["src", "plugins"]
 
-[tool.setuptools.package-data]
-"*" = ["*.json"]
+# themes/ is not a Python package (no __init__.py), so its JSON files are
+# shipped as data files; ConfigManager falls back to
+# <sys.prefix>/share/linux-ai-assistant/themes when the source tree is absent.
+[tool.setuptools.data-files]
+"share/linux-ai-assistant/themes" = ["themes/*.json"]
 
 [tool.ruff]
 line-length = 110
 target-version = "py38"
 
 [tool.ruff.lint]
-# O projecto usa muitosexcept: vazios; focusing on erros reais.
+# O projecto usa muitos except: vazios; focusing on erros reais.
 select = ["E", "F", "W"]
 ignore = [
     "E501",   # linhas longas
@@ -57,6 +60,3 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/app.py" = ["F401"]  #Gtk/Gdk importados condicionalmente
 "src/main_window.py" = ["F401"]
-
-[tool.unittest]
-start-dir = "tests"

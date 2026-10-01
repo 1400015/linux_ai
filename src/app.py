@@ -15,19 +15,15 @@ try:
     import gi
     gi.require_version('Gtk', '3.0')
     gi.require_version('Gdk', '3.0')
-    from gi.repository import Gtk, Gdk
+    from gi.repository import Gtk, Gdk, GLib
     GTK_AVAILABLE = True
 except (ImportError, ValueError) as _gtk_error:
     Gtk = None
     Gdk = None
+    GLib = None
     GTK_AVAILABLE = False
     GTK_IMPORT_ERROR = _gtk_error
 
-# Configurar logging cedo
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 # Adicionar src ao path
@@ -51,6 +47,11 @@ class LinuxAIAssistant:
     
     def __init__(self):
         logger.info("Initializing Linux AI Assistant")
+        
+        # Idempotency flag for quit(): delete-event, the tray menu and
+        # SIGINT/SIGTERM can all ask to quit, sometimes re-entrantly.
+        self._quitting = False
+        self.float_button_window = None
         
         try:
             self.config = ConfigManager()
@@ -76,8 +77,15 @@ class LinuxAIAssistant:
         logger.info("Initializing GTK")
         
         try:
-            # Initialize GTK
-            Gtk.init()
+            # Initialize GTK. init_check() reports failure (e.g. no
+            # DISPLAY) instead of aborting the process like init() does.
+            initialized = Gtk.init_check()
+            # PyGObject returns (ok, argv) on older versions, bool on newer
+            if isinstance(initialized, tuple):
+                initialized = initialized[0]
+            if not initialized:
+                logger.error("GTK could not be initialized (no display?)")
+                return
             logger.info("GTK initialized")
             
             # Create main window
@@ -110,19 +118,35 @@ class LinuxAIAssistant:
             self.quit()
     
     def quit(self):
-        """Quit the application"""
+        """Quit the application (safe to call more than once)"""
+        if self._quitting:
+            logger.debug("quit() already in progress; ignoring")
+            return
+        self._quitting = True
         logger.info("Terminating application")
         
         try:
             if self.main_window:
+                # Drain pending history writes before tearing the window down
+                try:
+                    self.main_window.close_history_writer()
+                except Exception as e:
+                    logger.warning(f"Could not flush history on quit: {e}")
                 self.main_window.destroy()
                 logger.info("Main window destroyed")
             
+            if self.float_button_window is not None:
+                try:
+                    self.float_button_window.destroy()
+                except Exception as e:
+                    logger.warning(f"Could not destroy float button: {e}")
+                self.float_button_window = None
+            
             if self.tray_icon:
-                if hasattr(self.tray_icon, 'indicator'):
+                if getattr(self.tray_icon, 'indicator', None) is not None:
                     self.tray_icon.indicator.set_status(0)
                     logger.info("AppIndicator deactivated")
-                elif hasattr(self.tray_icon, 'status_icon'):
+                elif getattr(self.tray_icon, 'status_icon', None) is not None:
                     self.tray_icon.status_icon.set_visible(False)
                     logger.info("StatusIcon deactivated")
             
@@ -157,18 +181,23 @@ class LinuxAIAssistant:
         
         edge = self.config.get("app.button_edge", "right")
         display = Gdk.Display.get_default()
-        monitor = display.get_monitor(0)
-        geometry = monitor.get_geometry()
-        x0, y0 = geometry.x, geometry.y
-        w, h = geometry.width, geometry.height
-        if edge == "left":
-            button_window.move(x0 + 12, y0 + h // 2 - 26)
-        elif edge == "top":
-            button_window.move(x0 + w // 2 - 26, y0 + 12)
-        elif edge == "bottom":
-            button_window.move(x0 + w // 2 - 26, y0 + h - 64)
+        monitor = display.get_monitor(0) if display is not None else None
+        if monitor is not None:
+            geometry = monitor.get_geometry()
+            x0, y0 = geometry.x, geometry.y
+            w, h = geometry.width, geometry.height
+            if edge == "left":
+                button_window.move(x0 + 12, y0 + h // 2 - 26)
+            elif edge == "top":
+                button_window.move(x0 + w // 2 - 26, y0 + 12)
+            elif edge == "bottom":
+                button_window.move(x0 + w // 2 - 26, y0 + h - 64)
+            else:
+                button_window.move(x0 + w - 64, y0 + h // 2 - 26)
         else:
-            button_window.move(x0 + w - 64, y0 + h // 2 - 26)
+            # No monitor (headless/RDP): skip positioning instead of
+            # crashing on monitor.get_geometry().
+            logger.warning("No monitor available; float button not positioned")
         
         button_window.show_all()
         self.float_button_window = button_window
@@ -194,18 +223,30 @@ def main():
     try:
         app = LinuxAIAssistant()
         
-        # Handle signals to quit correctly
-        signal.signal(signal.SIGINT, lambda s, f: app.quit())
-        signal.signal(signal.SIGTERM, lambda s, f: app.quit())
+        # Handle signals to quit correctly. `signal.signal` handlers only run
+        # between Python bytecodes, which never happens while Gtk.main()
+        # blocks in C - so SIGTERM would be deferred indefinitely.
+        # GLib.unix_signal_add delivers the signal through the main loop,
+        # where touching GTK is safe.
+        def _quit_source(*_args):
+            app.quit()
+            return GLib.SOURCE_REMOVE
+        try:
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, _quit_source)
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, _quit_source)
+        except (AttributeError, TypeError, OSError):
+            # Non-Unix GLib (or missing unix_signal_add): best effort.
+            signal.signal(signal.SIGINT, lambda s, f: GLib.idle_add(app.quit))
+            signal.signal(signal.SIGTERM, lambda s, f: GLib.idle_add(app.quit))
         logger.info("Signal handlers configured")
         
         app.run()
         
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+        return 1
     return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

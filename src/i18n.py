@@ -7,11 +7,12 @@ string is returned. The active language is read from the
 """
 
 import locale
+import os
 
 TRANSLATIONS = {
     "pt": {
         "Ready": "Pronto",
-        "Type your message... (Ctrl+Enter to send)": "Escreva a sua mensagem... (Ctrl+Enter para enviar)",
+        "Type your message... (Enter to send)": "Escreva a sua mensagem... (Enter para enviar)",
         "Enter your API Key": "Insira a sua API Key",
         "User": "Utilizador",
         "AI": "IA",
@@ -64,10 +65,32 @@ TRANSLATIONS = {
         "Write file": "Escrever ficheiro",
         "Show Window": "Mostrar Janela",
         "Linux AI Assistant": "Linux AI Assistant",
+        "Menu": "Menu",
+        "Close": "Fechar",
+        "Minimize": "Minimizar",
+        "Processing...": "A processar...",
+        "Cancelled": "Cancelado",
+        "Streaming cancelled": "Transmissão cancelada",
+        "New response received": "Nova resposta recebida",
+        "Send (Enter)": "Enviar (Enter)",
+        "Capture screen (Ctrl+S)": "Capturar ecrã (Ctrl+S)",
+        "Expert Mode (Ctrl+E)": "Modo Especialista (Ctrl+E)",
+        "Screen capture is disabled in settings.": "A captura de ecrã está desativada nas definições.",
+        "Wait for the current message to be processed": "Aguarde a mensagem atual ser processada",
+        "Capturing screen...": "A capturar o ecrã...",
+        "No theme selected": "Nenhum tema selecionado",
+        "Cannot remove built-in themes": "Não é possível remover temas incorporados",
+        "A theme name is required (letters, digits, '-' or '_', max 64)":
+            "É necessário um nome de tema (letras, dígitos, '-' ou '_', máx. 64)",
+        "Expert Mode ENABLED - Helping with system configuration":
+            "Modo Especialista ATIVADO - A ajudar com a configuração do sistema",
+        "Expert Mode enabled": "Modo Especialista ativado",
+        "Expert Mode DISABLED": "Modo Especialista DESATIVADO",
+        "Expert Mode disabled": "Modo Especialista desativado",
     },
     "es": {
         "Ready": "Listo",
-        "Type your message... (Ctrl+Enter to send)": "Escribe tu mensaje... (Ctrl+Enter para enviar)",
+        "Type your message... (Enter to send)": "Escribe tu mensaje... (Enter para enviar)",
         "Enter your API Key": "Introduce tu API Key",
         "User": "Usuario",
         "AI": "IA",
@@ -118,10 +141,32 @@ TRANSLATIONS = {
         "Cancel": "Cancelar",
         "Write file": "Escribir archivo",
         "Show Window": "Mostrar ventana",
+        "Menu": "Menú",
+        "Close": "Cerrar",
+        "Minimize": "Minimizar",
+        "Processing...": "Procesando...",
+        "Cancelled": "Cancelado",
+        "Streaming cancelled": "Transmisión cancelada",
+        "New response received": "Nueva respuesta recibida",
+        "Send (Enter)": "Enviar (Enter)",
+        "Capture screen (Ctrl+S)": "Capturar pantalla (Ctrl+S)",
+        "Expert Mode (Ctrl+E)": "Modo experto (Ctrl+E)",
+        "Screen capture is disabled in settings.": "La captura de pantalla está desactivada en los ajustes.",
+        "Wait for the current message to be processed": "Espera a que se procese el mensaje actual",
+        "Capturing screen...": "Capturando la pantalla...",
+        "No theme selected": "Ningún tema seleccionado",
+        "Cannot remove built-in themes": "No se pueden eliminar los temas integrados",
+        "A theme name is required (letters, digits, '-' or '_', max 64)":
+            "Se necesita un nombre de tema (letras, dígitos, '-' o '_', máx. 64)",
+        "Expert Mode ENABLED - Helping with system configuration":
+            "Modo experto ACTIVADO - Ayudando con la configuración del sistema",
+        "Expert Mode enabled": "Modo experto activado",
+        "Expert Mode DISABLED": "Modo experto DESACTIVADO",
+        "Expert Mode disabled": "Modo experto desactivado",
     },
     "fr": {
         "Ready": "Prêt",
-        "Type your message... (Ctrl+Enter to send)": "Tapez votre message... (Ctrl+Entrée pour envoyer)",
+        "Type your message... (Enter to send)": "Tapez votre message... (Entrée pour envoyer)",
         "Enter your API Key": "Saisissez votre clé API",
         "User": "Utilisateur",
         "AI": "IA",
@@ -172,10 +217,32 @@ TRANSLATIONS = {
         "Cancel": "Annuler",
         "Write file": "Écrire le fichier",
         "Show Window": "Afficher la fenêtre",
+        "Menu": "Menu",
+        "Close": "Fermer",
+        "Minimize": "Réduire",
+        "Processing...": "Traitement en cours...",
+        "Cancelled": "Annulé",
+        "Streaming cancelled": "Diffusion annulée",
+        "New response received": "Nouvelle réponse reçue",
+        "Send (Enter)": "Envoyer (Entrée)",
+        "Capture screen (Ctrl+S)": "Capturer l'écran (Ctrl+S)",
+        "Expert Mode (Ctrl+E)": "Mode expert (Ctrl+E)",
+        "Screen capture is disabled in settings.": "La capture d'écran est désactivée dans les paramètres.",
+        "Wait for the current message to be processed": "Attendez le traitement du message en cours",
+        "Capturing screen...": "Capture de l'écran...",
+        "No theme selected": "Aucun thème sélectionné",
+        "Cannot remove built-in themes": "Impossible de supprimer les thèmes intégrés",
+        "A theme name is required (letters, digits, '-' or '_', max 64)":
+            "Un nom de thème est requis (lettres, chiffres, '-' ou '_', max 64)",
+        "Expert Mode ENABLED - Helping with system configuration":
+            "Mode expert ACTIVÉ - Aide à la configuration du système",
+        "Expert Mode enabled": "Mode expert activé",
+        "Expert Mode DISABLED": "Mode expert DÉSACTIVÉ",
+        "Expert Mode disabled": "Mode expert désactivé",
     },
     "de": {
         "Ready": "Bereit",
-        "Type your message... (Ctrl+Enter to send)": "Geben Sie Ihre Nachricht ein... (Ctrl+Enter zum Senden)",
+        "Type your message... (Enter to send)": "Geben Sie Ihre Nachricht ein... (Enter zum Senden)",
         "Enter your API Key": "Geben Sie Ihren API-Key ein",
         "User": "Benutzer",
         "AI": "KI",
@@ -226,11 +293,53 @@ TRANSLATIONS = {
         "Cancel": "Abbrechen",
         "Write file": "Datei schreiben",
         "Show Window": "Fenster anzeigen",
+        "Menu": "Menü",
+        "Close": "Schließen",
+        "Minimize": "Minimieren",
+        "Processing...": "Wird verarbeitet...",
+        "Cancelled": "Abgebrochen",
+        "Streaming cancelled": "Stream abgebrochen",
+        "New response received": "Neue Antwort erhalten",
+        "Send (Enter)": "Senden (Enter)",
+        "Capture screen (Ctrl+S)": "Bildschirm aufnehmen (Ctrl+S)",
+        "Expert Mode (Ctrl+E)": "Expertenmodus (Ctrl+E)",
+        "Screen capture is disabled in settings.": "Die Bildschirmaufnahme ist in den Einstellungen deaktiviert.",
+        "Wait for the current message to be processed": "Warten, bis die aktuelle Nachricht verarbeitet wurde",
+        "Capturing screen...": "Bildschirm wird aufgenommen...",
+        "No theme selected": "Kein Design ausgewählt",
+        "Cannot remove built-in themes": "Eingebettete Designs können nicht entfernt werden",
+        "A theme name is required (letters, digits, '-' or '_', max 64)":
+            "Ein Designname erforderlich (Buchstaben, Ziffern, '-' oder '_', max. 64)",
+        "Expert Mode ENABLED - Helping with system configuration":
+            "Expertenmodus AKTIVIERT - Hilft bei der Systemkonfiguration",
+        "Expert Mode enabled": "Expertenmodus aktiviert",
+        "Expert Mode DISABLED": "Expertenmodus DEAKTIVIERT",
+        "Expert Mode disabled": "Expertenmodus deaktiviert",
     },
 }
 
 _current_lang = None
-_config = None
+
+
+def _system_language() -> str:
+    """Best-effort system language code ("en" when undeterminable).
+
+    ``locale.getdefaultlocale()`` is deprecated since Python 3.11 and
+    removed in 3.13, so prefer ``locale.getlocale()`` (which returns the
+    *current* locale - fine here since nothing calls setlocale()) and fall
+    back to the LANG/LC_ALL environment variables.
+    """
+    try:
+        lang = locale.getlocale()[0]
+        if lang:
+            return lang[:2].lower()
+    except (TypeError, ValueError):
+        pass
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(var, "")
+        if value and value.upper() not in ("C", "POSIX"):
+            return value.split(".")[0].split("_")[0][:2].lower()
+    return "en"
 
 
 def available_languages():
@@ -239,10 +348,13 @@ def available_languages():
 
 
 def set_language(lang, config=None):
-    """Set the active language. Unknown languages fall back to English."""
-    global _current_lang, _config
+    """Set the active language. Unknown languages fall back to English.
+
+    `config` (optional) persists the choice to `app.language`; it is kept
+    only for backward compatibility and no longer stored in a module global.
+    """
+    global _current_lang
     _current_lang = (lang or "en")[:2].lower()
-    _config = config
     if config is not None and _current_lang != "en":
         config.set("app.language", _current_lang)
 
@@ -256,8 +368,7 @@ def set_language_from_config(config):
     except Exception:
         lang = None
     if not lang:
-        sys_lang = locale.getdefaultlocale()[0] or "en"
-        lang = sys_lang[:2].lower()
+        lang = _system_language()
     _current_lang = lang[:2].lower()
 
 

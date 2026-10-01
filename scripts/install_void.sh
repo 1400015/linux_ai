@@ -44,7 +44,7 @@ echo ""
 
 # Function to check whether a package is installed
 package_installed() {
-    xbps-query -x "$1" >/dev/null 2>&1
+    xbps-query -p pkgver "$1" >/dev/null 2>&1
 }
 
 # Function to install the packages on Void
@@ -101,7 +101,7 @@ create_venv() {
         rm -rf "$VENV_DIR"
     fi
     
-    # Criar ambiente virtual
+    # Create the virtual environment
     python3 -m venv --system-site-packages "$VENV_DIR"
     
     # Activate the virtual environment and install the dependencies
@@ -109,7 +109,7 @@ create_venv() {
     pip install --upgrade pip
     pip install -r "$PROJECT_DIR/requirements.txt"
     
-    echo -e "${GREEN}Ambiente virtual criado com sucesso!${NC}"
+    echo -e "${GREEN}Virtual environment created successfully!${NC}"
 }
 
 # Function to create the application shortcut
@@ -120,7 +120,7 @@ create_desktop_entry() {
     DESKTOP_DIR="$HOME/.local/share/applications"
     mkdir -p "$DESKTOP_DIR"
     
-    # Criar ficheiro .desktop
+    # Create the .desktop file
     DESKTOP_FILE="$DESKTOP_DIR/linux-ai-assistant.desktop"
     
     cat > "$DESKTOP_FILE" <<EOL
@@ -128,7 +128,7 @@ create_desktop_entry() {
 Version=1.0
 Type=Application
 Name=Linux AI Assistant
-Comment=Assistente de IA permanente para Linux
+Comment=Permanent AI assistant for Linux
 Exec=bash "$PROJECT_DIR/run.sh"
 Icon=$PROJECT_DIR/assets/icon.png
 Terminal=false
@@ -144,7 +144,7 @@ EOL
         update-desktop-database "$DESKTOP_DIR"
     fi
     
-    echo -e "${GREEN}Atalho criado em $DESKTOP_FILE${NC}"
+    echo -e "${GREEN}Shortcut created at $DESKTOP_FILE${NC}"
 }
 
 # Function to create the run script

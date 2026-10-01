@@ -6,6 +6,7 @@
     "command": "linux-ai-assistant",
     "finish-args": [
         "--share=ipc",
+        "--share=network",
         "--socket=wayland",
         "--socket=x11",
         "--device=dri",
@@ -13,8 +14,8 @@
         "--filesystem=xdg-config",
         "--filesystem=xdg-cache",
         "--talk-name=org.freedesktop.Notifications",
-        "--talk-name=org.gtk.vfs.*",
-        "--system-talk-name=org.freedesktop"
+        "--talk-name=org.kde.StatusNotifierWatcher",
+        "--talk-name=org.gtk.vfs.*"
     ],
     "modules": [
         {
@@ -26,6 +27,7 @@
                 "cp -r config /app/bin/",
                 "cp -r scripts /app/bin/",
                 "cp -r plugins /app/bin/",
+                "cp -r themes /app/bin/",
                 "cp run.sh /app/bin/linux-ai-assistant",
                 "chmod +x /app/bin/linux-ai-assistant",
                 "mkdir -p /app/share/linux-ai-assistant",
@@ -35,7 +37,7 @@
             "sources": [
                 {
                     "type": "dir",
-                    "path": ".",
+                    "path": "..",
                     "exclude": [".git", "venv", ".vscode", "*.pyc", "__pycache__", ".DS_Store"]
                 }
             ]

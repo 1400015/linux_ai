@@ -75,7 +75,10 @@ def confirm_and_write(parent, block):
 
     Returns ("written"|"cancelled"|"error", msg).
     """
-    path = os.path.expanduser(block.path)
+    # Resolve symlinks once, up-front: is_privileged_path() compares the
+    # real path, so the target passed to pkexec must be the same path -
+    # otherwise a symlink inside $HOME could redirect the privileged copy.
+    path = os.path.realpath(os.path.expanduser(block.path))
     diff = preview_diff(path, block.content)
 
     if not HAS_GTK:
@@ -95,7 +98,11 @@ def confirm_and_write(parent, block):
     scroll = Gtk.ScrolledWindow()
     scroll.set_min_content_height(240)
     scroll.set_min_content_width(560)
-    box.pack_start(Gtk.Label(label=f"<b>{path}</b>"), False, False, 4)
+    header = Gtk.Label(label=f"<b>{path}</b>")
+    # Without use_markup=True the label shows the literal <b> tags.
+    header.set_use_markup(True)
+    header.set_selectable(True)
+    box.pack_start(header, False, False, 4)
     box.pack_start(scroll, True, True, 4)
 
     textview = Gtk.TextView()

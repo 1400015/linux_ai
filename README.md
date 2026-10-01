@@ -158,9 +158,18 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 
 | Provider | Base URL | Default Model |
 |----------|----------|---------------|
-| OpenRouter | https://openrouter.ai/api/v1 | google/gemini-flash-1.5 |
-| Google AI Studio | https://generativelanguage.googleapis.com/v1beta | gemini-1.5-flash |
+| OpenRouter | https://openrouter.ai/api/v1 | google/gemini-2.5-flash |
+| Google AI Studio | https://generativelanguage.googleapis.com/v1 | gemini-2.5-flash |
+| Anthropic | https://api.anthropic.com/v1 | claude-3-5-haiku-latest |
+| Mistral | https://api.mistral.ai/v1 | mistral-small-latest |
+| Groq | https://api.groq.com/v1 | llama-3.1-8b-instant |
+| Cohere | https://api.cohere.ai/v1 | command-r |
 | Local Model | http://localhost:11434/v1 | llama3.2 |
+
+Model IDs change over time: check your provider's documentation if a
+default model stops being available, and update `api.providers.<name>.model`
+in `config.json`. Keys are read from `~/.config/linux_ai_assistant/.env`
+(copy it from `config/.env.example`).
 
 ## Usage
 
@@ -341,13 +350,18 @@ Edit `~/.config/linux_ai_assistant/config.json`:
 "permissions": {
     "require_sudo": true,
     "allowed_commands": [
-        "ls", "cat", "grep", "new_command"
+        "ls", "cat", "grep", "ps", "df", "du", "free", "uname",
+        "new_command"
     ],
     "allowed_edit_dirs": [
-        "/etc", "/home", "/usr/local", "/new/directory"
+        "/etc", "/home", "/usr/local", "/opt", "/new/directory"
     ]
 }
 ```
+
+Only commands in `allowed_commands` are executed, and file arguments are
+checked against `allowed_edit_dirs`. Prefer read-only commands: anything
+listed here can be run by the assistant without an extra confirmation.
 
 ## Troubleshooting
 
@@ -369,8 +383,11 @@ Edit `~/.config/linux_ai_assistant/config.json`:
 
 ### Problem: Missing permissions
 
-- Run with `sudo` if needed
-- Check the permissions in `config.json`
+- Check the permissions in `config.json` (`allowed_commands`,
+  `allowed_edit_dirs`)
+- Do **not** run the application as root/sudo: it talks to your session bus
+  and writes to your own config directory. Fix the specific permission
+  instead.
 
 ## Contributing
 

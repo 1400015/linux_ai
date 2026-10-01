@@ -10,7 +10,12 @@ import sys
 # any of them (it is not an ancestor), so the handlers were never applied.
 # We configure the "src" logger, which is an ancestor of all of them.
 logger = logging.getLogger("src")
-logger.setLevel(logging.INFO)
+# DEBUG here so the file handler (also DEBUG) actually receives debug
+# records; each handler filters on its own level below.
+logger.setLevel(logging.DEBUG)
+# Stop records from bubbling to the root logger, which would print them a
+# second time (e.g. via a `basicConfig` handler installed by a library).
+logger.propagate = False
 
 _console_handler = logging.StreamHandler(sys.stdout)
 _console_handler.setLevel(logging.INFO)

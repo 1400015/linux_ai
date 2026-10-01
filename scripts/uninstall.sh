@@ -88,8 +88,8 @@ main() {
     echo -e "      Linux AI Assistant - Uninstallation${NC}"
     echo ""
     
-    # Ask for confirmation
-    read -p "Are you sure you want to uninstall Linux AI Assistant? [y/N] " -n 1 -r
+    # Ask for confirmation (an empty stdin/EOF cancels instead of aborting)
+    read -p "Are you sure you want to uninstall Linux AI Assistant? [y/N] " -n 1 -r || REPLY=""
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         echo -e "${BLUE}Uninstallation cancelled.${NC}"

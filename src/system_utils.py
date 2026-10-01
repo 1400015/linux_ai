@@ -149,8 +149,11 @@ class SystemUtils:
                 import psutil
                 info["cpu_cores"] = str(psutil.cpu_count(logical=True))
                 info["cpu_physical_cores"] = str(psutil.cpu_count(logical=False))
-                info["cpu_usage"] = f"{psutil.cpu_percent(interval=1)}%"
-                info["cpu_freq"] = f"{psutil.cpu_freq().current:.2f} MHz" if hasattr(psutil.cpu_freq(), 'current') else "N/A"
+                # interval=None: non-blocking sample. The old interval=1
+                # stalled the caller (GTK main loop) for a full second.
+                info["cpu_usage"] = f"{psutil.cpu_percent(interval=None)}%"
+                _freq = psutil.cpu_freq()
+                info["cpu_freq"] = f"{_freq.current:.2f} MHz" if _freq is not None and hasattr(_freq, 'current') else "N/A"
             except ImportError:
                 try:
                     with open('/proc/cpuinfo', 'r') as f:
@@ -194,10 +197,14 @@ class SystemUtils:
             hours, remainder = divmod(remainder, 3600)
             minutes, seconds = divmod(remainder, 60)
             info["uptime"] = f"{days}d {hours}h {minutes}m {seconds}s"
-            info["uptime_seconds"] = str(uptime_seconds)            # User
+            info["uptime_seconds"] = str(uptime_seconds)
+
+            # User
             try:
                 info["username"] = os.getlogin()
-            except:
+            except OSError:
+                # getlogin() fails without a controlling terminal
+                # (cron, systemd services, containers).
                 info["username"] = os.environ.get("USER", "unknown")
             
             info["hostname"] = platform.node()
@@ -217,7 +224,7 @@ class SystemUtils:
                             break
                     else:
                         info["distro"] = "Unknown"
-            except:
+            except OSError:
                 info["distro"] = "Unknown"
             
             return info
@@ -284,70 +291,6 @@ class SystemUtils:
             logger.error(f"Error running command: {e}")
             return False, f"Error running command: {e}"
     
-    def execute_sudo_command(self, command: str, password: str = None, timeout: int = 10) -> Tuple[bool, str]:
-        """
-        Run a command with sudo privileges.
-
-        Args:
-            command: Command to run.
-            password: Password for sudo (optional).
-            timeout: Timeout in seconds.
-
-        Returns:
-            Tuple (success, output).
-        """
-        if not command or not isinstance(command, str):
-            return False, "Invalid command"
-        
-        # Sanitize command
-        try:
-            cmd_parts = self._sanitize_command(command)
-            if not cmd_parts:
-                return False, "Invalid command after sanitization"
-            
-            cmd_base = cmd_parts[0]
-        except Exception as e:
-            return False, f"Error processing command: {e}"
-        
-        # Check if the command is allowed
-        if cmd_base not in self.allowed_commands:
-            return False, f"Command not allowed: {cmd_base}"
-        
-        # Commands that read files also respect allowed_edit_dirs
-        if not self._validate_file_args(cmd_parts):
-            return False, f"Path not allowed: {cmd_base}"
-
-        try:
-            if password:
-                # Use sudo with password
-                cmd = ['sudo', '-S'] + cmd_parts
-                result = subprocess.run(
-                    cmd,
-                    input=password + '\n',
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
-            else:
-                # Ask for password interactively
-                cmd = ['sudo'] + cmd_parts
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
-            
-            if result.returncode == 0:
-                return True, result.stdout
-            else:
-                return False, result.stderr or result.stdout
-                
-        except subprocess.TimeoutExpired:
-            return False, f"Timeout running sudo command: {command}"
-        except Exception as e:
-            return False, f"Error running sudo command: {e}"
-    
     def read_file(self, filepath: str, max_lines: int = 100) -> Tuple[bool, str]:
         """
         Read a file from the system.
@@ -382,10 +325,15 @@ class SystemUtils:
             
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = []
+                # Cap each line: a single-line file (minified JSON, a log
+                # without newlines) could otherwise be read whole into RAM.
+                max_line_chars = 10000
                 for i, line in enumerate(f):
                     if i >= max_lines:
                         lines.append(f"\n... (more than {max_lines} lines omitted)")
                         break
+                    if len(line) > max_line_chars:
+                        line = line[:max_line_chars] + "... (line truncated)\n"
                     lines.append(line)
             
             return True, ''.join(lines)
@@ -883,7 +831,7 @@ class SystemUtils:
                     with open(file_path, 'rb') as f:
                         header = f.read(32)
                     info["header"] = header.hex()[:20] + "..."
-                except:
+                except OSError:
                     pass
             
         except Exception as e:

@@ -29,13 +29,19 @@ class TrayIcon:
         
         logger.info("Initialize system tray icon")
         
+        # Guards update_expert_mode() against re-entering the "toggled"
+        # handler while we are programmatically syncing the checkbox.
+        self._syncing = False
+        
         self._create_tray_icon()
     
     def _create_tray_icon(self):
         """Create system tray icon"""
         try:
-            # Try AppIndicator3 (Ubuntu)
-            self.indicator = AppIndicator3.IndicatorApp.new(
+            # Try AppIndicator3 (Ubuntu).
+            # NB: the class is `Indicator` (`IndicatorApp` does not exist and
+            # raised AttributeError, silently forcing the StatusIcon fallback).
+            self.indicator = AppIndicator3.Indicator.new(
                 "linux-ai-assistant",
                 "system-run",
                 AppIndicator3.IndicatorCategory.APPLICATION_STATUS
@@ -83,8 +89,10 @@ class TrayIcon:
             logger.info("StatusIcon created successfully")
             
         except Exception as e:
+            # Do not re-raise: without a tray icon the app still works via
+            # the window/float button, and raising here aborted startup.
             logger.error(f"Error creating StatusIcon: {e}")
-            raise
+            self.status_icon = None
     
     def _create_menu(self):
         """Create system tray icon menu"""
@@ -134,48 +142,33 @@ class TrayIcon:
     
     def on_tray_clicked(self, icon):
         """Handler for system tray icon click"""
-        if hasattr(self.main_window, 'get_window') and self.main_window.get_window():
-            if self.main_window.get_window().get_property("is-active"):
-                self.main_window.hide()
-                self.toggle_item.set_label("Show Window")
-            else:
-                self.main_window.show()
-                self.main_window.present()
-                self.toggle_item.set_label("Hide Window")
-        else:
-            self.main_window.show()
-            self.main_window.present()
-            self.toggle_item.set_label("Hide Window")
-        
-        logger.debug("System tray icon clicked")
+        self.on_toggle_window(None)
     
     def on_tray_menu(self, icon, button, time):
         """Handler for system tray icon menu"""
-        if hasattr(self, 'status_icon'):
+        if getattr(self, 'status_icon', None) is not None:
             self.menu.popup_at_pointer(None)  # Popup at cursor
             logger.debug("System tray menu shown")
     
     def on_toggle_window(self, item):
         """Toggle window visibility"""
-        if hasattr(self.main_window, 'get_window') and self.main_window.get_window():
-            if self.main_window.get_window().get_property("is-active"):
-                self.main_window.hide()
-                self.toggle_item.set_label("Show Window")
-            else:
-                self.main_window.show()
-                self.main_window.present()
-                self.toggle_item.set_label("Hide Window")
+        # `is-active` is a Gtk.Window property; the GdkWindow returned by
+        # get_window() does not have it (get_property raised there).
+        if self.main_window.get_property("is-active"):
+            self.main_window.hide()
+            self.toggle_item.set_label(_("Show Window"))
         else:
             self.main_window.show()
             self.main_window.present()
-            self.toggle_item.set_label("Hide Window")
+            self.toggle_item.set_label(_("Hide Window"))
         
         logger.debug("Window toggled")
     
     def on_toggle_expert_mode(self, item):
         """Toggle expert mode"""
+        if self._syncing:
+            return  # programmatic set_active() from update_expert_mode()
         self.main_window.on_expert_mode_toggled(None)
-        self.expert_item.set_active(self.main_window.expert_mode)
         logger.debug(f"Expert mode toggled: {self.main_window.expert_mode}")
     
     def on_config_clicked(self, item):
@@ -200,11 +193,20 @@ class TrayIcon:
     
     def update_expert_mode(self, enabled: bool):
         """Update the expert mode state in the menu"""
-        if hasattr(self, 'expert_item'):
+        if not hasattr(self, 'expert_item'):
+            return
+        if self.expert_item.get_active() == enabled:
+            return
+        # set_active() fires "toggled"; the flag stops the handler from
+        # toggling the main window back (infinite ping-pong).
+        self._syncing = True
+        try:
             self.expert_item.set_active(enabled)
-            logger.debug(f"Expert mode menu updated: {enabled}")
+        finally:
+            self._syncing = False
+        logger.debug(f"Expert mode menu updated: {enabled}")
     
     def update_toggle_label(self, visible: bool):
         """Update the toggle label in the menu"""
         if hasattr(self, 'toggle_item'):
-            self.toggle_item.set_label("Hide Window" if visible else "Show Window")
+            self.toggle_item.set_label(_("Hide Window") if visible else _("Show Window"))

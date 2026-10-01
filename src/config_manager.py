@@ -46,37 +46,37 @@ class ConfigManager:
                 "openrouter": {
                     "api_key": "",
                     "base_url": "https://openrouter.ai/api/v1",
-                    "model": "google/gemini-flash-1.5",
+                    "model": "google/gemini-2.5-flash",
                     "timeout": 30
                 },
                 "google_ai_studio": {
                     "api_key": "",
                     "base_url": "https://generativelanguage.googleapis.com/v1",
-                    "model": "gemini-1.5-flash",
+                    "model": "gemini-2.5-flash",
                     "timeout": 30
                 },
                 "anthropic": {
                     "api_key": "",
                     "base_url": "https://api.anthropic.com/v1",
-                    "model": "claude-3-haiku",
+                    "model": "claude-3-5-haiku-latest",
                     "timeout": 60
                 },
                 "mistral": {
                     "api_key": "",
                     "base_url": "https://api.mistral.ai/v1",
-                    "model": "mistral-small",
+                    "model": "mistral-small-latest",
                     "timeout": 60
                 },
                 "groq": {
                     "api_key": "",
                     "base_url": "https://api.groq.com/v1",
-                    "model": "llama3-8b-8192",
+                    "model": "llama-3.1-8b-instant",
                     "timeout": 60
                 },
                 "cohere": {
                     "api_key": "",
                     "base_url": "https://api.cohere.ai/v1",
-                    "model": "command",
+                    "model": "command-r",
                     "timeout": 60
                 },
                 "local_llm": {
@@ -96,7 +96,7 @@ class ConfigManager:
         "permissions": {
             "require_sudo": True,
             "allowed_commands": [
-                "ls", "cat", "grep", "ps", "top", "df", "du", "free", "uname", "neofetch",
+                "ls", "cat", "grep", "ps", "df", "du", "free", "uname", "neofetch",
                 "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis"
             ],
             "allowed_edit_dirs": ["/etc", "/home", "/usr/local", "/opt"]
@@ -122,7 +122,11 @@ class ConfigManager:
             "always_on_top": bool,
             "auto_start": bool,
             "theme": str,
-            "encryption_enabled": bool
+            "encryption_enabled": bool,
+            "dock_mode": str,
+            "dock_edge": str,
+            "button_edge": str,
+            "language": str
         },
         "api": {
             "default_provider": str,
@@ -169,6 +173,9 @@ class ConfigManager:
         self._encryption_key = None
         self._save_timer = None
         self._dirty = False
+        # set()/save()/flush() may run from the GTK main thread, worker
+        # threads and the debounce Timer at the same time.
+        self._lock = threading.RLock()
         self._themes_dir = Path(__file__).parent.parent / "themes"
         if not self._themes_dir.is_dir():
             self._themes_dir = Path(sys.prefix) / "share" / "linux-ai-assistant" / "themes"
@@ -179,7 +186,7 @@ class ConfigManager:
     
     def _load_encryption_key(self):
         """Load or generate encryption key"""
-        if self.config.get("app.encryption_enabled", False):
+        if self.get("app.encryption_enabled", False):
             key_path = Path.home() / ".config" / "linux_ai_assistant" / ".encryption_key"
             if key_path.exists():
                 try:
@@ -196,7 +203,8 @@ class ConfigManager:
                     from cryptography.fernet import Fernet
                     self._encryption_key = Fernet.generate_key()
                     key_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(key_path, 'wb') as f:
+                    fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(fd, 'wb') as f:
                         f.write(self._encryption_key)
                     logger.info("New encryption key generated")
                 except ImportError:
@@ -210,7 +218,7 @@ class ConfigManager:
     
     def _encrypt_value(self, value: str) -> str:
         """Encrypt value"""
-        if not self.config.get("app.encryption_enabled", False) or not self._encryption_key:
+        if not self.get("app.encryption_enabled", False) or not self._encryption_key:
             return value
         try:
             from cryptography.fernet import Fernet
@@ -222,7 +230,7 @@ class ConfigManager:
     
     def _decrypt_value(self, value: str) -> str:
         """Decrypt value"""
-        if not self.config.get("app.encryption_enabled", False) or not self._encryption_key:
+        if not self.get("app.encryption_enabled", False) or not self._encryption_key:
             return value
         try:
             from cryptography.fernet import Fernet
@@ -237,15 +245,21 @@ class ConfigManager:
         try:
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r', encoding='utf-8') as f:
-                    self.config = json.load(f)
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    # json.load accepts lists/strings/numbers; those would
+                    # break every later section lookup.
+                    raise ValueError(
+                        f"Configuration root must be a JSON object, got {type(data).__name__}"
+                    )
+                self.config = data
                 logger.info(f"Configuration loaded from {self.config_path}")
             else:
                 # Create default configuration
                 self.config = self._get_default_config()
                 self.save()
                 logger.info("Default configuration created")
-                self._dirty = False
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, IOError, OSError, ValueError) as e:
             logger.error(f"Error loading configuration: {e}")
             self.config = self._get_default_config()
     
@@ -258,13 +272,26 @@ class ConfigManager:
         """
         return copy.deepcopy(self.DEFAULT_CONFIG)
     
+    def _default_value(self, section: str, key: str, expected_type):
+        """Real default for `section.key` (falls back to the schema type).
+
+        Using `expected_type()` alone produced broken values: `float()` is
+        0.0 (invisible window for app.opacity), `str()` is "" (no theme)...
+        """
+        section_defaults = self.DEFAULT_CONFIG.get(section, {})
+        if key in section_defaults:
+            return copy.deepcopy(section_defaults[key])
+        return expected_type()
+
     def _validate_config(self):
         """Validate configuration against schema"""
         try:
+            changed = False
             # Validate basic structure
             for section, schema in self.CONFIG_SCHEMA.items():
-                if section not in self.config:
+                if section not in self.config or not isinstance(self.config[section], dict):
                     self.config[section] = {}
+                    changed = True
                     logger.warning(f"Section {section} not found. Creating default.")
                 
                 for key, expected_type in schema.items():
@@ -272,20 +299,28 @@ class ConfigManager:
                         value = self.config[section][key]
                         if not isinstance(value, expected_type):
                             logger.warning(f"Invalid type for {section}.{key}: expected {expected_type}, got {type(value)}")
-                            self.config[section][key] = expected_type()
+                            self.config[section][key] = self._default_value(section, key, expected_type)
+                            changed = True
                     else:
-                        self.config[section][key] = expected_type()
+                        self.config[section][key] = self._default_value(section, key, expected_type)
+                        changed = True
                         logger.warning(f"Key {section}.{key} not found. Creating default.")
             
             # Load encryption key if needed
-            if self.config.get("app.encryption_enabled", False):
+            if self.get("app.encryption_enabled", False):
                 self._load_encryption_key()
             
-            self.save()
-            self._dirty = False
+            # Only touch the file when validation actually repaired something
+            if changed:
+                self.save()
         except Exception as e:
             logger.error(f"Error validating configuration: {e}")
     
+    @staticmethod
+    def _env_name(key: str) -> str:
+        """Canonical LINUX_AI_* environment variable name for a config key."""
+        return "LINUX_AI_" + key.upper().replace(".", "_").replace("-", "_")
+
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value using dot notation.
@@ -295,8 +330,7 @@ class ConfigManager:
             config.get("api.providers.openrouter.api_key") -> "..."
         """
         # Override by environment variables
-        env_var = key.upper().replace(".", "_").replace("-", "_")
-        env_value = os.environ.get(f"LINUX_AI_{env_var}")
+        env_value = os.environ.get(self._env_name(key))
         if env_value is not None:
             # Convert type if needed
             if isinstance(default, bool):
@@ -337,19 +371,33 @@ class ConfigManager:
             value: Value to set.
         """
         keys = key.split('.')
-        current = self.config
-        
-        for i, k in enumerate(keys[:-1]):
-            if k not in current:
-                current[k] = {}
-            current = current[k]
-        
-        # Encrypt API keys if needed
-        if "api_key" in key and isinstance(value, str) and self.config.get("app.encryption_enabled", False):
-            value = self._encrypt_value(value)
-        
-        current[keys[-1]] = value
-        self._schedule_save()
+        with self._lock:
+            current = self.config
+
+            for i, k in enumerate(keys[:-1]):
+                if k not in current:
+                    current[k] = {}
+                if not isinstance(current[k], dict):
+                    raise ValueError(
+                        f"Cannot set '{key}': '{'.'.join(keys[:i + 1])}' is not a section"
+                    )
+                current = current[k]
+
+            # No-op writes are the common case while dragging/resizing the
+            # window (configure-event fires per pixel): without this check
+            # every call re-armed the debounce Timer, so a single drag could
+            # schedule hundreds of writes.
+            if keys[-1] in current and current[keys[-1]] == value:
+                return
+
+            # Encrypt API keys if needed
+            if "api_key" in key and isinstance(value, str) and self.get("app.encryption_enabled", False):
+                value = self._encrypt_value(value)
+                # `value` above is freshly encrypted (new IV), so the
+                # equality shortcut cannot apply to encrypted keys.
+
+            current[keys[-1]] = value
+            self._schedule_save()
         logger.debug("Configuration updated: %s", key)
 
     def _schedule_save(self):
@@ -357,7 +405,7 @@ class ConfigManager:
 
         Consecutive calls within SAVE_DEBOUNCE_SECONDS result in a single
         write. `save()` remains available for those who need immediate
-        persistence.
+        persistence. Caller must hold `self._lock`.
         """
         self._dirty = True
         if self._save_timer is not None:
@@ -369,31 +417,50 @@ class ConfigManager:
 
     def flush(self):
         """Write immediately if there are pending changes."""
-        if self._save_timer is not None:
-            self._save_timer.cancel()
-            self._save_timer = None
-        if self._dirty:
-            self.save()
+        with self._lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+            if self._dirty:
+                self.save()
 
     def save(self):
         """Save configuration to file
 
         Atomic write (temp file + os.replace) so a crash in the middle of
-        writing never leaves a truncated config.json.
+        writing never leaves a truncated config.json. The file is created
+        with mode 0600: it holds API keys. `_dirty` is cleared only after
+        the write succeeded, otherwise a failed write would be forgotten.
         """
-        try:
-            self._dirty = False
-            target = Path(self.config_path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = target.with_name(target.name + f".tmp{os.getpid()}")
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, target)
-            logger.debug(f"Configuration saved to {self.config_path}")
-        except (IOError, OSError) as e:
-            logger.error(f"Error saving configuration: {e}")
+        temp_path = None
+        with self._lock:
+            try:
+                target = Path(self.config_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.chmod(target.parent, 0o700)
+                except OSError:
+                    pass
+                temp_path = target.with_name(target.name + f".tmp{os.getpid()}")
+                fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(copy.deepcopy(self.config), f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, target)
+                try:
+                    os.chmod(target, 0o600)
+                except OSError:
+                    pass
+                self._dirty = False
+                logger.debug(f"Configuration saved to {self.config_path}")
+            except (IOError, OSError, TypeError, ValueError) as e:
+                logger.error(f"Error saving configuration: {e}")
+                if temp_path is not None:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
     
     def reload(self):
         """Reload configuration from file"""
@@ -407,14 +474,11 @@ class ConfigManager:
             "openrouter": "OPENROUTER_API_KEY",
             "google_ai_studio": "GOOGLE_AI_STUDIO_KEY",
         }
-        key = f"api.providers.{provider}.api_key"
-        env_name = "LINUX_AI_" + key.upper().replace(".", "_")
-        if os.environ.get(env_name):
-            return os.environ[env_name]
         legacy_name = legacy_names.get(provider)
         if legacy_name and os.environ.get(legacy_name):
             return os.environ[legacy_name]
-        return self.get(key)
+        # get() already resolves the canonical LINUX_AI_* variable
+        return self.get(f"api.providers.{provider}.api_key")
     
     def set_api_key(self, provider: str, api_key: str):
         """Set API key for a provider"""
@@ -518,20 +582,32 @@ class ConfigManager:
     def enable_encryption(self, enable: bool = True):
         """Enable/disable API key encryption"""
         if enable:
-            # Generate key if it does not exist
+            # The flag must be on *before* _load_encryption_key() and the
+            # re-encryption loop: both are gated on it.
+            self.set("app.encryption_enabled", True)
             if not self._encryption_key:
                 self._load_encryption_key()
-            self.set("app.encryption_enabled", True)
-            # Re-encrypt all API keys
-            for provider in self.get("api.providers", {}).keys():
+            if not self._encryption_key:
+                # cryptography is unavailable/unusable - keep keys in plaintext
+                self.set("app.encryption_enabled", False)
+                logger.warning("Encryption could not be enabled (missing key)")
+                return
+            # Re-encrypt every stored API key
+            for provider in list(self.get("api.providers", {}).keys()):
                 api_key = self.get(f"api.providers.{provider}.api_key")
                 if api_key:
                     self.set(f"api.providers.{provider}.api_key", api_key)
         else:
-            # Decrypt all API keys before disabling
-            for provider in self.get("api.providers", {}).keys():
+            # Read (and decrypt) the keys while encryption is still enabled...
+            decrypted = {}
+            for provider in list(self.get("api.providers", {}).keys()):
                 api_key = self.get(f"api.providers.{provider}.api_key")
                 if api_key:
-                    self.set(f"api.providers.{provider}.api_key", api_key)
+                    decrypted[provider] = api_key
+            # ...then disable the flag so set() stores them in plaintext.
+            # (Writing them before flipping the flag would re-encrypt them
+            # and leave ciphertext behind a disabled-encryption config.)
             self.set("app.encryption_enabled", False)
+            for provider, api_key in decrypted.items():
+                self.set(f"api.providers.{provider}.api_key", api_key)
         logger.info(f"Encryption {'enabled' if enable else 'disabled'}")

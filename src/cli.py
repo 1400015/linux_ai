@@ -12,24 +12,17 @@ Uso:
 
 import sys
 import json
+import os
 import time
 import argparse
 import logging
 from pathlib import Path
 from typing import Optional, Dict
 
-# Add src to the path
-sys.path.insert(0, str(Path(__file__).parent))
-
 from .config_manager import ConfigManager
 from .ai_client import AIClient
 from .system_utils import SystemUtils
 
-# Configurar logging for CLI
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -40,7 +33,9 @@ class CLIApp:
         self.config = ConfigManager()
         self.ai_client = AIClient(self.config)
         self.system_utils = SystemUtils(self.config)
-        self.conversation_history = []
+        # Load the shared history (written by the GUI too) so saving it back
+        # never wipes entries from other sessions.
+        self.conversation_history = self._load_history()
         self.expert_mode = False
     
     def parse_args(self):
@@ -207,6 +202,60 @@ Examples:
   python -m src.cli system info
         """)
     
+    @staticmethod
+    def _history_file() -> Path:
+        return Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+
+    def _load_history(self):
+        """Load the shared conversation history (best effort)."""
+        try:
+            history_file = self._history_file()
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            logger.warning(f"Could not load history: {e}")
+        return []
+
+    def _build_request_messages(self, message: str):
+        """Assemble the request context: system prompt + capped history + message."""
+        context = self._get_context_message()
+        # Cap the context the same way the GUI does - never re-send the whole
+        # conversation on every turn.
+        max_messages = self.config.get("context.max_messages", 40)
+        history = [
+            {"role": m.get("role"), "content": m.get("content", "")}
+            for m in self.conversation_history[-max_messages:]
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+        ]
+        full_history = ([context] + history) if context else history
+        full_history.append({"role": "user", "content": message})
+        return full_history
+
+    @staticmethod
+    def _is_error_text(text: str) -> bool:
+        """True when a stream yielded an error message instead of content."""
+        return not text or text.startswith((
+            "Error:", "Stream error:", "Unknown provider",
+            "API key not configured", "Invalid message format",
+            "Empty message list",
+        ))
+
+    def _record_exchange(self, message: str, response_text: str):
+        """Append a user/assistant exchange to the in-memory history."""
+        self.conversation_history.append({
+            "role": "user",
+            "content": message,
+            "timestamp": time.time(),
+        })
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": response_text,
+            "timestamp": time.time(),
+        })
+
     def handle_chat(self, args):
         """Process the chat command."""
         message = ' '.join(args.message)
@@ -214,13 +263,8 @@ Examples:
         if args.expert:
             self.expert_mode = True
         
-        # Prepare context
-        context = self._get_context_message()
-        full_history = [context] + self.conversation_history if context else list(self.conversation_history)
+        full_history = self._build_request_messages(message)
 
-        # Add the user message
-        full_history.append({"role": "user", "content": message})
-        
         # Get the response
         if args.stream:
             print("\n[AI] ", end="", flush=True)
@@ -233,6 +277,9 @@ Examples:
                 print(chunk, end="", flush=True)
                 response_text += chunk
             print("\n")
+            if self._is_error_text(response_text):
+                # Do not persist error text as an assistant turn
+                return
         else:
             response_text = self.ai_client.chat(
                 full_history,
@@ -247,8 +294,7 @@ Examples:
         
         # Save to history
         if not args.no_history:
-            self.conversation_history.append({"role": "user", "content": message})
-            self.conversation_history.append({"role": "assistant", "content": response_text})
+            self._record_exchange(message, response_text)
             self._save_history()
     
     def handle_capture(self, args):
@@ -276,10 +322,7 @@ Examples:
         self.expert_mode = True
         message = ' '.join(args.message)
         
-        # Prepare the expert context
-        context = self._get_context_message()
-        full_history = [context] + self.conversation_history if context else list(self.conversation_history)
-        full_history.append({"role": "user", "content": message})
+        full_history = self._build_request_messages(message)
         
         response_text = self.ai_client.chat(
             full_history,
@@ -289,6 +332,9 @@ Examples:
         
         if response_text:
             print(f"\n[Expert]\n{response_text}\n")
+            # Persist like `chat` does: expert turns used to vanish on exit
+            self._record_exchange(message, response_text)
+            self._save_history()
         else:
             print("\n[ERROR] Could not get a response\n")
     
@@ -384,7 +430,7 @@ Examples:
     
     def handle_history(self, args):
         """Process the history command."""
-        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        history_file = self._history_file()
         
         if args.clear:
             try:
@@ -402,18 +448,24 @@ Examples:
                 with open(history_file, 'r', encoding='utf-8') as f:
                     history = json.load(f)
                 
-                # Show the last N messages
-                limit = min(args.limit, len(history))
-                messages = history[-limit:]
+                # Show the last N messages (limit 0/negative => nothing)
+                if args.limit <= 0:
+                    messages = []
+                else:
+                    limit = min(args.limit, len(history))
+                    messages = history[-limit:]
                 
                 print(f"\nLast {len(messages)} history messages:\n")
                 for i, msg in enumerate(messages, 1):
                     role = msg.get("role", "unknown")
                     content = msg.get("content", "")
-                    timestamp = msg.get("timestamp", 0)
+                    timestamp = msg.get("timestamp")
                     
-                    # Format the timestamp
-                    timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
+                    # Format the timestamp (entries without one: no date shown)
+                    if timestamp:
+                        timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
+                    else:
+                        timestamp_str = "—"
                     
                     # Truncate the content if it is too long
                     if len(content) > 100:
@@ -425,12 +477,12 @@ Examples:
         except Exception as e:
             print(f"✗ Error loading history: {e}")
     
-    def handle_stats(self, args):
-        """Process the stats command."""
+    def _render_token_usage(self, title: str = "USAGE STATISTICS"):
+        """Shared renderer for `stats` and `tokens usage`."""
         token_usage = self.ai_client.get_token_usage()
         
         print("\n" + "=" * 50)
-        print("USAGE STATISTICS")
+        print(title)
         print("=" * 50 + "\n")
         
         if token_usage:
@@ -443,12 +495,14 @@ Examples:
                 print()
         else:
             print("  No statistics available\n")
-        
+        print("=" * 50 + "\n")
+    
+    def handle_stats(self, args):
+        """Process the stats command."""
+        self._render_token_usage()
         if args.reset:
             self.ai_client.reset_token_usage()
             print("✓ Statistics reset")
-        
-        print("=" * 50 + "\n")
     
     def handle_config(self, args):
         """Process the config command."""
@@ -470,10 +524,15 @@ Examples:
             value = args.value
             if value.lower() in ('true', 'false'):
                 value = value.lower() == 'true'
-            elif value.isdigit():
-                value = int(value)
-            elif value.replace('.', '', 1).isdigit():
-                value = float(value)
+            else:
+                # int() also accepts negative numbers (isdigit() did not)
+                try:
+                    value = int(value)
+                except ValueError:
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        pass
             
             self.config.set(args.key, value)
             self.config.flush()
@@ -488,6 +547,9 @@ Examples:
                 print("✗ You must specify a key")
                 return
             value = self.config.get(args.key)
+            # get() decrypts api_key values - never print a live secret
+            if "api_key" in args.key.lower() and value:
+                value = "*" * 12
             print(f"{args.key}: {value}")
     
     def _print_config(self, config: Dict, indent: int = 0):
@@ -530,24 +592,7 @@ Examples:
     def handle_tokens(self, args):
         """Process the tokens command."""
         if not args.tokens_command or args.tokens_command == 'usage':
-            token_usage = self.ai_client.get_token_usage()
-            
-            print("\n" + "=" * 50)
-            print("TOKEN USAGE")
-            print("=" * 50 + "\n")
-            
-            if token_usage:
-                for provider, usage in token_usage.items():
-                    print(f"{provider}:")
-                    print(f"  Input:  {usage.get('input', 0)}")
-                    print(f"  Output: {usage.get('output', 0)}")
-                    print(f"  Total:  {usage.get('total', 0)}")
-                    print()
-            else:
-                print("No token statistics available\n")
-            
-            print("=" * 50 + "\n")
-        
+            self._render_token_usage("TOKEN USAGE")
         elif args.tokens_command == 'reset':
             self.ai_client.reset_token_usage()
             print("✓ Token count reset")
@@ -580,18 +625,32 @@ Respond clearly and concisely in English."""
             }
     
     def _save_history(self):
-        """Save the conversation history."""
-        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        """Save the conversation history (atomic; preserves other sessions')."""
+        history_file = self._history_file()
+        temp_path = None
         try:
             history_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(history_file, 'w', encoding='utf-8') as f:
+            temp_path = history_file.with_name(history_file.name + ".tmp")
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(self.conversation_history, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, history_file)
         except Exception as e:
             logger.error(f"Error saving history: {e}")
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
 
 def main():
     """Main entry point for the CLI."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     try:
         app = CLIApp()
         app.run()

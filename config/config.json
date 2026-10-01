@@ -10,7 +10,11 @@
     "always_on_top": true,
     "auto_start": false,
     "theme": "dark",
-    "encryption_enabled": false
+    "encryption_enabled": false,
+    "dock_mode": "float",
+    "dock_edge": "right",
+    "button_edge": "right",
+    "language": ""
   },
   "api": {
     "default_provider": "openrouter",
@@ -18,37 +22,37 @@
       "openrouter": {
         "api_key": "",
         "base_url": "https://openrouter.ai/api/v1",
-        "model": "google/gemini-flash-1.5",
+        "model": "google/gemini-2.5-flash",
         "timeout": 30
       },
       "google_ai_studio": {
         "api_key": "",
         "base_url": "https://generativelanguage.googleapis.com/v1",
-        "model": "gemini-1.5-flash",
+        "model": "gemini-2.5-flash",
         "timeout": 30
       },
       "anthropic": {
         "api_key": "",
         "base_url": "https://api.anthropic.com/v1",
-        "model": "claude-3-haiku",
+        "model": "claude-3-5-haiku-latest",
         "timeout": 60
       },
       "mistral": {
         "api_key": "",
         "base_url": "https://api.mistral.ai/v1",
-        "model": "mistral-small",
+        "model": "mistral-small-latest",
         "timeout": 60
       },
       "groq": {
         "api_key": "",
         "base_url": "https://api.groq.com/v1",
-        "model": "llama3-8b-8192",
+        "model": "llama-3.1-8b-instant",
         "timeout": 60
       },
       "cohere": {
         "api_key": "",
         "base_url": "https://api.cohere.ai/v1",
-        "model": "command",
+        "model": "command-r",
         "timeout": 60
       },
       "local_llm": {
@@ -68,11 +72,9 @@
   "permissions": {
     "require_sudo": true,
     "allowed_commands": [
-      "ls", "cat", "grep", "ps", "top", "df", "du", "free", "uname", "neofetch",
+      "ls", "cat", "grep", "ps", "df", "du", "free", "uname", "neofetch",
       "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis",
-      "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig", "nslookup",
-      "wget", "curl", "git", "docker", "podman", "systemctl", "service",
-      "journalctl", "logcat", "apt", "dnf", "yum", "pacman", "xbps", "emerge"
+      "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig", "nslookup"
     ],
     "allowed_edit_dirs": ["/etc", "/home", "/usr/local", "/opt"]
   },

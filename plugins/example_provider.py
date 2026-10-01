@@ -22,14 +22,18 @@ def register_provider(ai_client):
         ai_client: Instância do AIClient
     """
     
-    def my_custom_provider_chat(messages, model, api_key, temperature, max_tokens, timeout):
+    def my_custom_provider_chat(messages, model, api_key, base_url, temperature, max_tokens, timeout):
         """
         Implementação de chat para o provedor customizado
+        
+        A assinatura deve coincidir exatamente com a que o AIClient invoca:
+        (messages, model, api_key, base_url, temperature, max_tokens, timeout)
         
         Args:
             messages: Lista de mensagens
             model: Modelo a usar
-            api_key: API key
+            api_key: API key (None se o provedor não tem entrada em config.json)
+            base_url: URL base (None se o provedor não tem entrada em config.json)
             temperature: Temperatura
             max_tokens: Máximo de tokens
             timeout: Timeout em segundos
@@ -38,7 +42,7 @@ def register_provider(ai_client):
             Resposta da IA ou None
         """
         # Exemplo: Usar uma API REST customizada
-        url = "https://api.meu-provedor.com/v1/chat"
+        url = f"{base_url}/chat" if base_url else "https://api.meu-provedor.com/v1/chat"
         
         payload = {
             "model": model,
@@ -121,8 +125,9 @@ def register_provider(ai_client):
     # Registrar o provedor
     ai_client.register_provider("my_custom_provider", my_custom_provider_chat)
     
-    # Registrar método de stream (opcional)
-    # ai_client._stream_my_custom_provider = my_custom_provider_stream
+    # Registrar método de stream (opcional): o AIClient procura
+    # `_stream_<nome_do_provedor>` em stream_chat()
+    ai_client._stream_my_custom_provider = my_custom_provider_stream
     
     logger.info("Provedor customizado registado: my_custom_provider")
 
