@@ -138,6 +138,22 @@ class AIClient:
     def get_supported_providers(self) -> List[str]:
         """Get list of supported providers"""
         return self.SUPPORTED_PROVIDERS.copy()
+
+    def provider_ready(self, provider: str = None) -> bool:
+        """True if `provider` can be used without further configuration.
+
+        `local_llm` needs no key; a plugin provider registered via
+        `register_provider()` handles its own auth; every other provider
+        requires an API key. The UI uses this to fall back to the offline
+        assistant before even trying a request.
+        """
+        provider = provider or self.config.get("api.default_provider", "openrouter")
+        if provider == "local_llm":
+            return True
+        api_config = self._get_api_config(provider)
+        if not api_config:
+            return getattr(self, f"_chat_{provider}", None) is not None
+        return bool(self._get_api_key(provider))
     
     def _count_tokens(self, text: str) -> int:
         """Estimate number of tokens (simplified)"""

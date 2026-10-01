@@ -19,9 +19,9 @@ gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, Pango
 import logging
 
-from . import dock, file_actions
+from . import dock, file_actions, offline_assistant
 from .render_core import placeholder_span, valid_span, header_offset
-from .i18n import _
+from .i18n import _, get_language
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -78,6 +78,9 @@ class MainWindow(Gtk.Window):
         self.config = config_manager
         self.ai_client = ai_client
         self.system_utils = system_utils
+        # Answers basic questions and offers local tasks when no API key is
+        # configured or the provider cannot be reached.
+        self.offline = offline_assistant.OfflineAssistant(system_utils, config_manager)
         
         # Configurar janela
         self.set_default_size(
@@ -1573,12 +1576,39 @@ Respond clearly and concisely in English."""
             messages = self._build_request_messages()
             full_history = ([context] + messages) if context else messages
 
-            for chunk in self.ai_client.stream_chat(full_history):
-                if cancel_event.is_set():
-                    break
+            offline_reply = None
 
-                response_text += chunk
-                GLib.idle_add(self._update_ai_message, request_id, chunk, True)
+            if not self.ai_client.provider_ready():
+                # No key for the selected provider: answer from local knowledge
+                # instead of failing with "API key not configured".
+                logger.info("No usable provider; using the offline assistant")
+                offline_reply = self.offline.handle(message, get_language())
+            else:
+                for chunk in self.ai_client.stream_chat(full_history):
+                    if cancel_event.is_set():
+                        break
+
+                    response_text += chunk
+                    GLib.idle_add(self._update_ai_message, request_id, chunk, True)
+
+                # Provider unreachable (offline / DNS): fall back locally too.
+                if (not cancel_event.is_set()
+                        and self._is_api_failure(response_text)):
+                    logger.info("Provider unavailable; using the offline assistant")
+                    response_text = ""
+                    offline_reply = self.offline.handle(message, get_language())
+
+            if offline_reply is not None:
+                GLib.idle_add(
+                    self._add_system_message,
+                    _("Offline mode: answering from local knowledge."),
+                )
+                response_text = offline_reply.text
+                GLib.idle_add(self._update_ai_message, request_id,
+                              response_text, False)
+                if offline_reply.commands and not cancel_event.is_set():
+                    GLib.idle_add(self._offer_offline_commands,
+                                  offline_reply.commands)
 
             cancelled = cancel_event.is_set()
             GLib.idle_add(self._finalize_response, request_id, response_text, cancelled)
@@ -1589,6 +1619,69 @@ Respond clearly and concisely in English."""
             # Finalize with whatever was streamed so far: it is already on
             # screen, and the history must match what the user sees.
             GLib.idle_add(self._finalize_response, request_id, response_text, False)
+
+    @staticmethod
+    def _is_api_failure(text: str) -> bool:
+        """True when `stream_chat` yielded an error/not-configured message."""
+        if not text:
+            return False
+        return text.startswith((
+            "Error:", "Stream error:", "API key not configured",
+            "Unknown provider", "Invalid message", "Empty message",
+        ))
+
+    def _offer_offline_commands(self, commands):
+        """Ask for confirmation before running privileged offline commands."""
+        if not commands:
+            return False
+
+        dialog = Gtk.Dialog(
+            title=_("Run suggested commands?"),
+            transient_for=self,
+            modal=True,
+        )
+        dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+        dialog.add_button(_("Run"), Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+
+        content = dialog.get_content_area()
+        header = Gtk.Label(
+            label=_("These changes need administrator rights (pkexec):")
+        )
+        header.set_halign(Gtk.Align.START)
+        header.set_line_wrap(True)
+        content.pack_start(header, False, False, 6)
+        for command in commands:
+            row = Gtk.Label(label=f"$ {command.display()}")
+            row.set_halign(Gtk.Align.START)
+            row.set_selectable(True)
+            row.set_monospace(True)
+            content.pack_start(row, False, False, 2)
+
+        dialog.show_all()
+        response = dialog.run()
+        dialog.destroy()
+        if response != Gtk.ResponseType.OK:
+            return False
+
+        threading.Thread(
+            target=self._run_offline_commands,
+            args=(commands,),
+            daemon=True,
+        ).start()
+        return False
+
+    def _run_offline_commands(self, commands):
+        """Run the confirmed commands via pkexec (worker thread)."""
+        for command in commands:
+            ok, output = offline_assistant.OfflineAssistant.run_privileged(
+                command
+            )
+            detail = output or (_("Done.") if ok else _("Failed."))
+            GLib.idle_add(
+                self._add_system_message, f"$ {command.display()}\n{detail}"
+            )
+        return False
 
     def _finalize_response(self, request_id: int, response_text: str,
                            cancelled: bool):

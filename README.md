@@ -20,6 +20,7 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 - ✅ **Docked mode** - Pin the window to a screen edge and reserve workspace (`_NET_WM_STRUT_PARTIAL` / gtk-layer-shell)
 - ✅ **Floating button** - Permanent floating button to show/hide the main window
 - ✅ **Multilingual** - UI translated via `src/i18n.py`; English is used when a language is not available
+- ✅ **Offline mode** - Answers basic questions and suggests local tasks with no API, no internet and no extra configuration
 
 ## Requirements
 
@@ -171,6 +172,43 @@ default model stops being available, and update `api.providers.<name>.model`
 in `config.json`. Keys are read from `~/.config/linux_ai_assistant/.env`
 (copy it from `config/.env.example`).
 
+## Offline Mode
+
+When no API key is configured, or the selected provider cannot be reached
+(no internet/DNS), the assistant answers from a local knowledge base built
+from `src/offline_assistant.py`. Nothing leaves the machine and no extra
+configuration is needed.
+
+It detects the distribution from `/etc/os-release` (package manager and
+service manager) and can help with:
+
+- **Package management** - update, install, remove and search packages with
+  the right tool (`xbps`, `apt`, `dnf`, `pacman`, `zypper`, `apk`).
+- **Services and startup** - enable/disable/start/restart services
+  (`systemd`, `runit`, `openrc`).
+- **Timezone, locale and hostname** - including ready-to-run commands.
+- **Network and firewall** - diagnostics (addresses, routes, DNS, ping) and
+  the firewall commands that apply to the system.
+- **Disks and cleanup** - free space, biggest consumers and safe cleanup.
+- **Shell and environment** - default shell and aliases.
+
+Examples: `how do I update the system?`, `install htop`,
+`enable service chronyd`, `set timezone to Europe/Lisbon`,
+`set hostname to laptop`, `quanto espaço em disco tenho?`.
+
+Safety model:
+
+- **Diagnostics** (e.g. `df -h`, `free -h`) are run through the sandboxed
+  `SystemUtils`, so only commands allowed in `permissions.allowed_commands`
+  are executed.
+- **Changes** are never run silently: they are shown and executed through
+  `pkexec` only after you confirm the dialog (GUI) or run them yourself
+  (CLI). Commands are built as argument lists, so user input cannot inject a
+  shell.
+
+Offline mode is automatic. The CLI (`python -m src.cli chat "..."`) falls
+back to it the same way and prints the suggested commands for you to run.
+
 ## Usage
 
 ### Running the Application
@@ -261,6 +299,7 @@ linux_ai_assistant/
 │   ├── file_actions.py     # File writing with diff confirmation
 │   ├── i18n.py             # Translations (English fallback)
 │   ├── main_window.py      # Main window
+│   ├── offline_assistant.py # Offline answers and local tasks
 │   ├── render_core.py      # Markup rendering (GTK-free)
 │   ├── system_utils.py     # System utilities
 │   └── tray_icon.py        # System tray icon

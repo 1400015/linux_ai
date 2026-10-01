@@ -22,6 +22,8 @@ from typing import Optional, Dict
 from .config_manager import ConfigManager
 from .ai_client import AIClient
 from .system_utils import SystemUtils
+from . import offline_assistant
+from .i18n import get_language
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,10 @@ class CLIApp:
         self.config = ConfigManager()
         self.ai_client = AIClient(self.config)
         self.system_utils = SystemUtils(self.config)
+        # Local answers when there is no key or no connection.
+        self.offline = offline_assistant.OfflineAssistant(
+            self.system_utils, self.config
+        )
         # Load the shared history (written by the GUI too) so saving it back
         # never wipes entries from other sessions.
         self.conversation_history = self._load_history()
@@ -256,6 +262,17 @@ Examples:
             "timestamp": time.time(),
         })
 
+    def _run_offline(self, message: str) -> str:
+        """Answer from local knowledge and print the suggested commands."""
+        reply = self.offline.handle(message, get_language())
+        print(f"\n[OFFLINE]\n{reply.text}\n")
+        if reply.commands:
+            print("[!] These commands need administrator rights; run them yourself:")
+            for command in reply.commands:
+                print(f"    $ {command.display()}")
+            print()
+        return reply.text
+
     def handle_chat(self, args):
         """Process the chat command."""
         message = ' '.join(args.message)
@@ -265,8 +282,10 @@ Examples:
         
         full_history = self._build_request_messages(message)
 
-        # Get the response
-        if args.stream:
+        # Get the response (or answer offline when the provider is unusable)
+        if not self.ai_client.provider_ready(args.provider):
+            response_text = self._run_offline(message)
+        elif args.stream:
             print("\n[AI] ", end="", flush=True)
             response_text = ""
             for chunk in self.ai_client.stream_chat(
@@ -278,8 +297,8 @@ Examples:
                 response_text += chunk
             print("\n")
             if self._is_error_text(response_text):
-                # Do not persist error text as an assistant turn
-                return
+                # Provider unreachable: do not persist the error as an answer
+                response_text = self._run_offline(message)
         else:
             response_text = self.ai_client.chat(
                 full_history,
@@ -289,8 +308,7 @@ Examples:
             if response_text:
                 print(f"\n[AI]\n{response_text}\n")
             else:
-                print("\n[ERROR] Could not get a response\n")
-                return
+                response_text = self._run_offline(message)
         
         # Save to history
         if not args.no_history:

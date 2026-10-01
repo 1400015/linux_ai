@@ -74,6 +74,14 @@ TRANSLATIONS = {
         "Close": "Fechar",
         "Minimize": "Minimizar",
         "Processing...": "A processar...",
+        "Run": "Executar",
+        "Done.": "Concluído.",
+        "Failed.": "Falhou.",
+        "Offline mode: answering from local knowledge.":
+            "Modo offline: a responder a partir do conhecimento local.",
+        "Run suggested commands?": "Executar os comandos sugeridos?",
+        "These changes need administrator rights (pkexec):":
+            "Estas alterações precisam de direitos de administrador (pkexec):",
         "Cancelled": "Cancelado",
         "Streaming cancelled": "Transmissão cancelada",
         "New response received": "Nova resposta recebida",
@@ -155,6 +163,14 @@ TRANSLATIONS = {
         "Close": "Cerrar",
         "Minimize": "Minimizar",
         "Processing...": "Procesando...",
+        "Run": "Ejecutar",
+        "Done.": "Hecho.",
+        "Failed.": "Falló.",
+        "Offline mode: answering from local knowledge.":
+            "Modo sin conexión: respondiendo con el conocimiento local.",
+        "Run suggested commands?": "¿Ejecutar los comandos sugeridos?",
+        "These changes need administrator rights (pkexec):":
+            "Estos cambios requieren derechos de administrador (pkexec):",
         "Cancelled": "Cancelado",
         "Streaming cancelled": "Transmisión cancelada",
         "New response received": "Nueva respuesta recibida",
@@ -236,6 +252,14 @@ TRANSLATIONS = {
         "Close": "Fermer",
         "Minimize": "Réduire",
         "Processing...": "Traitement en cours...",
+        "Run": "Exécuter",
+        "Done.": "Terminé.",
+        "Failed.": "Échec.",
+        "Offline mode: answering from local knowledge.":
+            "Mode hors ligne : réponse à partir des connaissances locales.",
+        "Run suggested commands?": "Exécuter les commandes suggérées ?",
+        "These changes need administrator rights (pkexec):":
+            "Ces modifications nécessitent des droits d'administrateur (pkexec) :",
         "Cancelled": "Annulé",
         "Streaming cancelled": "Diffusion annulée",
         "New response received": "Nouvelle réponse reçue",
@@ -317,6 +341,14 @@ TRANSLATIONS = {
         "Close": "Schließen",
         "Minimize": "Minimieren",
         "Processing...": "Wird verarbeitet...",
+        "Run": "Ausführen",
+        "Done.": "Fertig.",
+        "Failed.": "Fehlgeschlagen.",
+        "Offline mode: answering from local knowledge.":
+            "Offline-Modus: Antwort aus lokalem Wissen.",
+        "Run suggested commands?": "Vorgeschlagene Befehle ausführen?",
+        "These changes need administrator rights (pkexec):":
+            "Diese Änderungen benötigen Administratorrechte (pkexec):",
         "Cancelled": "Abgebrochen",
         "Streaming cancelled": "Stream abgebrochen",
         "New response received": "Neue Antwort erhalten",
