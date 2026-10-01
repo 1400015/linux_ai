@@ -8,7 +8,6 @@ screen capture, expert mode and more.
 
 import sys
 import signal
-from pathlib import Path
 import logging
 
 try:
@@ -26,9 +25,9 @@ except (ImportError, ValueError) as _gtk_error:
 
 logger = logging.getLogger(__name__)
 
-# Adicionar src ao path
-sys.path.insert(0, str(Path(__file__).parent))
-
+# NB: no sys.path hack here. The package must be imported as `src.app`
+# (run.sh does `python -m src.app`); adding `src/` to sys.path allowed the
+# same modules to be imported twice, as both `src.x` and `x`.
 from .config_manager import ConfigManager
 from .ai_client import AIClient
 from .system_utils import SystemUtils

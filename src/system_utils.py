@@ -208,6 +208,9 @@ class SystemUtils:
                 info["username"] = os.environ.get("USER", "unknown")
             
             info["hostname"] = platform.node()
+            # `is_root` is computed in _detect_environment(); expose it here so
+            # `cli.py system-info` shows the real value instead of False.
+            info["is_root"] = str(self.is_root)
             
             # Graphical environment
             info["is_wayland"] = str(self.is_wayland)
@@ -370,11 +373,18 @@ class SystemUtils:
         try:
             file_path = Path(filepath)
             
+            # Create the parent directories first: os.access() on a
+            # non-existent directory reports "not writable" even when we are
+            # able to create it, so the old check blocked writes to any new
+            # nested path.
+            try:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return False, f"Error creating directory {file_path.parent}: {e}"
+            
             # Check permissions
             if not os.access(file_path.parent, os.W_OK):
                 return False, f"No permission to write in: {file_path.parent}"
-            
-            file_path.parent.mkdir(parents=True, exist_ok=True)
             
             mode = 'a' if append else 'w'
             with open(file_path, mode, encoding='utf-8') as f:
@@ -768,9 +778,15 @@ class SystemUtils:
                 logger.warning(f"Invalid directory for search: {search_path}")
                 return results
 
+            # Escape find(1)'s own wildcards so a term containing `*`, `?`,
+            # `[` or `\` is matched literally (the shell is already bypassed
+            # by passing the arguments as a list).
+            escaped_term = "".join(
+                ("\\" + ch) if ch in "*?[\\" else ch for ch in search_term
+            )
             # Arguments as a list: `search_term` is never interpreted by the shell.
             proc = subprocess.Popen(
-                ["find", root, "-type", "f", "-name", f"*{search_term}*"],
+                ["find", root, "-type", "f", "-name", f"*{escaped_term}*"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,

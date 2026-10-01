@@ -4,7 +4,18 @@ import struct
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, GdkX11  # noqa: E402
+from gi.repository import Gdk  # noqa: E402
+
+# GdkX11 is only present on X11-capable builds; import it defensively so
+# importing this module (and therefore main_window) does not fail on a
+# non-X11 GDK backend.
+try:
+    gi.require_version("GdkX11", "3.0")
+    from gi.repository import GdkX11  # noqa: E402
+    HAS_GDK_X11 = True
+except (ImportError, ValueError):
+    GdkX11 = None
+    HAS_GDK_X11 = False
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +28,14 @@ except (ValueError, OSError):
 
 
 def is_wayland(window):
+    if not HAS_GDK_X11:
+        return True
     return not isinstance(window.get_display(), GdkX11.X11Display)
 
 
 def _apply_x11_struts(gdk_window, edge, size):
     """Reserve screen space via _NET_WM_STRUT_PARTIAL."""
-    if not isinstance(gdk_window.get_display(), GdkX11.X11Display):
+    if not HAS_GDK_X11 or not isinstance(gdk_window.get_display(), GdkX11.X11Display):
         return False
     display = gdk_window.get_display()
     screen = display.get_default_screen()
@@ -110,7 +123,7 @@ def apply_float(window):
     # Release the X11 strut (a zeroed _NET_WM_STRUT_PARTIAL) so other
     # windows can use the reserved space again.
     gdk_window = window.get_window()
-    if gdk_window and isinstance(gdk_window.get_display(), GdkX11.X11Display):
+    if gdk_window and HAS_GDK_X11 and isinstance(gdk_window.get_display(), GdkX11.X11Display):
         try:
             empty = [0] * 12
             atom = Gdk.Atom.intern("_NET_WM_STRUT_PARTIAL", False)

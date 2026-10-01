@@ -42,19 +42,6 @@ remove_desktop_entry() {
     fi
 }
 
-# Function to remove the run script
-remove_run_script() {
-    echo -e "${YELLOW}Removing the run script...${NC}"
-    
-    RUN_SCRIPT="$PROJECT_DIR/run.sh"
-    if [ -f "$RUN_SCRIPT" ]; then
-        rm "$RUN_SCRIPT"
-        echo -e "${GREEN}Run script removed.${NC}"
-    else
-        echo -e "${BLUE}Run script not found.${NC}"
-    fi
-}
-
 # Function to remove the configuration files
 remove_config() {
     echo -e "${YELLOW}Removing the configuration files...${NC}"
@@ -96,10 +83,10 @@ main() {
         exit 0
     fi
     
-    # Remove components
+    # Remove components. NB: run.sh is version-controlled and shipped with
+    # the project, so it must NOT be deleted.
     remove_venv
     remove_desktop_entry
-    remove_run_script
     remove_config
     remove_cache
     

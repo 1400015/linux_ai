@@ -152,9 +152,10 @@ class TrayIcon:
     
     def on_toggle_window(self, item):
         """Toggle window visibility"""
-        # `is-active` is a Gtk.Window property; the GdkWindow returned by
-        # get_window() does not have it (get_property raised there).
-        if self.main_window.get_property("is-active"):
+        # Use visibility, not `is-active` (which is focus, not whether the
+        # window is shown): an unfocused visible window was never hidden and
+        # an unfocused hidden one never came back.
+        if self.main_window.get_visible():
             self.main_window.hide()
             self.toggle_item.set_label(_("Show Window"))
         else:

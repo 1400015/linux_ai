@@ -33,6 +33,25 @@ def is_privileged_path(path):
     return not (real == home or real.startswith(home + os.sep))
 
 
+def is_allowed_path(path, allowed_dirs=None):
+    """True if `path` is inside $HOME or one of `allowed_dirs`.
+
+    The AI file-block path must honour the same sandbox as
+    SystemUtils.write_file(); otherwise expert mode could write anywhere
+    via pkexec regardless of `permissions.allowed_edit_dirs`.
+    """
+    real = os.path.realpath(os.path.expanduser(path))
+    home = os.path.realpath(os.path.expanduser("~"))
+    if real == home or real.startswith(home + os.sep):
+        return True
+    for allowed_dir in allowed_dirs or ():
+        allowed_real = os.path.realpath(os.path.expanduser(allowed_dir))
+        prefix = allowed_real if allowed_real.endswith(os.sep) else allowed_real + os.sep
+        if real == allowed_real or real.startswith(prefix):
+            return True
+    return False
+
+
 MAX_DIFF_BYTES = 1024 * 1024
 
 
@@ -70,8 +89,11 @@ def _write_privileged(temp_path, dest_path):
         )
 
 
-def confirm_and_write(parent, block):
+def confirm_and_write(parent, block, allowed_dirs=None):
     """Show confirmation dialog with diff and write the file.
+
+    `allowed_dirs` is `permissions.allowed_edit_dirs`: paths outside $HOME
+    are refused unless they fall inside one of those directories.
 
     Returns ("written"|"cancelled"|"error", msg).
     """
@@ -79,6 +101,8 @@ def confirm_and_write(parent, block):
     # real path, so the target passed to pkexec must be the same path -
     # otherwise a symlink inside $HOME could redirect the privileged copy.
     path = os.path.realpath(os.path.expanduser(block.path))
+    if not is_allowed_path(path, allowed_dirs):
+        return ("error", _("Path not allowed: {path}").format(path=path))
     diff = preview_diff(path, block.content)
 
     if not HAS_GTK:
@@ -149,11 +173,12 @@ def confirm_and_write(parent, block):
         return ("error", str(e))
 
 
-def offer_file_blocks(parent, reply_text, notify):
+def offer_file_blocks(parent, reply_text, notify, allowed_dirs=None):
     """Detect file blocks in the response and offer writing.
 
     Ignores replies with more than 3 blocks (probably just
     code examples). `notify(msg)` is called in the UI context.
+    `allowed_dirs` is forwarded to confirm_and_write() as the sandbox.
     """
     blocks = FileBlock.parse_all(reply_text)
     if not blocks:
@@ -162,7 +187,7 @@ def offer_file_blocks(parent, reply_text, notify):
         return
     for block in blocks:
         try:
-            status, msg = confirm_and_write(parent, block)
+            status, msg = confirm_and_write(parent, block, allowed_dirs)
         except Exception as e:
             status, msg = "error", str(e)
         if status == "written":

@@ -617,5 +617,92 @@ class TestThemeSanitisation(unittest.TestCase):
         self.assertEqual(self.safe_number(14, 12, int, minimum=4, maximum=72), 14)
 
 
+# --- Bug 17: config corrompida nunca era reparada ---------------------------
+
+class TestCorruptConfigRepair(unittest.TestCase):
+    def test_corrupt_config_is_rewritten_with_defaults(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text("{ not valid json", encoding="utf-8")
+            ConfigManager(str(path))
+            # The file must be usable again (defaults persisted) ...
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIsInstance(data, dict)
+            # ... and the unreadable original kept for recovery.
+            self.assertTrue((Path(d) / "config.json.corrupt").exists())
+
+
+# --- Bug 18: write_file recusava criar diretorias novas ---------------------
+
+class TestWriteFileCreatesParentDirs(unittest.TestCase):
+    def test_new_nested_directory_is_created(self):
+        with tempfile.TemporaryDirectory() as d:
+            utils = SystemUtils(FakeConfig(edit_dirs=[d]))
+            target = Path(d) / "new" / "nested" / "f.txt"
+            ok, msg = utils.write_file(str(target), "hello")
+            self.assertTrue(ok, msg)
+            self.assertEqual(target.read_text(encoding="utf-8"), "hello")
+
+
+# --- Bug 19: override por env perdia o tipo sem `default` -------------------
+
+class TestEnvOverrideTyping(unittest.TestCase):
+    def test_scalar_type_is_preserved_without_a_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = ConfigManager(str(Path(d) / "config.json"))
+            with patch.dict(os.environ, {"LINUX_AI_APP_WIDTH": "1234"}):
+                value = config.get("app.width")
+            self.assertIsInstance(value, int)
+            self.assertEqual(value, 1234)
+
+    def test_bool_override_is_parsed(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = ConfigManager(str(Path(d) / "config.json"))
+            with patch.dict(os.environ, {"LINUX_AI_APP_ALWAYS_ON_TOP": "false"}):
+                self.assertIs(config.get("app.always_on_top"), False)
+
+
+# --- Bug 20: Google AI Studio nao tinha streaming ---------------------------
+
+class TestGoogleStreaming(unittest.TestCase):
+    def test_stream_method_matches_dispatch_signature(self):
+        params = list(inspect.signature(AIClient._stream_google_ai_studio).parameters)
+        self.assertEqual(params, [
+            "self", "messages", "model", "api_key", "base_url",
+            "temperature", "max_tokens", "timeout",
+        ])
+
+    def test_sse_chunks_are_parsed(self):
+        class Response:
+            def iter_lines(self):
+                yield b'data: {"candidates":[{"content":{"parts":[{"text":"Hel"}]}}]}'
+                yield b''
+                yield b'data: {"candidates":[{"content":{"parts":[{"text":"lo"}]}}]}'
+                yield b'data: [DONE]'
+
+        self.assertEqual("".join(AIClient._iter_sse_google(Response())), "Hello")
+
+
+# --- Bug 21: blocos de ficheiro ignoravam allowed_edit_dirs ------------------
+
+class TestFileBlockSandbox(unittest.TestCase):
+    def test_allowed_path_helpers(self):
+        from src import file_actions
+        self.assertTrue(file_actions.is_allowed_path("/etc/passwd", ["/etc"]))
+        self.assertFalse(file_actions.is_allowed_path("/root/.bashrc", ["/etc"]))
+        self.assertFalse(file_actions.is_allowed_path("/etcfoo/x", ["/etc"]))
+
+    def test_confirm_and_write_rejects_disallowed_path(self):
+        from src import file_actions
+
+        class Block:
+            path = "/root/evil.conf"
+            content = "x"
+
+        status, msg = file_actions.confirm_and_write(None, Block(), ["/etc"])
+        self.assertEqual(status, "error")
+        self.assertIn("not allowed", msg.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

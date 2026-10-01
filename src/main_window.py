@@ -294,6 +294,14 @@ class MainWindow(Gtk.Window):
     
     def _setup_style(self):
         """Set up window CSS styling"""
+        # add_provider_for_screen() is cumulative: remove the previous provider
+        # first so changing theme does not stack stylesheets indefinitely.
+        previous = getattr(self, "_style_provider", None)
+        if previous is not None:
+            try:
+                Gtk.StyleContext.remove_provider_for_screen(self.get_screen(), previous)
+            except Exception as e:
+                logger.warning(f"Could not remove previous CSS provider: {e}")
         style_provider = Gtk.CssProvider()
         
         # Get cores do tema
@@ -465,6 +473,7 @@ class MainWindow(Gtk.Window):
             style_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        self._style_provider = style_provider
         logger.debug("CSS style applied with theme: " + self.config.get("app.theme", "dark"))
     
     def _create_ui(self):
@@ -996,7 +1005,8 @@ class MainWindow(Gtk.Window):
         provider_combo = Gtk.ComboBoxText()
         for provider_name in self.config.get("api.providers", {}).keys():
             provider_combo.append(provider_name, provider_name)
-        provider_combo.set_active_id(self.config.get("api.default_provider", "openrouter"))
+        current_provider = self.config.get("api.default_provider", "openrouter")
+        provider_combo.set_active_id(current_provider)
         api_box.pack_start(provider_combo, False, False, 0)
         
         # API Key
@@ -1009,9 +1019,22 @@ class MainWindow(Gtk.Window):
         api_key_entry.set_placeholder_text(_("Enter your API Key"))
         
         # Load current API key
-        current_provider = self.config.get("api.default_provider", "openrouter")
         api_key_entry.set_text(self.config.get_api_key(current_provider) or "")
         api_box.pack_start(api_key_entry, False, False, 0)
+        
+        # The entry always holds the key of the provider shown in the combo.
+        # Without this, switching provider saved the previous provider's key
+        # under the newly selected provider's name (the entry was never
+        # reloaded on change).
+        loaded_provider = [current_provider]
+        
+        def on_provider_changed(combo):
+            selected = combo.get_active_id()
+            if selected:
+                loaded_provider[0] = selected
+                api_key_entry.set_text(self.config.get_api_key(selected) or "")
+        
+        provider_combo.connect("changed", on_provider_changed)
         
         notebook.append_page(api_box, Gtk.Label(label="API"))
         
@@ -1143,9 +1166,11 @@ class MainWindow(Gtk.Window):
             if new_provider:
                 self.config.set("api.default_provider", new_provider)
 
-                # Save API key
+                # Store the key under the provider the entry was loaded for
+                # (updated by on_provider_changed), never under a provider the
+                # key does not belong to.
                 api_key = api_key_entry.get_text()
-                self.config.set_api_key(new_provider, api_key)
+                self.config.set_api_key(loaded_provider[0], api_key)
             
             # Save opacity
             opacity = opacity_scale.get_value()
@@ -1529,7 +1554,8 @@ Respond clearly and concisely in English."""
             if self.expert_mode:
                 file_actions.offer_file_blocks(
                     self, response_text,
-                    lambda msg: GLib.idle_add(self._add_system_message, msg)
+                    lambda msg: GLib.idle_add(self._add_system_message, msg),
+                    self.config.get("permissions.allowed_edit_dirs", []),
                 )
 
         self._on_message_processed(request_id, cancelled)

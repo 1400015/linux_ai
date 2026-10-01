@@ -376,6 +376,31 @@ class AIClient:
             if data.get("type") in (None, "content-delta") and "text" in data:
                 yield data["text"]
 
+    @staticmethod
+    def _iter_sse_google(response):
+        """Iterate an SSE stream from Google AI Studio."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            decoded_line = line.decode("utf-8")
+            if not decoded_line.startswith("data: "):
+                continue
+            data_str = decoded_line[6:]
+            if data_str == "[DONE]":
+                return
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            candidates = data.get("candidates")
+            if not candidates:
+                continue
+            parts = candidates[0].get("content", {}).get("parts", [])
+            for part in parts:
+                text = part.get("text")
+                if text:
+                    yield text
+
     def _validate_messages(self, messages: List[Dict[str, str]]) -> bool:
         """Validate message format."""
         if not isinstance(messages, list):
@@ -1043,6 +1068,41 @@ class AIClient:
             logger.error(f"Cohere stream error: {redact_url(str(e))}")
             yield f"Stream error: {e}"
     
+    def _stream_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                                 base_url: str, temperature: float, max_tokens: int, timeout: int):
+        """Stream with Google AI Studio (streamGenerateContent, SSE)."""
+        # `alt=sse` makes the endpoint emit `data: {...}` lines; the API key
+        # travels in a header so it never ends up in a logged URL.
+        url = f"{base_url}/models/{model}:streamGenerateContent?alt=sse"
+        headers = {"x-goog-api-key": api_key}
+
+        google_messages = []
+        for msg in messages:
+            role = "user" if msg["role"] == "user" else "model"
+            google_messages.append({
+                "role": role,
+                "parts": [{"text": msg["content"]}]
+            })
+
+        payload = {
+            "contents": google_messages,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens
+            },
+            "safetySettings": self._google_safety_settings()
+        }
+
+        try:
+            response = self._make_request(url, payload, headers, timeout, stream=True)
+            try:
+                yield from self._iter_sse_google(response)
+            finally:
+                response.close()
+        except Exception as e:
+            logger.error(f"Google AI Studio stream error: {redact_url(str(e))}")
+            yield f"Stream error: {e}"
+
     def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with a local model."""

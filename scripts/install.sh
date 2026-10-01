@@ -150,12 +150,17 @@ create_run_script() {
     
     RUN_SCRIPT="$PROJECT_DIR/run.sh"
     
+    # Keep the python3 fallback: if the venv is missing (e.g. the user
+    # removed it) the launcher still starts the application.
     cat > "$RUN_SCRIPT" <<'EOL'
 #!/bin/bash
 set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
-exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
+if [ -x "$PROJECT_DIR/venv/bin/python" ]; then
+    exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
+fi
+exec python3 -m src.app "$@"
 EOL
     
     chmod +x "$RUN_SCRIPT"

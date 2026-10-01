@@ -262,6 +262,20 @@ class ConfigManager:
         except (json.JSONDecodeError, IOError, OSError, ValueError) as e:
             logger.error(f"Error loading configuration: {e}")
             self.config = self._get_default_config()
+            # Persist the repaired defaults. Previously the corrupt file stayed
+            # on disk and _validate_config() found nothing to fix (`changed`
+            # was False), so every start silently reset the configuration.
+            # Keep a backup of the unreadable file for manual recovery.
+            try:
+                backup_path = Path(self.config_path).with_name(
+                    Path(self.config_path).name + ".corrupt"
+                )
+                if os.path.exists(self.config_path):
+                    os.replace(self.config_path, backup_path)
+                    logger.warning(f"Corrupt configuration moved to {backup_path}")
+            except OSError as backup_error:
+                logger.warning(f"Could not back up corrupt configuration: {backup_error}")
+            self.save()
     
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration
@@ -321,6 +335,36 @@ class ConfigManager:
         """Canonical LINUX_AI_* environment variable name for a config key."""
         return "LINUX_AI_" + key.upper().replace(".", "_").replace("-", "_")
 
+    def _coerce_env_value(self, key: str, env_value: str, default: Any) -> Any:
+        """Coerce a string environment override to the right type.
+
+        The caller's `default` is used when given; otherwise the type of the
+        value already stored in the configuration is used, so an override of
+        e.g. `app.width` stays an int instead of silently becoming a string.
+        """
+        if default is None:
+            current = self.config
+            for part in key.split('.'):
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    current = None
+                    break
+            default = current
+        if isinstance(default, bool):
+            return env_value.lower() in ('true', '1', 't', 'y', 'yes')
+        if isinstance(default, int):
+            try:
+                return int(env_value)
+            except ValueError:
+                return env_value
+        if isinstance(default, float):
+            try:
+                return float(env_value)
+            except ValueError:
+                return env_value
+        return env_value
+
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value using dot notation.
@@ -332,20 +376,7 @@ class ConfigManager:
         # Override by environment variables
         env_value = os.environ.get(self._env_name(key))
         if env_value is not None:
-            # Convert type if needed
-            if isinstance(default, bool):
-                return env_value.lower() in ('true', '1', 't', 'y', 'yes')
-            elif isinstance(default, int):
-                try:
-                    return int(env_value)
-                except ValueError:
-                    pass
-            elif isinstance(default, float):
-                try:
-                    return float(env_value)
-                except ValueError:
-                    pass
-            return env_value
+            return self._coerce_env_value(key, env_value, default)
         
         keys = key.split('.')
         value = self.config

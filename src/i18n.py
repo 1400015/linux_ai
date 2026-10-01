@@ -355,7 +355,9 @@ def set_language(lang, config=None):
     """
     global _current_lang
     _current_lang = (lang or "en")[:2].lower()
-    if config is not None and _current_lang != "en":
+    # Persist every explicit choice, including "en": the old `!= "en"` guard
+    # made it impossible to switch back to English from another language.
+    if config is not None:
         config.set("app.language", _current_lang)
 
 
