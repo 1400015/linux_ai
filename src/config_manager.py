@@ -4,6 +4,8 @@ import base64
 from pathlib import Path
 from typing import Any, Optional, Dict, List
 import logging
+import sys
+from dotenv import load_dotenv
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -153,10 +155,13 @@ class ConfigManager:
             config_dir.mkdir(parents=True, exist_ok=True)
             config_path = str(config_dir / "config.json")
         
+        load_dotenv(Path(config_path).parent / ".env", override=False)
         self.config_path = config_path
         self.config = {}
         self._encryption_key = None
         self._themes_dir = Path(__file__).parent.parent / "themes"
+        if not self._themes_dir.is_dir():
+            self._themes_dir = Path(sys.prefix) / "share" / "linux-ai-assistant" / "themes"
         self._load_config()
         self._validate_config()
     
@@ -326,7 +331,7 @@ class ConfigManager:
         
         current[keys[-1]] = value
         self.save()
-        logger.debug(f"Configuration updated: {key} = {value}")
+        logger.debug("Configuration updated: %s", key)
     
     def save(self):
         """Save configuration to file"""
@@ -345,7 +350,18 @@ class ConfigManager:
     
     def get_api_key(self, provider: str) -> Optional[str]:
         """Get API key for a specific provider"""
-        return self.get(f"api.providers.{provider}.api_key")
+        legacy_names = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "google_ai_studio": "GOOGLE_AI_STUDIO_KEY",
+        }
+        key = f"api.providers.{provider}.api_key"
+        env_name = "LINUX_AI_" + key.upper().replace(".", "_")
+        if os.environ.get(env_name):
+            return os.environ[env_name]
+        legacy_name = legacy_names.get(provider)
+        if legacy_name and os.environ.get(legacy_name):
+            return os.environ[legacy_name]
+        return self.get(key)
     
     def set_api_key(self, provider: str, api_key: str):
         """Definir API key for a provedor"""

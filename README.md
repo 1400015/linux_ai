@@ -27,7 +27,8 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 
 ### System
 
-- Linux (tested on Ubuntu, Fedora, Debian, Arch, **Void Linux**, **d77void**)
+- Linux; automatic installers are provided for Debian/Ubuntu and Void-based systems.
+- Other distributions require manual dependency installation; compatibility must be verified locally.
 - Python 3.8+
 - GTK 3.0+
 
@@ -35,13 +36,13 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install python3 python3-pip python3-venv git scrot tesseract-ocr tesseract-ocr-por tesseract-ocr-eng libgtk-3-0 python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-appindicator3-0.1
+sudo apt-get install python3 python3-pip python3-venv git scrot tesseract-ocr tesseract-ocr-por tesseract-ocr-eng libgtk-3-0 python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-appindicator3-0.1
 
 # Fedora
-sudo dnf install python3 python3-pip git scrot tesseract tesseract-langpack-por tesseract-langpack-eng gtk3 python3-gobject
+sudo dnf install python3 python3-pip git scrot tesseract tesseract-langpack-por tesseract-langpack-eng gtk3 python3-gobject libnotify
 
 # Arch
-sudo pacman -S python python-pip git scrot tesseract tesseract-data-por tesseract-data-eng gtk3 python-gobject
+sudo pacman -S python python-pip git scrot tesseract tesseract-data-por tesseract-data-eng gtk3 python-gobject libnotify
 ```
 
 ### Python Dependencies
@@ -75,7 +76,7 @@ git clone https://github.com/1400015/linux_ai.git
 cd linux_ai
 
 # Create virtual environment
-python3 -m venv venv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 
 # Install dependencies
@@ -90,7 +91,7 @@ cp config/.env.example ~/.config/linux_ai_assistant/.env
 nano ~/.config/linux_ai_assistant/.env
 
 # Run
-python src/app.py
+python -m src.app
 ```
 
 ### For Void Linux and d77void
@@ -102,15 +103,15 @@ cd linux_ai
 
 # Install system dependencies
 sudo xbps-install -Su
-sudo xbps-install -Sy python3 python3-pip python3-venv git scrot tesseract-ocr tesseract-ocr-por tesseract-ocr-eng libgtk-3 libgtk-3-devel py3-gobject py3-cairo gobject-introspection libappindicator-gtk3
+sudo xbps-install -y python3 python3-pip git scrot tesseract-ocr tesseract-ocr-por tesseract-ocr-eng gtk+3 python3-gobject python3-cairo libnotify
 
 # Create virtual environment and install
-python3 -m venv venv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install -r requirements.txt
 
 # Run
-./run.sh
+bash run.sh
 ```
 
 ## Configuration
@@ -120,14 +121,24 @@ pip install -r requirements.txt
 Edit the file `~/.config/linux_ai_assistant/.env` and add your API keys:
 
 ```ini
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-GOOGLE_AI_STUDIO_KEY=your_google_ai_studio_key_here
+OPENROUTER_API_KEY=
+GOOGLE_AI_STUDIO_KEY=
 ```
 
-You can get free API keys at:
+The `.env` file is loaded from the same directory as `config.json` without
+replacing existing process environment variables. Empty API key entries fall
+back to the keys saved through the settings dialog. Canonical environment names
+such as `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` take precedence over the
+legacy `OPENROUTER_API_KEY` name.
 
-- [OpenRouter](https://openrouter.ai/) - $0.001 per 1K tokens (free to test)
-- [Google AI Studio](https://aistudio.google.com/) - Free with generous quotas
+GTK bindings come from the system packages; use `--system-site-packages` so the
+virtual environment can import them. Do not install the unrelated PyPI `gi`
+package.
+
+You can get API keys at:
+
+- [OpenRouter](https://openrouter.ai/) - Availability and pricing depend on the model.
+- [Google AI Studio](https://aistudio.google.com/) - Check the provider for current quotas.
 
 ### Application Configuration
 
@@ -157,11 +168,11 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 
 ```bash
 # Using the run script
-./run.sh
+bash run.sh
 
 # Or directly
 source venv/bin/activate
-python src/app.py
+python -m src.app
 ```
 
 ### Shortcuts
@@ -258,19 +269,20 @@ linux_ai_assistant/
 
 ## d77void and Void Linux Support
 
-The Linux AI Assistant has full support for **Void Linux** and **d77void**:
+The project provides a Void/d77void installer and a native XBPS recipe.
+Compatibility must be validated in the selected graphical session:
 
 ### 🎯 Specific Features
 
 - ✅ **Native XBPS support** - Void Linux package manager
-- ✅ **runit integration** - Void's init system (instead of systemd)
+- ✅ **Session autostart** - Start the GUI in the graphical user session
 - ✅ **Dedicated installation script** - `install_void.sh` optimized for Void/d77void
 - ✅ **XBPS package** - Template available in `xbps-src/` to build a native package
 - ✅ **Automatic detection** - Recognizes Void Linux and d77void automatically
 
 ### 📦 Installation on d77void
 
-d77void is a distribution based on Void Linux with several pre-configured window managers. The Linux AI Assistant works perfectly on all d77void variants:
+d77void is a distribution based on Void Linux with several pre-configured window managers. Tray, docking and screen capture must be checked separately for each window manager or compositor:
 
 - **Awesome WM**
 - **BSPWM**
@@ -294,45 +306,17 @@ d77void is a distribution based on Void Linux with several pre-configured window
 - **Plasma**
 - **XFCE**
 
-### 🔧 runit Service (Optional)
+### Graphical session startup
 
-To integrate the Linux AI Assistant with Void Linux's **runit** init system:
+Use `bash scripts/autostart.sh enable` or your window manager's own startup
+configuration. The GUI needs the user's display and session environment and
+must not be installed as a root system service.
 
-```bash
-# Create service directory
-mkdir -p ~/.local/service/linux-ai-assistant
+### Building an XBPS package
 
-# Create run file
-cat > ~/.local/service/linux-ai-assistant/run <<EOL
-#!/bin/sh
-exec /path/to/linux_ai/run.sh
-EOL
-chmod +x ~/.local/service/linux-ai-assistant/run
-
-# Enable service (requires sudo)
-sudo ln -s ~/.local/service/linux-ai-assistant /etc/sv/linux-ai-assistant
-sudo ln -s /etc/sv/linux-ai-assistant /var/service/
-
-# Manage service
-sv up linux-ai-assistant    # Start
-sv down linux-ai-assistant  # Stop
-sv restart linux-ai-assistant  # Restart
-```
-
-### 📦 Building an XBPS Package
-
-To build a native package for Void Linux:
-
-```bash
-# Copy template to srcpkgs
-sudo cp -r xbps-src/linux-ai-assistant /var/db/xbps/srcpkgs/
-
-# Update repositories
-sudo xbps-install -Su
-
-# Install package
-sudo xbps-install -S linux-ai-assistant
-```
+Follow [xbps-src/README.md](xbps-src/README.md). Build the recipe with `xbps-src`
+inside a `void-packages` checkout before installing the resulting binary from
+`hostdir/binpkgs`; copying a template alone does not publish a package.
 
 ## Customization
 
@@ -370,7 +354,7 @@ Edit `~/.config/linux_ai_assistant/config.json`:
 ### Problem: Window does not appear
 
 - Check that GTK is installed correctly
-- Try running with: `GTK_DEBUG=interactive python src/app.py`
+- Try running with: `GTK_DEBUG=interactive python -m src.app`
 
 ### Problem: OCR does not work
 
@@ -410,3 +394,15 @@ MIT License - see [LICENSE](LICENSE) for more details.
 ---
 
 **Made with ❤️ for the Linux community**
+
+## Validation
+
+```bash
+python -m unittest discover -s tests -v
+python -m src.cli --help
+for script in run.sh scripts/*.sh; do bash -n "$script" || exit; done
+```
+
+For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
+The GUI must run inside a graphical user session; use
+`./scripts/autostart.sh enable` for session startup rather than a root runit service.

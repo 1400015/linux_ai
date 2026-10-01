@@ -1,75 +1,28 @@
-# Template para criar pacote XBPS para linux-ai-assistant
-# Este ficheiro deve ser colocado em /var/db/xbps/srcpkgs/
-
+# Template file for 'linux-ai-assistant'
 pkgname=linux-ai-assistant
 version=1.0.0
-revision=1
-wrksrc="linux-ai-assistant-${version}"
+revision=2
+_commit=1f1eaaca9ccd81bf0b86e4958a2ef3c27990f487
+wrksrc="linux_ai-${_commit}"
 build_style=python3-module
-make_build_deps="python3-setuptools"
-hostmakedepends="python3-pip python3-venv git"
-
-short_desc="Assistente de IA permanente para Linux com interface flutuante"
+hostmakedepends="python3-setuptools"
+depends="python3 python3-gobject python3-cairo python3-requests python3-dotenv
+ python3-tenacity python3-Pillow python3-psutil python3-notify2 python3-cryptography
+ python3-json-logger gtk+3 libnotify scrot tesseract-ocr tesseract-ocr-por
+ tesseract-ocr-eng polkit"
+short_desc="Floating AI assistant for Linux"
 maintainer="Joao Azevedo <joao@example.com>"
 license="MIT"
 homepage="https://github.com/1400015/linux_ai"
+distfiles="https://github.com/1400015/linux_ai/archive/${_commit}.tar.gz"
+checksum=dfdf0346f41db01e3566a7a6148b1662db043dae8ca24ddc73ef480e7fcd6751
+checkdepends="${depends}"
 
-# Dependências de execução
-depends="python3 python3-gobject python3-cairo py3-gobject py3-cairo gtk+3 scrot tesseract-ocr tesseract-ocr-por tesseract-ocr-eng libappindicator-gtk3"
-
-# Arquivos a instalar
-filesites="https://github.com/1400015/linux_ai/archive/refs/tags/v${version}.tar.gz"
-distfiles="${wrksrc}.tar.gz"
-
-# Instalação
-post_install() {
-	# Criar diretório de configuração
-	install -d -m 755 ${DESTDIR}/home/void/.config/linux_ai_assistant
-	
-	# Copiar ficheiros de configuração
-	install -D -m 644 ${wrksrc}/config/config.json ${DESTDIR}/home/void/.config/linux_ai_assistant/config.json
-	install -D -m 644 ${wrksrc}/config/.env.example ${DESTDIR}/home/void/.config/linux_ai_assistant/.env
-	
-	# Criar atalho de aplicação
-	install -d -m 755 ${DESTDIR}/home/void/.local/share/applications
-	install -D -m 644 ${wrksrc}/scripts/linux-ai-assistant.desktop ${DESTDIR}/home/void/.local/share/applications/linux-ai-assistant.desktop
-	
-	# Criar ícone
-	install -d -m 755 ${DESTDIR}/home/void/.local/share/icons/hicolor/64x64/apps
-	install -D -m 644 ${wrksrc}/assets/icon.png ${DESTDIR}/home/void/.local/share/icons/hicolor/64x64/apps/linux-ai-assistant.png
-	
-	# Criar script de execução
-	install -d -m 755 ${DESTDIR}/usr/bin
-	install -D -m 755 ${wrksrc}/run.sh ${DESTDIR}/usr/bin/linux-ai-assistant
-	
-	# Criar ambiente virtual (será criado na primeira execução)
-	install -d -m 755 ${DESTDIR}/usr/share/linux-ai-assistant
-	cp -r ${wrksrc}/src ${DESTDIR}/usr/share/linux-ai-assistant/
-	cp ${wrksrc}/requirements.txt ${DESTDIR}/usr/share/linux-ai-assistant/
-	cp ${wrksrc}/setup.py ${DESTDIR}/usr/share/linux-ai-assistant/
-	
-	# Mensagem de instalação
-	vmessage "Linux AI Assistant instalado!"
-	vmessage "Para configurar, edite: ~/.config/linux_ai_assistant/.env"
-	vmessage "Para executar: linux-ai-assistant"
+do_check() {
+	python3 -m unittest discover -s tests -v
 }
 
-# Desinstalação
-post_remove() {
-	# Remover ficheiros de configuração
-	rm -rf ${DESTDIR}/home/void/.config/linux_ai_assistant
-	
-	# Remover atalho
-	rm -f ${DESTDIR}/home/void/.local/share/applications/linux-ai-assistant.desktop
-	
-	# Remover ícone
-	rm -f ${DESTDIR}/home/void/.local/share/icons/hicolor/64x64/apps/linux-ai-assistant.png
-	
-	# Remover script de execução
-	rm -f ${DESTDIR}/usr/bin/linux-ai-assistant
-	
-	# Remover ficheiros da aplicação
-	rm -rf ${DESTDIR}/usr/share/linux-ai-assistant
-	
-	vmessage "Linux AI Assistant removido!"
+post_install() {
+	vlicense LICENSE
+	vinstall scripts/linux-ai-assistant.desktop 644 usr/share/applications
 }

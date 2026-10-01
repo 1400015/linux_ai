@@ -4,7 +4,7 @@ Setup script para Linux AI Assistant
 """
 
 from setuptools import setup, find_packages
-import os
+from glob import glob
 
 # Ler o ficheiro requirements.txt
 with open('requirements.txt') as f:
@@ -22,8 +22,9 @@ setup(
     long_description_content_type='text/markdown',
     author='Linux AI Assistant Team',
     author_email='',
-    url='https://github.com/seu-utilizador/linux-ai-assistant',
+    url='https://github.com/1400015/linux_ai',
     packages=find_packages(),
+    data_files=[('share/linux-ai-assistant/themes', glob('themes/*.json'))],
     package_dir={'': '.'},
     python_requires='>=3.8',
     install_requires=requirements,
@@ -47,7 +48,7 @@ setup(
         'Topic :: Utilities',
     ],
     project_urls={
-        'Bug Reports': 'https://github.com/seu-utilizador/linux-ai-assistant/issues',
-        'Source': 'https://github.com/seu-utilizador/linux-ai-assistant',
+        'Bug Reports': 'https://github.com/1400015/linux_ai/issues',
+        'Source': 'https://github.com/1400015/linux_ai',
     },
 )

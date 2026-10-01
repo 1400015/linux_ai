@@ -38,12 +38,6 @@ if ! command -v xbps-install >/dev/null 2>&1; then
 fi
 
 echo -e "${GREEN}"
-echo "  _    _      _ _       __        __         _   _"
-echo " | |  | |    | | |       \ \      / /        | | | |"
-echo " | |__| | ___| | | ___    \ \ /\ / /__  _ __ | |_| |__   ___  _ __"
-echo " |  __  |/ _ \ | |/ _ \    \ V  V / _ \ | '_ \| __| '_ \ / _ \| '_ \"  
-echo " | |  | |  __/ | | (_) |    | |\_/ (_) || | | | |_| | | | (_) | | | |"
-echo " |_|  |_|\___|_|_|\___/      | |_|\___/ |_| |_|\__|_| |_|\___/|_| |_|"
 echo ""
 echo -e "      Linux AI Assistant - Instalação para Void Linux/d77void${NC}"
 echo ""
@@ -61,18 +55,15 @@ install_void_packages() {
     REQUIRED_PACKAGES=(
         "python3"
         "python3-pip"
-        "python3-venv"
         "git"
         "scrot"
         "tesseract-ocr"
         "tesseract-ocr-por"
         "tesseract-ocr-eng"
-        "libgtk-3"
-        "libgtk-3-devel"
-        "py3-gobject"
-        "py3-cairo"
-        "gobject-introspection"
-        "libappindicator-gtk3"
+        "gtk+3"
+        "python3-gobject"
+        "python3-cairo"
+        "libnotify"
         "ImageMagick"  # Para criar ícone se necessário
     )
     
@@ -91,11 +82,7 @@ install_void_packages() {
         # Atualizar repositórios
         sudo xbps-install -Su
         
-        # Instalar pacotes um por um (xbps não tem suporte nativo para instalar múltiplos)
-        for pkg in "${MISSING_PACKAGES[@]}"; do
-            echo -e "${BLUE}  A instalar: $pkg${NC}"
-            sudo xbps-install -Sy "$pkg"
-        done
+        sudo xbps-install -y "${MISSING_PACKAGES[@]}"
         
         echo -e "${GREEN}Pacotes instalados com sucesso!${NC}"
     else
@@ -115,7 +102,7 @@ create_venv() {
     fi
     
     # Criar ambiente virtual
-    python3 -m venv "$VENV_DIR"
+    python3 -m venv --system-site-packages "$VENV_DIR"
     
     # Ativar ambiente virtual e instalar dependências
     source "$VENV_DIR/bin/activate"
@@ -142,7 +129,7 @@ Version=1.0
 Type=Application
 Name=Linux AI Assistant
 Comment=Assistente de IA permanente para Linux
-Exec=$PROJECT_DIR/run.sh
+Exec=bash "$PROJECT_DIR/run.sh"
 Icon=$PROJECT_DIR/assets/icon.png
 Terminal=false
 Categories=Utility;System;
@@ -166,19 +153,12 @@ create_run_script() {
     
     RUN_SCRIPT="$PROJECT_DIR/run.sh"
     
-    cat > "$RUN_SCRIPT" <<EOL
+    cat > "$RUN_SCRIPT" <<'EOL'
 #!/bin/bash
-
-# Script de execução para Linux AI Assistant
-
+set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$PROJECT_DIR/venv"
-
-# Ativar ambiente virtual
-source "$VENV_DIR/bin/activate"
-
-# Executar aplicação
-python "$PROJECT_DIR/src/app.py"
+cd "$PROJECT_DIR"
+exec "$PROJECT_DIR/venv/bin/python" -m src.app "$@"
 EOL
     
     chmod +x "$RUN_SCRIPT"
@@ -247,34 +227,6 @@ create_config() {
     fi
 }
 
-# Função para criar serviço runit (opcional para Void Linux)
-create_runit_service() {
-    echo -e "${YELLOW}A criar serviço runit (opcional)...${NC}"
-    
-    # Diretório para serviços de utilizador
-    RUNIT_DIR="$HOME/.local/service"
-    mkdir -p "$RUNIT_DIR"
-    
-    # Criar ficheiro run
-    cat > "$RUNIT_DIR/linux-ai-assistant/run" <<EOL
-#!/bin/sh
-exec $PROJECT_DIR/run.sh
-EOL
-    
-    chmod +x "$RUNIT_DIR/linux-ai-assistant/run"
-    
-    # Criar link simbólico para /etc/sv (requer sudo)
-    echo -e "${BLUE}Para ativar o serviço runit, execute:${NC}"
-    echo "  sudo ln -s $RUNIT_DIR/linux-ai-assistant /etc/sv/linux-ai-assistant"
-    echo "  sudo ln -s /etc/sv/linux-ai-assistant /var/service/"
-    echo ""
-    echo -e "${BLUE}Para iniciar o serviço:${NC}"
-    echo "  sv up linux-ai-assistant"
-    echo ""
-    echo -e "${BLUE}Para parar o serviço:${NC}"
-    echo "  sv down linux-ai-assistant"
-}
-
 # Função para mostrar instruções finais
 show_final_instructions() {
     echo ""
@@ -300,7 +252,7 @@ show_final_instructions() {
     echo "  - O assistente será executado com privilégios normais."
     echo "  - Para funcionalidades que requerem sudo, será pedido password."
     echo "  - O modo especialista permite editar ficheiros de configuração."
-    echo "  - Opcionalmente, pode configurar um serviço runit para iniciar automaticamente."
+    echo "  - Para iniciar na sessão gráfica: ./scripts/autostart.sh enable"
     echo "  - O d77void usa runit como init system em vez de systemd."
     echo ""
 }
@@ -324,9 +276,6 @@ main() {
     
     # Criar configuração
     create_config
-    
-    # Criar serviço runit (opcional)
-    create_runit_service
     
     # Mostrar instruções finais
     show_final_instructions

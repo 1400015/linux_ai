@@ -89,8 +89,7 @@ class AIClient:
     
     def _get_api_key(self, provider: str) -> Optional[str]:
         """Obter API key for a provedor"""
-        api_config = self._get_api_config(provider)
-        return api_config.get("api_key")
+        return self.config.get_api_key(provider)
     
     def get_supported_providers(self) -> List[str]:
         """Obter list de provedores suportados"""
