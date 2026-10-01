@@ -198,6 +198,8 @@ create_config() {
     
     CONFIG_DIR="$HOME/.config/linux_ai_assistant"
     mkdir -p "$CONFIG_DIR"
+    # O config guarda API keys: 0700 evita leitura por outros utilizadores
+    chmod 700 "$CONFIG_DIR"
     
     # Copy the default configuration
     if [ ! -f "$CONFIG_DIR/config.json" ]; then
@@ -210,6 +212,8 @@ create_config() {
     # Copy .env.example
     if [ ! -f "$CONFIG_DIR/.env" ] && [ -f "$PROJECT_DIR/config/.env.example" ]; then
         cp "$PROJECT_DIR/config/.env.example" "$CONFIG_DIR/.env"
+        # O .env guarda chaves API: 0644 num $HOME 0755 era legível por todos
+        chmod 600 "$CONFIG_DIR/.env"
         echo -e "${GREEN}.env file created at $CONFIG_DIR/.env${NC}"
         echo "Please edit this file to add your API keys."
     fi

@@ -1,18 +1,39 @@
 import os
+import json
 import getpass
 import shutil
 import shlex
 import subprocess
 import platform
 import time
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 import logging
 
 # Configurar logger
-logger = logging.getLogger(__name__)# Commands whose last argument is a file path. For these, the path goes
+logger = logging.getLogger(__name__)
+
+# Commands whose last argument is a file path. For these, the path goes
 # through `allowed_edit_dirs` just like `read_file`/`write_file`.
+# (histórico: antes só este conjunto era validado; ver _validate_file_args)
 _FILE_ARG_COMMANDS = {"cat", "head", "tail", "less", "more", "file", "stat"}
+
+# Política de flags por comando: flags que executam código ou leem ficheiros
+# fora da sandbox, mesmo com o comando na allowlist. A allowlist por NOME
+# base não consegue exprimir "este comando é seguro": `man -P <prog> <pág>`
+# executa <prog> como pager (via shell!) e `dig -f <ficheiro>` lê um
+# ficheiro — ambos com comandos de diagnóstico por defeito. (P0 de
+# segurança: allowlist sem política de flags = execução arbitrária.)
+_BLOCKED_FLAGS: Dict[str, set] = {
+    "man": {"-P", "--pager"},
+    "dig": {"-f"},
+    "nslookup": {"-"},  # reservado; nenhum flag conhecido é perigoso hoje
+    "traceroute": {"-f"},
+}
+
+# Teto do output capturado (bytes): `grep -r x /` encheria a RAM e o
+# contexto da IA. read_file já tem caps equivalentes.
+MAX_COMMAND_OUTPUT = 1_000_000
 
 
 def _cpu_value(entry: Dict[str, str]) -> float:
@@ -30,7 +51,7 @@ def _cpu_value(entry: Dict[str, str]) -> float:
 
 class SystemUtils:
     """Utilities to interact with the Linux system"""
-    
+
     def __init__(self, config_manager):
         self.config = config_manager
         self._detect_environment()
@@ -60,17 +81,17 @@ class SystemUtils:
     def allowed_edit_dirs(self) -> set:
         """Directories the assistant may read/write (re-read on access)."""
         return self._permission_set("permissions.allowed_edit_dirs")
-    
+
     def _detect_environment(self):
         """Detect the environment (X11 vs Wayland) and other system properties"""
         self.is_wayland = os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
         self.is_x11 = os.environ.get("DISPLAY") is not None
         self.is_root = os.geteuid() == 0
         self.username = getpass.getuser()
-        
+
         logger.info(f"Environment detected: {'Wayland' if self.is_wayland else 'X11'}")
         logger.info(f"User: {self.username}, Root: {self.is_root}")
-    
+
     def _sanitize_command(self, command: str) -> List[str]:
         """Sanitize command to prevent command injection"""
         try:
@@ -79,7 +100,7 @@ class SystemUtils:
         except ValueError as e:
             logger.error(f"Invalid command to sanitize: {command} - {e}")
             return []
-    
+
     def _validate_path(self, path: str) -> bool:
         """Validate if a path is inside one of the allowed directories.
 
@@ -105,18 +126,28 @@ class SystemUtils:
         except Exception as e:
             logger.error(f"Error validating path: {e}")
             return False
-    
-    def _validate_file_args(self, cmd_parts: List[str]) -> bool:
-        """Validate path arguments of file-reading commands.
 
-        Without this, an allowlisted `cat` would bypass `allowed_edit_dirs`
-        entirely (e.g. `cat /etc/shadow`). Only arguments that look like
-        absolute or home-relative paths are checked, so options such as
-        `-n` or `grep`-style patterns keep working.
+    def _validate_file_args(self, cmd_parts: List[str]) -> bool:
+        """Validate path arguments and dangerous flags of allowlisted commands.
+
+        Dois pilares:
+        1. FLAGS bloqueadas (ver _BLOCKED_FLAGS): a allowlist por nome base
+           não impede que uma flag execute código ou leia ficheiros.
+        2. CAMINHOS absolutos/~: aplicado a TODOS os comandos da allowlist,
+           não só aos "obviamente" leitores — antes, `grep . /var/log/auth.log`
+           (grep estava na allowlist, fora de _FILE_ARG_COMMANDS) contornava
+           a sandbox por completo.
         """
         cmd_base = cmd_parts[0]
-        if cmd_base not in _FILE_ARG_COMMANDS:
-            return True
+
+        blocked = _BLOCKED_FLAGS.get(cmd_base)
+        if blocked:
+            for arg in cmd_parts[1:]:
+                if arg in blocked:
+                    logger.warning(
+                        f"Blocked flag '{arg}' for allowlisted command '{cmd_base}'"
+                    )
+                    return False
 
         for arg in cmd_parts[1:]:
             if arg.startswith("-") or arg == "/dev/stdin":
@@ -130,11 +161,11 @@ class SystemUtils:
                 return False
         return True
 
-    
+
     def get_system_info(self) -> Dict[str, str]:
         """Get system information"""
         info = {}
-        
+
         try:
             # Basic information
             info["os"] = platform.system()
@@ -143,7 +174,7 @@ class SystemUtils:
             info["machine"] = platform.machine()
             info["processor"] = platform.processor()
             info["architecture"] = platform.architecture()[0]
-            
+
             # Detect if it is Void Linux or d77void
             info["is_void"] = False
             info["is_d77void"] = False
@@ -158,7 +189,7 @@ class SystemUtils:
                             info["is_d77void"] = True
             except Exception as e:
                 logger.warning(f"Erro a read /etc/os-release: {e}")
-            
+
             # Memory
             try:
                 import psutil
@@ -180,7 +211,7 @@ class SystemUtils:
                                 info["memory_available"] = f"{free_kb / (1024**2):.2f} GB"
                 except Exception as e:
                     logger.warning(f"Could not get memory info: {e}")
-            
+
             # CPU
             try:
                 import psutil
@@ -201,7 +232,7 @@ class SystemUtils:
                         info["cpu_cores"] = str(cores)
                 except Exception as e:
                     logger.warning(f"Could not get CPU info: {e}")
-            
+
             # Disk
             try:
                 import psutil
@@ -217,7 +248,7 @@ class SystemUtils:
                     info["disk_free"] = f"{(stat.f_bavail * stat.f_frsize) / (1024**3):.2f} GB"
                 except Exception as e:
                     logger.warning(f"Could not get disk info: {e}")
-            
+
             # Uptime
             try:
                 import psutil
@@ -229,7 +260,7 @@ class SystemUtils:
                 except Exception as e:
                     logger.warning(f"Could not get uptime: {e}")
                     uptime_seconds = 0
-            
+
             days, remainder = divmod(uptime_seconds, 86400)
             hours, remainder = divmod(remainder, 3600)
             minutes, seconds = divmod(remainder, 60)
@@ -243,18 +274,18 @@ class SystemUtils:
                 # getlogin() fails without a controlling terminal
                 # (cron, systemd services, containers).
                 info["username"] = os.environ.get("USER", "unknown")
-            
+
             info["hostname"] = platform.node()
             # `is_root` is computed in _detect_environment(); expose it here so
             # `cli.py system-info` shows the real value instead of False.
             info["is_root"] = str(self.is_root)
-            
+
             # Graphical environment
             info["is_wayland"] = str(self.is_wayland)
             info["is_x11"] = str(self.is_x11)
             info["display"] = os.environ.get("DISPLAY", "N/A")
             info["xdg_session_type"] = os.environ.get("XDG_SESSION_TYPE", "N/A")
-            
+
             # Linux distribution
             try:
                 with open('/etc/os-release', 'r') as f:
@@ -266,71 +297,90 @@ class SystemUtils:
                         info["distro"] = "Unknown"
             except OSError:
                 info["distro"] = "Unknown"
-            
+
             return info
         except Exception as e:
             logger.error(f"Error getting system info: {e}")
             return {"error": str(e)}
-    
-    def execute_command(self, command: str, timeout: int = 10) -> Tuple[bool, str]:
+
+    def execute_command(self, command, timeout: int = 10) -> Tuple[bool, str]:
         """
         Run a command on the system with sanitization.
 
         Args:
-            command: Command to run.
+            command: Command to run — string (dividida com shlex) OU lista
+                argv já dividida (o CLI passa `args.command`, que é a lista
+                pós-shell; juntar com espaços e re-dividir com shlex partia
+                argumentos que contêm espaços).
             timeout: Timeout in seconds.
 
         Returns:
             Tuple (success, output).
         """
-        if not command or not isinstance(command, str):
+        if isinstance(command, (list, tuple)):
+            cmd_parts = [str(part) for part in command if str(part).strip()]
+            if not cmd_parts:
+                logger.error("Invalid command (empty argv)")
+                return False, "Invalid command"
+        elif isinstance(command, str) and command.strip():
+            # Sanitize command
+            try:
+                cmd_parts = self._sanitize_command(command)
+                if not cmd_parts:
+                    return False, "Invalid command after sanitization"
+            except Exception as e:
+                logger.error(f"Error sanitizing command: {e}")
+                return False, f"Error processing command: {e}"
+        else:
             logger.error("Invalid command")
             return False, "Invalid command"
-        
-        # Sanitize command
-        try:
-            cmd_parts = self._sanitize_command(command)
-            if not cmd_parts:
-                return False, "Invalid command after sanitization"
-            
-            cmd_base = cmd_parts[0]
-        except Exception as e:
-            logger.error(f"Error sanitizing command: {e}")
-            return False, f"Error processing command: {e}"
-        
+
+        cmd_base = cmd_parts[0]
+
         # Check if the command is allowed
         if cmd_base not in self.allowed_commands:
             logger.warning(f"Command not allowed: {cmd_base}")
             return False, f"Command not allowed: {cmd_base}"
-        
-        # Commands that read files also respect allowed_edit_dirs
+
+        # Flags perigosas + caminhos absolutos fora da sandbox (TODOS os
+        # comandos da allowlist, ver _validate_file_args)
         if not self._validate_file_args(cmd_parts):
             return False, f"Path not allowed: {cmd_base}"
 
         try:
             logger.info(f"Running command: {' '.join(cmd_parts)}")
-            
+
             result = subprocess.run(
                 cmd_parts,  # Use list instead of shell=True for security
                 capture_output=True,
+                # Um byte inválido não deve transformar o comando num erro
                 text=True,
-                timeout=timeout
+                errors="replace",
+                timeout=timeout,
             )
-            
+
+            def _cap(text: str) -> str:
+                if text and len(text) > MAX_COMMAND_OUTPUT:
+                    return (
+                        text[:MAX_COMMAND_OUTPUT]
+                        + f"\n... (output truncated at {MAX_COMMAND_OUTPUT} bytes)"
+                    )
+                return text
+
             if result.returncode == 0:
                 logger.debug(f"Command executed successfully: {cmd_base}")
-                return True, result.stdout
+                return True, _cap(result.stdout)
             else:
                 logger.warning(f"Command failed ({result.returncode}): {cmd_base}")
-                return False, result.stderr or result.stdout
-                
+                return False, _cap(result.stderr or result.stdout)
+
         except subprocess.TimeoutExpired:
-            logger.error(f"Timeout running command: {command}")
-            return False, f"Timeout running command: {command}"
+            logger.error(f"Timeout running command: {cmd_base}")
+            return False, f"Timeout running command: {cmd_base}"
         except Exception as e:
             logger.error(f"Error running command: {e}")
             return False, f"Error running command: {e}"
-    
+
     def read_file(self, filepath: str, max_lines: int = 100) -> Tuple[bool, str]:
         """
         Read a file from the system.
@@ -344,25 +394,25 @@ class SystemUtils:
         """
         if not filepath or not isinstance(filepath, str):
             return False, "Invalid path"
-        
+
         # Validate path
         if not self._validate_path(filepath):
             logger.warning(f"Access denied to file: {filepath}")
             return False, f"Access denied to file: {filepath}"
-        
+
         try:
             file_path = Path(filepath)
             if not file_path.exists():
                 return False, f"File not found: {filepath}"
-            
+
             # Check if it is a directory
             if file_path.is_dir():
                 return False, f"It is a directory: {filepath}"
-            
+
             # Check permissions
             if not os.access(filepath, os.R_OK):
                 return False, f"No permission to read: {filepath}"
-            
+
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = []
                 # Cap each line: a single-line file (minified JSON, a log
@@ -375,7 +425,7 @@ class SystemUtils:
                     if len(line) > max_line_chars:
                         line = line[:max_line_chars] + "... (line truncated)\n"
                     lines.append(line)
-            
+
             return True, ''.join(lines)
         except PermissionError:
             logger.error(f"Permission denied to read: {filepath}")
@@ -383,7 +433,7 @@ class SystemUtils:
         except Exception as e:
             logger.error(f"Error reading file: {e}")
             return False, f"Error reading file: {e}"
-    
+
     def write_file(self, filepath: str, content: str, append: bool = False) -> Tuple[bool, str]:
         """
         Write to a file on the system.
@@ -398,18 +448,18 @@ class SystemUtils:
         """
         if not filepath or not isinstance(filepath, str):
             return False, "Invalid path"
-        
+
         if not content or not isinstance(content, str):
             return False, "Invalid content"
-        
+
         # Validate path
         if not self._validate_path(filepath):
             logger.warning(f"Access denied to file: {filepath}")
             return False, f"Access denied to file: {filepath}"
-        
+
         try:
             file_path = Path(filepath)
-            
+
             # Create the parent directories first: os.access() on a
             # non-existent directory reports "not writable" even when we are
             # able to create it, so the old check blocked writes to any new
@@ -418,15 +468,15 @@ class SystemUtils:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:
                 return False, f"Error creating directory {file_path.parent}: {e}"
-            
+
             # Check permissions
             if not os.access(file_path.parent, os.W_OK):
                 return False, f"No permission to write in: {file_path.parent}"
-            
+
             mode = 'a' if append else 'w'
             with open(file_path, mode, encoding='utf-8') as f:
                 f.write(content)
-            
+
             logger.info(f"File {filepath} {'updated' if not append else 'appended'} successfully")
             return True, f"File {filepath} {'updated' if not append else 'appended'} successfully"
         except PermissionError:
@@ -435,7 +485,50 @@ class SystemUtils:
         except Exception as e:
             logger.error(f"Error writing file: {e}")
             return False, f"Error writing file: {e}"
-    
+
+    @staticmethod
+    def _which(name: str) -> Optional[str]:
+        """shutil.which com timeout — sem isso `which` podia bloquear indefinidamente."""
+        try:
+            return shutil.which(name)
+        except Exception:
+            return None
+
+    def _wayland_focused_geometry(self) -> Optional[str]:
+        """Geometria "x,y WxH" da janela focada (sway/wlroots), se possível."""
+        if self._which("swaymsg") is None:
+            return None
+        try:
+            result = subprocess.run(
+                ["swaymsg", "-t", "get_tree", "-r"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return None
+            tree = json.loads(result.stdout)
+
+            def _find_focused(node):
+                if node.get("focused"):
+                    return node
+                for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                    found = _find_focused(child)
+                    if found:
+                        return found
+                return None
+
+            focused = _find_focused(tree)
+            if not focused:
+                return None
+            rect = focused.get("rect") or {}
+            x, y = rect.get("x"), rect.get("y")
+            w, h = rect.get("width"), rect.get("height")
+            if None in (x, y, w, h) or w <= 0 or h <= 0:
+                return None
+            return f"{x},{y} {w}x{h}"
+        except Exception as e:
+            logger.warning(f"Could not get focused window geometry: {e}")
+            return None
+
     def capture_screen(self, output_path: str = None) -> Tuple[bool, str]:
         """
         Capture the screen with support for Wayland and X11.
@@ -446,73 +539,65 @@ class SystemUtils:
         Returns:
             Tuple (success, image_path).
         """
+        temp_path = None
         try:
-            if self.is_wayland:
-                # Try using grim for Wayland
-                if subprocess.run(['which', 'grim'], capture_output=True).returncode == 0:
-                    if output_path:
-                        result = subprocess.run(['grim', '-o', output_path], 
-                                              capture_output=True, timeout=10)
-                        if result.returncode == 0:
-                            logger.info(f"Screen captured with grim: {output_path}")
-                            return True, output_path
-                    else:
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                            result = subprocess.run(['grim', '-o', tmp.name], 
-                                                  capture_output=True, timeout=10)
-                            if result.returncode == 0:
-                                logger.info(f"Screen temporarily captured: {tmp.name}")
-                                return True, tmp.name
-                
-                # Try using slurp for Wayland (interactive)
-                if subprocess.run(['which', 'slurp'], capture_output=True).returncode == 0:
-                    logger.warning("slurp available but requires interaction. Use grim for automatic capture.")
-            
-            # Try using scrot for X11
-            if subprocess.run(['which', 'scrot'], capture_output=True).returncode == 0:
-                if output_path:
-                    result = subprocess.run(['scrot', output_path], 
-                                          capture_output=True, timeout=10)
-                    if result.returncode == 0:
-                        logger.info(f"Screen captured with scrot: {output_path}")
-                        return True, output_path
-                else:
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        result = subprocess.run(['scrot', tmp.name], 
-                                              capture_output=True, timeout=10)
-                        if result.returncode == 0:
-                            logger.info(f"Screen temporarily captured: {tmp.name}")
-                            return True, tmp.name
-            
-            # Try using gnome-screenshot
-            if subprocess.run(['which', 'gnome-screenshot'], capture_output=True).returncode == 0:
-                if output_path:
-                    result = subprocess.run(['gnome-screenshot', '-f', output_path], 
-                                          capture_output=True, timeout=10)
-                    if result.returncode == 0:
-                        logger.info(f"Screen captured with gnome-screenshot: {output_path}")
-                        return True, output_path
-                else:
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        result = subprocess.run(['gnome-screenshot', '-f', tmp.name], 
-                                              capture_output=True, timeout=10)
-                        if result.returncode == 0:
-                            logger.info(f"Screen temporarily captured: {tmp.name}")
-                            return True, tmp.name
-            
+            if output_path is None:
+                import tempfile
+                fd, temp_path = tempfile.mkstemp(suffix='.png')
+                os.close(fd)
+                output_path = temp_path
+
+            # Wayland: grim. NB: a flag antiga `grim -o <ficheiro>` está
+            # ERRADA — `-o/--output` escolhe o MONITOR, não o ficheiro; a
+            # captura primária em Wayland falhava sempre e caía no scrot
+            # (que não funciona em Wayland).
+            grim = self._which("grim")
+            if self.is_wayland and grim:
+                result = subprocess.run([grim, output_path],
+                                        capture_output=True, timeout=10)
+                if result.returncode == 0:
+                    logger.info(f"Screen captured with grim: {output_path}")
+                    return True, output_path
+                logger.warning(f"grim failed: {result.stderr!r}")
+
+            # X11: scrot
+            scrot = self._which("scrot")
+            if scrot and not self.is_wayland:
+                result = subprocess.run([scrot, output_path],
+                                        capture_output=True, timeout=10)
+                if result.returncode == 0:
+                    logger.info(f"Screen captured with scrot: {output_path}")
+                    return True, output_path
+
+            # gnome-screenshot (último recurso, ambos os servidores gráficos)
+            gnome = self._which("gnome-screenshot")
+            if gnome:
+                result = subprocess.run([gnome, "-f", output_path],
+                                        capture_output=True, timeout=10)
+                if result.returncode == 0:
+                    logger.info(f"Screen captured with gnome-screenshot: {output_path}")
+                    return True, output_path
+
             logger.error("No screen capture utility found")
             return False, "No screen capture utility found (install scrot, grim or gnome-screenshot)"
-            
+
         except subprocess.TimeoutExpired:
             logger.error("Timeout capturing screen")
             return False, "Timeout capturing screen"
         except Exception as e:
             logger.error(f"Error capturing screen: {e}")
             return False, f"Error capturing screen: {e}"
-    
+        finally:
+            # Falha => apagar o temporário (antes, cada captura falhada em
+            # Wayland deixava um PNG vazio para trás). No sucesso o ficheiro
+            # fica para o chamador (OCR) apagar.
+            if temp_path is not None and os.path.exists(temp_path):
+                if os.path.getsize(temp_path) == 0:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+
     def capture_active_window(self, output_path: str = None) -> Tuple[bool, str]:
         """
         Capture the active window with support for Wayland and X11.
@@ -523,61 +608,77 @@ class SystemUtils:
         Returns:
             Tuple (success, image_path).
         """
+        temp_path = None
         try:
+            if output_path is None:
+                import tempfile
+                fd, temp_path = tempfile.mkstemp(suffix='.png')
+                os.close(fd)
+                output_path = temp_path
+
             if self.is_wayland:
-                # Try using slurp for Wayland
-                if subprocess.run(['which', 'slurp'], capture_output=True).returncode == 0:
-                    if output_path:
-                        result = subprocess.run(['slurp', '-o', output_path], 
-                                              capture_output=True, timeout=10)
-                        if result.returncode == 0:
-                            logger.info(f"Active window captured with slurp: {output_path}")
-                            return True, output_path
-                    else:
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                            result = subprocess.run(['slurp', '-o', tmp.name], 
-                                                  capture_output=True, timeout=10)
-                            if result.returncode == 0:
-                                logger.info(f"Active window temporarily captured: {tmp.name}")
-                                return True, tmp.name
-            else:
-                # Use scrot for X11
-                if subprocess.run(['which', 'scrot'], capture_output=True).returncode == 0:
-                    if output_path:
-                        result = subprocess.run(['scrot', '-u', output_path], 
-                                              capture_output=True, timeout=10)
-                        if result.returncode == 0:
-                            logger.info(f"Active window captured with scrot: {output_path}")
-                            return True, output_path
-                    else:
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                            result = subprocess.run(['scrot', '-u', tmp.name], 
-                                              capture_output=True, timeout=10)
-                            if result.returncode == 0:
-                                logger.info(f"Active window temporarily captured: {tmp.name}")
-                                return True, tmp.name
-            
+                # slurp NÃO produz imagens: é um seletor interativo de
+                # geometria que imprime coordenadas — o caminho antigo
+                # tratava returncode 0 como "captura guardada" e nunca
+                # havia PNG. Obter a geometria da janela focada e usar
+                # `grim -g`.
+                grim = self._which("grim")
+                geometry = self._wayland_focused_geometry()
+                if grim and geometry:
+                    result = subprocess.run(
+                        [grim, "-g", geometry, output_path],
+                        capture_output=True, timeout=10,
+                    )
+                    if result.returncode == 0:
+                        logger.info(
+                            f"Active window captured with grim -g: {output_path}"
+                        )
+                        return True, output_path
+                    logger.warning(f"grim -g failed: {result.stderr!r}")
+                logger.error(
+                    "Active-window capture on Wayland needs grim + swaymsg "
+                    "(or a compositor with a screenshot portal)"
+                )
+                return False, (
+                    "Active window capture unavailable on Wayland "
+                    "(install grim and swaymsg-compatible compositor)"
+                )
+
+            scrot = self._which("scrot")
+            if scrot:
+                result = subprocess.run([scrot, "-u", output_path],
+                                        capture_output=True, timeout=10)
+                if result.returncode == 0:
+                    logger.info(f"Active window captured with scrot: {output_path}")
+                    return True, output_path
+                logger.warning(f"scrot -u failed: {result.stderr!r}")
+
             logger.error("No window capture utility found")
-            return False, "No window capture utility found (install scrot or slurp)"
-            
+            return False, "No window capture utility found (install scrot)"
+
         except subprocess.TimeoutExpired:
             logger.error("Timeout capturing active window")
             return False, "Timeout capturing active window"
         except Exception as e:
             logger.error(f"Error capturing active window: {e}")
             return False, f"Error capturing active window: {e}"
-    
+        finally:
+            if temp_path is not None and os.path.exists(temp_path):
+                if os.path.getsize(temp_path) == 0:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+
     def get_active_window_info(self) -> Dict[str, str]:
         """Get information about the active window."""
         info = {}
-        
+
         try:
             if self.is_wayland:
                 # Try using swaymsg for Wayland (Sway)
                 if subprocess.run(['which', 'swaymsg'], capture_output=True).returncode == 0:
-                    result = subprocess.run(['swaymsg', '-t', 'get_tree'], 
+                    result = subprocess.run(['swaymsg', '-t', 'get_tree'],
                                           capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
                         try:
@@ -592,10 +693,10 @@ class SystemUtils:
                                         break
                         except Exception as e:
                             logger.warning(f"Error parsing swaymsg: {e}")
-                
+
                 # Try using wl-focus for Wayland
                 if subprocess.run(['which', 'wl-focus'], capture_output=True).returncode == 0:
-                    result = subprocess.run(['wl-focus', '--get'], 
+                    result = subprocess.run(['wl-focus', '--get'],
                                           capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
                         info['window_id'] = result.stdout.strip()
@@ -608,21 +709,21 @@ class SystemUtils:
                     )
                     if result.returncode == 0:
                         info["title"] = result.stdout.strip()
-                    
+
                     result = subprocess.run(
                         ['xdotool', 'getactivewindow', 'getwindowclass'],
                         capture_output=True, text=True, timeout=5
                     )
                     if result.returncode == 0:
                         info["class"] = result.stdout.strip()
-                    
+
                     result = subprocess.run(
                         ['xdotool', 'getactivewindow', 'getwindowgeometry'],
                         capture_output=True, text=True, timeout=5
                     )
                     if result.returncode == 0:
                         info["geometry"] = result.stdout.strip()
-                
+
                 # Use xprop to get more info
                 if subprocess.run(['which', 'xprop'], capture_output=True).returncode == 0:
                     result = subprocess.run(
@@ -631,13 +732,13 @@ class SystemUtils:
                     )
                     if result.returncode == 0:
                         info["window_id"] = result.stdout.strip()
-            
+
         except Exception as e:
             logger.warning(f"Error getting active window info: {e}")
             info["error"] = str(e)
-        
+
         return info
-    
+
     def extract_text_from_image(self, image_path: str, lang: str = "por+eng") -> Tuple[bool, str]:
         """
         Extract text from an image using OCR with fallback.
@@ -652,7 +753,7 @@ class SystemUtils:
         try:
             import pytesseract
             from PIL import Image
-            
+
             pytesseract.pytesseract.tesseract_cmd = (
                 shutil.which("tesseract") or shutil.which("tesseract-ocr") or "tesseract"
             )
@@ -660,30 +761,33 @@ class SystemUtils:
             # Check if file exists
             if not os.path.exists(image_path):
                 return False, f"File not found: {image_path}"
-            
+
             # Open image
             img = Image.open(image_path)
-            
+
             # Extract text
             try:
-                text = pytesseract.image_to_string(img, lang=lang)
-                
+                # timeout: pytesseract lança um subprocesso sem timeout
+                # próprio — um tesseract bloqueado congelava a thread para
+                # sempre (o fallback binário já usava timeout=30).
+                text = pytesseract.image_to_string(img, lang=lang, timeout=30)
+
                 # If no text is obtained, try with English only
                 if not text.strip():
                     logger.info("No text detected. Trying with English...")
-                    text = pytesseract.image_to_string(img, lang='eng')
-                
+                    text = pytesseract.image_to_string(img, lang='eng', timeout=30)
+
                 if text.strip():
                     logger.info(f"Text extracted successfully ({len(text)} characters)")
                     return True, text.strip()
                 else:
                     logger.warning("No text detected in the image")
                     return True, ""
-                    
+
             except Exception as e:
                 logger.error(f"pytesseract error: {e}")
                 return False, f"OCR error: {e}"
-                
+
         except ImportError:
             binary = shutil.which("tesseract") or shutil.which("tesseract-ocr")
             if not binary:
@@ -701,11 +805,11 @@ class SystemUtils:
         except Exception as e:
             logger.error(f"Error extracting text: {e}")
             return False, f"Error extracting text: {e}"
-    
+
     def get_process_list(self) -> List[Dict[str, str]]:
         """Get the list of running processes."""
         processes = []
-        
+
         try:
             import psutil
             for proc in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_percent']):
@@ -737,13 +841,13 @@ class SystemUtils:
                             })
             except Exception as e:
                 logger.warning(f"Could not get process list: {e}")
-        
+
         return sorted(processes, key=_cpu_value, reverse=True)
-    
+
     def get_network_info(self) -> Dict[str, Any]:
         """Get network information."""
         info = {}
-        
+
         try:
             import psutil
             # Network interfaces
@@ -756,7 +860,7 @@ class SystemUtils:
                     "packets_sent": data.packets_sent,
                     "packets_recv": data.packets_recv
                 }
-            
+
             # Connections
             connections = psutil.net_connections(kind='inet')
             info["connections"] = []
@@ -774,7 +878,7 @@ class SystemUtils:
                 result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     info["interfaces"] = {"output": result.stdout}
-                
+
                 result = subprocess.run(['ss', '-tuln'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     info["connections"] = result.stdout.split('\n')
@@ -783,7 +887,7 @@ class SystemUtils:
         except Exception as e:
             logger.error(f"Error getting network info: {e}")
             info["error"] = str(e)
-        
+
         return info
 
     def search_files(self, search_term: str, search_path: str = "/", max_results: int = 20) -> List[str]:
@@ -829,12 +933,16 @@ class SystemUtils:
                 text=True,
             )
             try:
+                deadline = time.monotonic() + 30  # teto global de pesquisa
                 for line in proc.stdout:
                     line = line.strip()
                     if line:
                         results.append(line)
                         if len(results) >= max_results:
                             break
+                    if time.monotonic() > deadline:
+                        logger.warning("search_files hit its 30s deadline")
+                        break
             finally:
                 # `find` keeps running on large trees: always terminate
                 # and close the pipe to avoid exhausting file descriptors.
@@ -853,19 +961,19 @@ class SystemUtils:
         except Exception as e:
             logger.error(f"Error searching files: {e}")
             return results
-    
+
     def get_file_info(self, filepath: str) -> Dict[str, str]:
         """Get information about a file."""
         info = {}
-        
+
         if not filepath or not isinstance(filepath, str):
             return {"error": "Invalid path"}
-        
+
         try:
             file_path = Path(filepath)
             if not file_path.exists():
                 return {"error": "File not found"}
-            
+
             stat = file_path.stat()
             info["name"] = file_path.name
             info["path"] = str(file_path)
@@ -877,7 +985,7 @@ class SystemUtils:
             info["permissions"] = oct(stat.st_mode)[-3:]
             info["owner"] = str(stat.st_uid)
             info["group"] = str(stat.st_gid)
-            
+
             # Additional information for files
             if file_path.is_file():
                 try:
@@ -886,10 +994,10 @@ class SystemUtils:
                     info["header"] = header.hex()[:20] + "..."
                 except OSError:
                     pass
-            
+
         except Exception as e:
             logger.error(f"Error getting file info: {e}")
             info["error"] = str(e)
-        
+
         return info
 

@@ -43,38 +43,38 @@ from . import i18n
 
 class LinuxAIAssistant:
     """Main application"""
-    
+
     def __init__(self):
         logger.info("Initializing Linux AI Assistant")
-        
+
         # Idempotency flag for quit(): delete-event, the tray menu and
         # SIGINT/SIGTERM can all ask to quit, sometimes re-entrantly.
         self._quitting = False
         self.float_button_window = None
-        
+
         try:
             self.config = ConfigManager()
             logger.info("Configuration loaded")
-            
+
             self.ai_client = AIClient(self.config)
             logger.info("AI client initialized")
 
             self.system_utils = SystemUtils(self.config)
             logger.info("System utilities initialized")
-            
+
             i18n.set_language_from_config(self.config)
-            
+
             self.main_window = None
             self.tray_icon = None
-            
+
         except Exception as e:
             logger.error(f"Error initializing application: {e}", exc_info=True)
             raise
-    
+
     def run(self):
         """Start the application"""
         logger.info("Initializing GTK")
-        
+
         try:
             # Initialize GTK. init_check() reports failure (e.g. no
             # DISPLAY) instead of aborting the process like init() does.
@@ -86,36 +86,39 @@ class LinuxAIAssistant:
                 logger.error("GTK could not be initialized (no display?)")
                 return
             logger.info("GTK initialized")
-            
+
             # Create main window
             logger.info("Creating main window")
             self.main_window = MainWindow(self, self.config, self.ai_client, self.system_utils)
-            
+
             # Create system tray icon
             logger.info("Creating system tray icon")
             self.tray_icon = TrayIcon(self, self.config, self.main_window)
-            
+
             # Create permanent floating button
             self._create_float_button()
-            
+
             # Show window if auto_start is active
             if self.config.get("app.auto_start", False):
                 self.main_window.show()
+                # O menu da tray nasce com "Show Window"; sincronizar quando
+                # a janela arranca visível.
+                self.main_window.sync_visibility()
                 logger.info("Window shown (auto_start active)")
             else:
                 logger.info("Window not shown (auto_start inactive). Use the system tray icon.")
-            
+
             # Start main loop
             logger.info("Starting GTK main loop")
             Gtk.main()
-            
+
         except KeyboardInterrupt:
             logger.info("Received KeyboardInterrupt. Shutting down...")
             self.quit()
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)
             self.quit()
-    
+
     def quit(self):
         """Quit the application (safe to call more than once)"""
         if self._quitting:
@@ -123,8 +126,16 @@ class LinuxAIAssistant:
             return
         self._quitting = True
         logger.info("Terminating application")
-        
+
         try:
+            # O config é debounced 0,5 s e o timer é daemon (morre com o
+            # processo): sem este flush, sair pela tray/SIGTERM perdia as
+            # alterações dos últimos meio segundo (geometria, tema, keys).
+            try:
+                self.config.flush()
+            except Exception as e:
+                logger.warning(f"Could not flush config on quit: {e}")
+
             if self.main_window:
                 # Drain pending history writes before tearing the window down
                 try:
@@ -133,14 +144,14 @@ class LinuxAIAssistant:
                     logger.warning(f"Could not flush history on quit: {e}")
                 self.main_window.destroy()
                 logger.info("Main window destroyed")
-            
+
             if self.float_button_window is not None:
                 try:
                     self.float_button_window.destroy()
                 except Exception as e:
                     logger.warning(f"Could not destroy float button: {e}")
                 self.float_button_window = None
-            
+
             if self.tray_icon:
                 if getattr(self.tray_icon, 'indicator', None) is not None:
                     self.tray_icon.indicator.set_status(0)
@@ -148,13 +159,18 @@ class LinuxAIAssistant:
                 elif getattr(self.tray_icon, 'status_icon', None) is not None:
                     self.tray_icon.status_icon.set_visible(False)
                     logger.info("StatusIcon deactivated")
-            
-            logger.info("GTK main quit")
-            Gtk.main_quit()
-            
         except Exception as e:
             logger.error(f"Error terminating application: {e}", exc_info=True)
-    
+        finally:
+            # O fecho do main loop não pode depender do sucesso da destruição
+            # dos widgets: sem `finally`, uma exceção a meio de quit() deixava
+            # o processo vivo sem janela nem tray visíveis.
+            try:
+                logger.info("GTK main quit")
+                Gtk.main_quit()
+            except Exception as e:
+                logger.error(f"Could not quit GTK main loop: {e}")
+
     def _create_float_button(self):
         """Permanent floating button to show/hide the main window"""
         button_window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
@@ -166,18 +182,15 @@ class LinuxAIAssistant:
         button_window.stick()
         button_window.set_type_hint(Gdk.WindowTypeHint.UTILITY)
         button_window.set_opacity(0.75)
-        
+
         def toggle_main_window(btn):
-            if self.main_window.get_visible():
-                self.main_window.hide()
-            else:
-                self.main_window.show()
-                self.main_window.present()
-        
+            # Ponto único do toggle: sincroniza o label da tray e o estado.
+            self.main_window.toggle_visibility()
+
         button = Gtk.Button(label="✦")
         button.connect("clicked", toggle_main_window)
         button_window.add(button)
-        
+
         edge = self.config.get("app.button_edge", "right")
         display = Gdk.Display.get_default()
         monitor = display.get_monitor(0) if display is not None else None
@@ -197,7 +210,7 @@ class LinuxAIAssistant:
             # No monitor (headless/RDP): skip positioning instead of
             # crashing on monitor.get_geometry().
             logger.warning("No monitor available; float button not positioned")
-        
+
         button_window.show_all()
         self.float_button_window = button_window
 
@@ -205,6 +218,9 @@ class LinuxAIAssistant:
 def main():
     """Main entry point"""
     logger.info("Linux AI Assistant - Start")
+    # File logging só no arranque real (não no import do pacote)
+    from . import setup_file_logging
+    setup_file_logging()
 
     if not GTK_AVAILABLE:
         message = (
@@ -221,7 +237,7 @@ def main():
 
     try:
         app = LinuxAIAssistant()
-        
+
         # Handle signals to quit correctly. `signal.signal` handlers only run
         # between Python bytecodes, which never happens while Gtk.main()
         # blocks in C - so SIGTERM would be deferred indefinitely.
@@ -238,9 +254,9 @@ def main():
             signal.signal(signal.SIGINT, lambda s, f: GLib.idle_add(app.quit))
             signal.signal(signal.SIGTERM, lambda s, f: GLib.idle_add(app.quit))
         logger.info("Signal handlers configured")
-        
+
         app.run()
-        
+
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         return 1

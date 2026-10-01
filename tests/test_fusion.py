@@ -63,7 +63,6 @@ class TestPreviewDiff(unittest.TestCase):
 class TestI18n(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, SRC_DIR)
-        import i18n
 
     def test_english_default(self):
         import i18n

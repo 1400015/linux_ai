@@ -14,6 +14,30 @@ from dotenv import load_dotenv
 # Configurar logger
 logger = logging.getLogger(__name__)
 
+# Versão única da aplicação (src/_version.py é a fonte; o fallback cobre o
+# import como módulo de topo, fora do pacote `src`).
+try:
+    from ._version import __version__ as _APP_VERSION
+except ImportError:  # pragma: no cover - import fora do pacote
+    _APP_VERSION = "1.1.0"
+
+# Migrações de configuração versionadas: chave = versão a partir da qual a
+# migração se aplica. Executadas por ordem de versão sobre configs antigas
+# cujo `app.version` seja inferior. Adicionar novas migrações AQUI e nunca
+# alterar retroactivamente as existentes.
+MIGRATIONS: Dict[str, Any] = {}
+
+
+def _version_tuple(version: str):
+    """'1.2.3' -> (1, 2, 3); partes não numéricas tratadas como 0."""
+    parts = []
+    for piece in str(version).split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
 # `set()` is called on every `configure-event`/`size-allocate` event (that is,
 # every pixel of dragging/resizing). Without debounce, that would mean
 # rewriting the entire config.json hundreds of times per second.
@@ -26,11 +50,11 @@ _THEME_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 class ConfigManager:
     """Application configuration manager with optional encryption and theme support"""
-    
+
     DEFAULT_CONFIG = {
         "app": {
             "name": "Linux AI Assistant",
-            "version": "1.0.0",
+            "version": _APP_VERSION,
             "width": 400,
             "height": 500,
             "x_position": 100,
@@ -99,6 +123,11 @@ class ConfigManager:
             "file_edit": True,
             "system_info": True
         },
+        # Plugins são OPT-IN: um plugin é código arbitrário executado no
+        # arranque; só os aqui listados (por nome de ficheiro) são carregados.
+        "plugins": {
+            "enabled": []
+        },
         # Context budget sent to the provider on every request.
         "context": {
             "max_messages": 20,
@@ -106,13 +135,22 @@ class ConfigManager:
         },
         "permissions": {
             "require_sudo": True,
+            # Apenas comandos de diagnóstico "puros". Contrato de segurança:
+            # nenhum item desta lista pode executar código arbitrário por
+            # flags próprias (ex.: `man -P <prog>` corre o pager via shell) —
+            # daí a ausência de `man`/interpretadores/pagers. system_utils.py
+            # bloqueia adicionalmente argumentos com caminhos absolutos em
+            # TODOS estes comandos e flags concretas (ex.: `dig -f`).
             "allowed_commands": [
                 "ls", "cat", "grep", "ps", "df", "du", "free", "uname", "neofetch",
-                "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis",
+                "whoami", "pwd", "date", "cal", "echo", "which", "whereis",
                 "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig",
                 "nslookup"
             ],
-            "allowed_edit_dirs": ["/etc", "/home", "/usr/local", "/opt"]
+            # Mínimo-privilégio: sem diretórios editáveis por defeito. O
+            # utilizador adiciona os que quiser nas Definições; a lista antiga
+            # ("/etc", "/home", ...) mantém-se em configs existentes.
+            "allowed_edit_dirs": []
         },
         "ui": {
             "font_family": "Monospace",
@@ -123,7 +161,7 @@ class ConfigManager:
             "border_radius": 10
         }
     }
-    
+
     # Schema for validation (simplified)
     CONFIG_SCHEMA = {
         "app": {
@@ -153,6 +191,9 @@ class ConfigManager:
             "file_edit": bool,
             "system_info": bool
         },
+        "plugins": {
+            "enabled": list
+        },
         "context": {
             "max_messages": int,
             "max_chars": int
@@ -171,11 +212,11 @@ class ConfigManager:
             "border_radius": int
         }
     }
-    
+
     def __init__(self, config_path: str = None):
         """
         Initialize the configuration manager
-        
+
         Args:
             config_path: Path to the configuration file
         """
@@ -184,13 +225,17 @@ class ConfigManager:
             config_dir = Path.home() / ".config" / "linux_ai_assistant"
             config_dir.mkdir(parents=True, exist_ok=True)
             config_path = str(config_dir / "config.json")
-        
+
         load_dotenv(Path(config_path).parent / ".env", override=False)
         self.config_path = config_path
         self.config = {}
         self._encryption_key = None
         self._save_timer = None
         self._dirty = False
+        # Último erro persistente de escrita (None se a última gravação
+        # teve sucesso). A UI usa-o para avisar quando alterações/keys não
+        # chegaram a disco (disco cheio, permissões...).
+        self.last_save_error: Optional[str] = None
         # set()/save()/flush() may run from the GTK main thread, worker
         # threads and the debounce Timer at the same time.
         self._lock = threading.RLock()
@@ -201,7 +246,7 @@ class ConfigManager:
         self._validate_config()
         # Ensure a scheduled change is not lost on exit
         atexit.register(self.flush)
-    
+
     def _load_encryption_key(self):
         """Load or generate encryption key"""
         if self.get("app.encryption_enabled", False):
@@ -233,7 +278,7 @@ class ConfigManager:
                     logger.error(f"Error generating encryption key: {e}")
                     self.config["app"]["encryption_enabled"] = False
                     self.save()
-    
+
     def _encrypt_value(self, value: str) -> str:
         """Encrypt value"""
         if not self.get("app.encryption_enabled", False) or not self._encryption_key:
@@ -245,9 +290,18 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Error encrypting value: {e}")
             return value
-    
-    def _decrypt_value(self, value: str) -> str:
-        """Decrypt value"""
+
+    def _decrypt_value(self, value: str) -> Optional[str]:
+        """Decrypt value
+
+        Contrato: em caso de falha NUNCA devolve o ciphertext — devolver a
+        cifra faria a app enviar `Authorization: Bearer <ciphertext>` sem
+        nenhum erro visível. Heurística: tokens Fernet começam por "gAAAA"
+        (versão 0x80 em base64url); uma string que não se pareça com cifra é
+        devolvida como está (chave legada em texto simples), uma que se
+        pareça e não desencripta devolve None (chave inválida/rotação de
+        `.encryption_key`) e a UI mostra o provider como não configurado.
+        """
         if not self.get("app.encryption_enabled", False) or not self._encryption_key:
             return value
         try:
@@ -255,9 +309,17 @@ class ConfigManager:
             f = Fernet(self._encryption_key)
             return f.decrypt(base64.b64decode(value.encode())).decode()
         except Exception as e:
-            logger.warning(f"Error decrypting value: {e}")
+            looks_encrypted = value.startswith("gAAAA")
+            if looks_encrypted:
+                logger.error(
+                    "Cannot decrypt a stored API key (was .encryption_key "
+                    "regenerated or deleted?); treating it as unset. %s", e
+                )
+                return None
+            # Legado: chave guardada em texto simples com encriptação activa.
+            logger.warning("Stored API key is not encrypted; using it as-is")
             return value
-    
+
     def _load_config(self):
         """Load configuration from file"""
         try:
@@ -294,7 +356,7 @@ class ConfigManager:
             except OSError as backup_error:
                 logger.warning(f"Could not back up corrupt configuration: {backup_error}")
             self.save()
-    
+
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration
 
@@ -303,7 +365,7 @@ class ConfigManager:
         to appear in other instances and contaminate the class constant.
         """
         return copy.deepcopy(self.DEFAULT_CONFIG)
-    
+
     def _default_value(self, section: str, key: str, expected_type):
         """Real default for `section.key` (falls back to the schema type).
 
@@ -315,17 +377,66 @@ class ConfigManager:
             return copy.deepcopy(section_defaults[key])
         return expected_type()
 
+    def _deep_merge_defaults(self, defaults: Dict[str, Any], target: Dict[str, Any]) -> bool:
+        """Merge recursivo de `defaults` sobre `target` (in-place).
+
+        Só acrescenta o que falta: qualquer valor definido pelo utilizador é
+        preservado. Garante que secções profundas (ex.: um provider novo em
+        `api.providers` acrescentado numa versão futura, ou uma entrada
+        individual apagada à mão) reaparecem com os seus defaults — sem isto,
+        `_get_api_config()` devolvia `{}` e o pedido ia para
+        "None/chat/completions".
+        """
+        changed = False
+        for key, value in defaults.items():
+            if isinstance(value, dict):
+                child = target.get(key)
+                if not isinstance(child, dict):
+                    target[key] = copy.deepcopy(value)
+                    changed = True
+                else:
+                    changed = self._deep_merge_defaults(value, child) or changed
+            elif key not in target:
+                target[key] = copy.deepcopy(value)
+                changed = True
+        return changed
+
+    def _migrate(self):
+        """Aplica migrações versionadas e marca a versão actual.
+
+        Um config antigo (`app.version` em falta ou inferior a _APP_VERSION)
+        é trazido à versão corrente depois de passar por todas as migrações
+        intermédias, por ordem.
+        """
+        try:
+            current = str(self.config.get("app", {}).get("version", "0.0.0"))
+            for version in sorted(MIGRATIONS, key=_version_tuple):
+                if _version_tuple(version) > _version_tuple(current):
+                    MIGRATIONS[version](self)
+                    logger.info("Migration applied: %s", version)
+            if current != _APP_VERSION:
+                self.config.setdefault("app", {})["version"] = _APP_VERSION
+                self.save()
+        except Exception as e:
+            logger.error(f"Error migrating configuration: {e}")
+
     def _validate_config(self):
         """Validate configuration against schema"""
         try:
             changed = False
+            # Defaults profundos primeiro (secções/providers inteiros que a
+            # validação plana abaixo nunca criaria)...
+            if self._deep_merge_defaults(self._get_default_config(), self.config):
+                changed = True
+            # ...e migrações versionadas para configs de versões antigas.
+            self._migrate()
             # Validate basic structure
             for section, schema in self.CONFIG_SCHEMA.items():
                 if section not in self.config or not isinstance(self.config[section], dict):
                     self.config[section] = {}
                     changed = True
                     logger.warning(f"Section {section} not found. Creating default.")
-                
+
                 for key, expected_type in schema.items():
                     if key in self.config[section]:
                         value = self.config[section][key]
@@ -337,17 +448,17 @@ class ConfigManager:
                         self.config[section][key] = self._default_value(section, key, expected_type)
                         changed = True
                         logger.warning(f"Key {section}.{key} not found. Creating default.")
-            
+
             # Load encryption key if needed
             if self.get("app.encryption_enabled", False):
                 self._load_encryption_key()
-            
+
             # Only touch the file when validation actually repaired something
             if changed:
                 self.save()
         except Exception as e:
             logger.error(f"Error validating configuration: {e}")
-    
+
     @staticmethod
     def _env_name(key: str) -> str:
         """Canonical LINUX_AI_* environment variable name for a config key."""
@@ -416,20 +527,20 @@ class ConfigManager:
         env_value = os.environ.get(self._env_name(key))
         if env_value is not None:
             return self._coerce_env_value(key, env_value, default)
-        
+
         keys = key.split('.')
         value = self.config
-        
+
         for k in keys:
             if isinstance(value, dict) and k in value:
                 value = value[k]
             else:
                 return default
-        
+
         # Decrypt API keys if needed
         if "api_key" in key and isinstance(value, str):
             return self._decrypt_value(value)
-        
+
         return value
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
@@ -447,7 +558,7 @@ class ConfigManager:
         if "api_key" in key and isinstance(value, str):
             return self._decrypt_value(value)
         return value
-    
+
     def set(self, key: str, value: Any):
         """
         Set a configuration value using dot notation.
@@ -501,22 +612,31 @@ class ConfigManager:
         self._save_timer = timer
         timer.start()
 
-    def flush(self):
-        """Write immediately if there are pending changes."""
+    def flush(self) -> bool:
+        """Write immediately if there are pending changes.
+
+        Devolve True se não havia alterações pendentes ou se a escrita teve
+        sucesso; False em caso de falha persistente (ver `last_save_error`).
+        """
         with self._lock:
             if self._save_timer is not None:
                 self._save_timer.cancel()
                 self._save_timer = None
             if self._dirty:
-                self.save()
+                return self.save()
+        return True
 
-    def save(self):
+    def save(self) -> bool:
         """Save configuration to file
 
         Atomic write (temp file + os.replace) so a crash in the middle of
         writing never leaves a truncated config.json. The file is created
         with mode 0600: it holds API keys. `_dirty` is cleared only after
         the write succeeded, otherwise a failed write would be forgotten.
+
+        Devolve True em caso de sucesso. Falhas persistentes (disco cheio,
+        permissões) são registadas em `last_save_error` — não engolidas —
+        para que a UI/atexit possam avisar o utilizador.
         """
         temp_path = None
         with self._lock:
@@ -539,21 +659,31 @@ class ConfigManager:
                 except OSError:
                     pass
                 self._dirty = False
+                self.last_save_error = None
                 logger.debug(f"Configuration saved to {self.config_path}")
+                return True
             except (IOError, OSError, TypeError, ValueError) as e:
+                self.last_save_error = str(e)
                 logger.error(f"Error saving configuration: {e}")
                 if temp_path is not None:
                     try:
                         os.unlink(temp_path)
                     except OSError:
                         pass
-    
+                return False
+
     def reload(self):
-        """Reload configuration from file"""
-        self._load_config()
-        self._validate_config()
+        """Reload configuration from file
+
+        Sob lock: `_validate_config` muta `self.config` in-place; sem o lock,
+        leitores concorrentes podiam observar um estado parcialmente
+        validado.
+        """
+        with self._lock:
+            self._load_config()
+            self._validate_config()
         logger.info("Configuration reloaded")
-    
+
     def get_api_key(self, provider: str) -> Optional[str]:
         """Get API key for a specific provider"""
         legacy_names = {
@@ -565,7 +695,7 @@ class ConfigManager:
             return os.environ[legacy_name]
         # get() already resolves the canonical LINUX_AI_* variable
         return self.get(f"api.providers.{provider}.api_key")
-    
+
     def set_api_key(self, provider: str, api_key: str):
         """Set API key for a provider"""
         self.set(f"api.providers.{provider}.api_key", api_key)
@@ -593,7 +723,7 @@ class ConfigManager:
     def get_stored_api_key(self, provider: str) -> str:
         """The key persisted in config.json, ignoring env overrides."""
         return self.get_config_value(f"api.providers.{provider}.api_key") or ""
-    
+
     def get_window_geometry(self) -> Dict[str, int]:
         """Get window geometry"""
         return {
@@ -602,7 +732,7 @@ class ConfigManager:
             "x": self.get("app.x_position", 100),
             "y": self.get("app.y_position", 100)
         }
-    
+
     def set_window_geometry(self, width: int, height: int, x: int, y: int):
         """Set window geometry"""
         self.set("app.width", width)
@@ -610,13 +740,13 @@ class ConfigManager:
         self.set("app.x_position", x)
         self.set("app.y_position", y)
         logger.debug(f"Window geometry updated: {width}x{height} @ ({x},{y})")
-    
+
     def get_theme_colors(self) -> Dict[str, str]:
         """Get theme colors"""
         # Check if there are custom themes
         theme_name = self.get("app.theme", "dark")
         custom_theme = self._load_theme(theme_name)
-        
+
         if custom_theme:
             return {
                 "background": custom_theme.get("colors", {}).get("background", "#1e1e1e"),
@@ -633,7 +763,7 @@ class ConfigManager:
                 "secondary": "#2d2d2d",
                 "tertiary": "#252525"
             }
-    
+
     def _load_theme(self, theme_name: str) -> Optional[Dict]:
         """Load theme from file"""
         # The name becomes a file name: a value such as "../../etc/some.json"
@@ -645,42 +775,42 @@ class ConfigManager:
             # Search in user's custom themes
             user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
             user_theme_file = user_themes_dir / f"{theme_name}.json"
-            
+
             if user_theme_file.exists():
                 with open(user_theme_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            
+
             # Search in application themes
             app_theme_file = self._themes_dir / f"{theme_name}.json"
             if app_theme_file.exists():
                 with open(app_theme_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            
+
             logger.warning(f"Theme not found: {theme_name}")
             return None
-            
+
         except Exception as e:
             logger.error(f"Error loading theme {theme_name}: {e}")
             return None
-    
+
     def get_available_themes(self) -> List[str]:
         """Get list of available themes"""
         themes = []
-        
+
         # Application themes
         if self._themes_dir.exists():
             for theme_file in self._themes_dir.glob("*.json"):
                 themes.append(theme_file.stem)
-        
+
         # User themes
         user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
         if user_themes_dir.exists():
             for theme_file in user_themes_dir.glob("*.json"):
                 if theme_file.stem not in themes:
                     themes.append(theme_file.stem)
-        
+
         return sorted(themes)
-    
+
     def get_theme_info(self, theme_name: str) -> Optional[Dict]:
         """Get information about a theme"""
         theme = self._load_theme(theme_name)
@@ -692,36 +822,40 @@ class ConfigManager:
                 "ui": theme.get("ui", {})
             }
         return None
-    
+
     def enable_encryption(self, enable: bool = True):
         """Enable/disable API key encryption"""
-        if enable:
-            # The flag must be on *before* _load_encryption_key() and the
-            # re-encryption loop: both are gated on it.
-            self.set("app.encryption_enabled", True)
-            if not self._encryption_key:
-                self._load_encryption_key()
-            if not self._encryption_key:
-                # cryptography is unavailable/unusable - keep keys in plaintext
+        # Atómico face a flush()/save() concorrentes: sem o lock, um flush a
+        # meio do ramo `disable` podia persistir flag=False com ciphertext
+        # ainda gravado (ou vice-versa). set()/save() usam o mesmo RLock.
+        with self._lock:
+            if enable:
+                # The flag must be on *before* _load_encryption_key() and the
+                # re-encryption loop: both are gated on it.
+                self.set("app.encryption_enabled", True)
+                if not self._encryption_key:
+                    self._load_encryption_key()
+                if not self._encryption_key:
+                    # cryptography is unavailable/unusable - keep keys in plaintext
+                    self.set("app.encryption_enabled", False)
+                    logger.warning("Encryption could not be enabled (missing key)")
+                    return
+                # Re-encrypt every stored API key
+                for provider in list(self.get("api.providers", {}).keys()):
+                    api_key = self.get(f"api.providers.{provider}.api_key")
+                    if api_key:
+                        self.set(f"api.providers.{provider}.api_key", api_key)
+            else:
+                # Read (and decrypt) the keys while encryption is still enabled...
+                decrypted = {}
+                for provider in list(self.get("api.providers", {}).keys()):
+                    api_key = self.get(f"api.providers.{provider}.api_key")
+                    if api_key:
+                        decrypted[provider] = api_key
+                # ...then disable the flag so set() stores them in plaintext.
+                # (Writing them before flipping the flag would re-encrypt them
+                # and leave ciphertext behind a disabled-encryption config.)
                 self.set("app.encryption_enabled", False)
-                logger.warning("Encryption could not be enabled (missing key)")
-                return
-            # Re-encrypt every stored API key
-            for provider in list(self.get("api.providers", {}).keys()):
-                api_key = self.get(f"api.providers.{provider}.api_key")
-                if api_key:
+                for provider, api_key in decrypted.items():
                     self.set(f"api.providers.{provider}.api_key", api_key)
-        else:
-            # Read (and decrypt) the keys while encryption is still enabled...
-            decrypted = {}
-            for provider in list(self.get("api.providers", {}).keys()):
-                api_key = self.get(f"api.providers.{provider}.api_key")
-                if api_key:
-                    decrypted[provider] = api_key
-            # ...then disable the flag so set() stores them in plaintext.
-            # (Writing them before flipping the flag would re-encrypt them
-            # and leave ciphertext behind a disabled-encryption config.)
-            self.set("app.encryption_enabled", False)
-            for provider, api_key in decrypted.items():
-                self.set(f"api.providers.{provider}.api_key", api_key)
         logger.info(f"Encryption {'enabled' if enable else 'disabled'}")

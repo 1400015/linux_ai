@@ -159,7 +159,7 @@ class TestFileReadingCommandsRespectSandbox(unittest.TestCase):
         self.assertIn("not allowed", msg)
 
     def test_cat_inside_allowed_dir_is_allowed(self):
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory():
             self.addCleanup(shutil.rmtree, "/tmp/allowed-only", ignore_errors=True)
             os.makedirs("/tmp/allowed-only", exist_ok=True)
             target = Path("/tmp/allowed-only") / "ok.txt"
@@ -356,7 +356,9 @@ class TestSecretRedaction(unittest.TestCase):
     def test_google_provider_does_not_log_its_url(self):
         source = inspect.getsource(AIClient._chat_google_ai_studio)
         for line in source.splitlines():
-            if "logger." in line:
+            if "logger." in line and "redact_url" not in line:
+                # Linhas com redact_url() são precisamente a mitigação;
+                # o que o teste proíbe é logar URL crua sem redação.
                 self.assertNotIn("url", line)
 
 
@@ -1000,10 +1002,6 @@ class TestUsageSaveDebounce(unittest.TestCase):
                 client.session.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestOfflineCommandCancellation(unittest.TestCase):
     """The offline command path must not outlive a cancelled request.
 
@@ -1062,3 +1060,7 @@ class TestI18nUnification(unittest.TestCase):
         from src.i18n import offline_service_action
         self.assertEqual(offline_service_action("xx", "enable"), "enable")
         self.assertEqual(offline_service_action("pt", "enable"), "ativar")
+
+
+if __name__ == "__main__":
+    unittest.main()

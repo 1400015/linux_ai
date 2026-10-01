@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "linux-ai-assistant"
-version = "1.0.0"
+# Versão única: lida de src/_version.py (sem importar o pacote — setuptools
+# lê o literal por AST); antes estava espalhada por 5+ ficheiros.
+dynamic = ["version"]
 description = "Assistente de IA permanente para Linux com interface flutuante"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -38,6 +40,9 @@ linux-ai-assistant = "src.app:main"
 [tool.setuptools]
 packages = ["src", "plugins"]
 
+[tool.setuptools.dynamic]
+version = { attr = "src._version.__version__" }
+
 # themes/ is not a Python package (no __init__.py), so its JSON files are
 # shipped as data files; ConfigManager falls back to
 # <sys.prefix>/share/linux-ai-assistant/themes when the source tree is absent.
@@ -55,6 +60,7 @@ ignore = [
     "E501",   # linhas longas
     "E722",   # except: vazio intencional em fallbacks
     "E741",
+    "E402",   # imports após gi.require_version()/sys.path hacks (padrão GTK/testes)
 ]
 
 [tool.ruff.lint.per-file-ignores]

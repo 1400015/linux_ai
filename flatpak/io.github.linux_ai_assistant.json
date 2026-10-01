@@ -32,38 +32,17 @@
                 "chmod +x /app/bin/linux-ai-assistant",
                 "mkdir -p /app/share/linux-ai-assistant",
                 "cp README.md /app/share/linux-ai-assistant/",
-                "cp LICENSE /app/share/linux-ai-assistant/"
+                "cp LICENSE /app/share/linux-ai-assistant/",
+                "mkdir -p /app/share/applications",
+                "cp scripts/linux-ai-assistant.desktop /app/share/applications/io.github.linux_ai_assistant.desktop"
             ],
             "sources": [
                 {
                     "type": "dir",
                     "path": "..",
-                    "exclude": [".git", "venv", ".vscode", "*.pyc", "__pycache__", ".DS_Store"]
+                    "skip": [".git", "venv", ".vscode", "*.pyc", "__pycache__", ".DS_Store"]
                 }
             ]
         }
-    ],
-    "name": "Linux AI Assistant",
-    "description": "Assistente de IA permanente para Linux com interface flutuante transparente, captura de ecrã, modo especialista e mais.",
-    "homepage": "https://github.com/1400015/linux_ai",
-    "license": "MIT",
-    "icon": "io.github.linux_ai_assistant.png",
-    "categories": [
-        "Utility",
-        "System"
-    ],
-    "keywords": [
-        "AI",
-        "Assistant",
-        "Linux",
-        "Chatbot",
-        "GTK",
-        "Python"
-    ],
-    "startup-notify": true,
-    "desktop": "io.github.linux_ai_assistant.desktop",
-    "metadata": {
-        "maintainer": "Joao Azevedo",
-        "bug-tracker": "https://github.com/1400015/linux_ai/issues"
-    }
+    ]
 }

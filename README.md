@@ -399,6 +399,17 @@ def _chat_new_provider(self, messages, model, api_key, base_url, temperature, ma
 Then register the provider in the `chat`/`stream_chat` dispatch (methods are
 looked up automatically as `_chat_<provider>` / `_stream_<provider>`).
 
+**Plugins are opt-in** (v1.1.0): a plugin is arbitrary code that runs with
+your user privileges at startup, so only files listed in the `plugins.enabled`
+config key are loaded:
+
+```json
+"plugins": { "enabled": ["example_provider"] }
+```
+
+The bundled `plugins/example_provider.py` is inert until you add it there.
+Failures surface as `AIProviderError` exceptions — never as chat text.
+
 ### Adding New Allowed Commands
 
 Edit `~/.config/linux_ai_assistant/config.json`:
@@ -419,6 +430,21 @@ Edit `~/.config/linux_ai_assistant/config.json`:
 Only commands in `allowed_commands` are executed, and file arguments are
 checked against `allowed_edit_dirs`. Prefer read-only commands: anything
 listed here can be run by the assistant without an extra confirmation.
+
+Two extra layers of protection apply on top of the allowlist (v1.1.0):
+
+- **Blocked flags**: some flags execute code or read files even with a
+  "safe" command name (e.g. `man -P <program>` runs `<program>` as the
+  pager). Commands with such flags are refused; the map lives in
+  `_BLOCKED_FLAGS` (`src/system_utils.py`).
+- **Absolute-path sandbox for every command**: any argument that looks like
+  an absolute or `~` path is validated against `allowed_edit_dirs` for ALL
+  allowlisted commands (not only obvious file readers), so
+  `grep . /var/log/auth.log` cannot bypass the sandbox.
+
+`allowed_edit_dirs` now defaults to an **empty list** (minimum privilege):
+new installations have no editable system directories until you add them
+here or in Settings. Existing configurations keep their list.
 
 ## Troubleshooting
 

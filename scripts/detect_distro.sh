@@ -132,8 +132,11 @@ CheckDependencies() {
     echo ""
     echo -e "${YELLOW}Main dependencies check:${NC}"
     
-    DEPENDENCIES=("python3" "python3-pip" "git" "scrot" "tesseract-ocr")
-    
+    # command -v procura BINÁRIOS: "python3-pip"/"tesseract-ocr" são nomes
+    # de PACOTES e falhavam sempre (relatório acusava "missing" com tudo
+    # instalado). Os binários são pip3/tesseract.
+    DEPENDENCIES=("python3" "pip3" "git" "scrot" "tesseract")
+
     for dep in "${DEPENDENCIES[@]}"; do
         if command -v "$dep" >/dev/null 2>&1; then
             echo "  ✓ $dep"

@@ -80,26 +80,59 @@ def apply_dock(window, edge, width):
                      "bottom": GtkLayerShell.Edge.BOTTOM}
             for name, e in edges.items():
                 GtkLayerShell.set_anchor(window, e, name == edge)
-            return "layer-shell"
+            # Confirmar que o init teve efeito: sem isto o método reportava
+            # "layer-shell" mesmo quando a janela não era uma layer window
+            # (ex.: chamado após realize) e o dock falhava em silêncio.
+            if GtkLayerShell.is_layer_window(window):
+                return "layer-shell"
+            logger.warning("Layer-shell init had no effect; falling back")
         except Exception as e:
             # Log instead of a bare `pass`: silently swallowing this made
             # Wayland dock failures invisible.
             logger.warning(f"Layer-shell dock failed, falling back: {e}")
+
+    # Caminho X11: reservar o espaço E mover/ancorar a janela ao bordo —
+    # o strut só reserva; sem o move, a janela ficava onde estava. O strut
+    # usa o tamanho REAL da janela, não a largura guardada na config (que
+    # diverge se o utilizador redimensionou).
     window.set_type_hint(Gdk.WindowTypeHint.DOCK)
     window.stick()
     window.set_keep_above(True)
+    try:
+        real_w, real_h = window.get_size()
+        screen = window.get_screen()
+        screen_w, screen_h = screen.get_width(), screen.get_height()
+        if edge == "right":
+            window.move(max(screen_w - real_w, 0), 0)
+            size = real_w
+        elif edge == "left":
+            window.move(0, 0)
+            size = real_w
+        elif edge == "top":
+            window.move(0, 0)
+            size = real_h
+        else:
+            window.move(0, max(screen_h - real_h, 0))
+            size = real_h
+    except Exception as e:
+        logger.warning(f"Could not position docked window; using configured size: {e}")
+        size = width
     gdk_window = window.get_window()
-    if gdk_window and _apply_x11_struts(gdk_window, edge, width):
+    if gdk_window and _apply_x11_struts(gdk_window, edge, size):
         return "x11-struts"
     return "window"
 
 
-def apply_float(window):
+def apply_float(window, always_on_top: bool = True):
     """Return the window to floating mode.
 
     Must undo everything apply_dock() did: layer-shell anchors, the X11
     strut reservation and the DOCK type hint - otherwise the screen stays
     reserved (or the window stays anchored) after undocking.
+
+    `always_on_top` vem da config (app.always_on_top): o caminho antigo
+    forçava keep_above(True)+unstick(), contradizendo o estado flutuante
+    inicial (stick + keep_above configurável).
     """
     if HAS_LAYER_SHELL:
         try:
@@ -117,8 +150,8 @@ def apply_float(window):
             logger.warning(f"Could not clear layer-shell state: {e}")
 
     window.set_type_hint(Gdk.WindowTypeHint.UTILITY)
-    window.set_keep_above(True)
-    window.unstick()
+    window.set_keep_above(bool(always_on_top))
+    window.stick()
 
     # Release the X11 strut (a zeroed _NET_WM_STRUT_PARTIAL) so other
     # windows can use the reserved space again.

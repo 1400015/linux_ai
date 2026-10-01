@@ -8,21 +8,38 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      # requires-python é ">=3.8": o CI tem de honrar a matriz completa.
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        # Sem isto os testes falham no runner limpo: test_offline/test_regressions
+        # importam src.ai_client (tenacity, requests) e test_installation importa
+        # src.config_manager (python-dotenv, psutil).
+        run: python3 -m pip install -r requirements.txt
 
       - name: Byte-compile all sources
-        run: python3 -m py_compile src/*.py tests/*.py
+        run: python3 -m py_compile src/*.py tests/*.py plugins/*.py
 
       - name: Run test suite
         run: python3 -m unittest discover -s tests -v
 
-      - name: Lint with pyflakes
+      - name: Lint (ruff)
+        # Falhável: o lint anterior (pyflakes com continue-on-error) nunca
+        # conseguia quebrar o build. O projeto já define [tool.ruff] no pyproject.
         run: |
-          python3 -m pip install pyflakes
-          python3 -m pyflakes src/*.py
-        continue-on-error: true
+          python3 -m pip install ruff
+          python3 -m ruff check src/ tests/ plugins/
+
+      - name: Shellcheck installers
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck scripts/*.sh run.sh

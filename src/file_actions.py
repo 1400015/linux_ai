@@ -6,9 +6,12 @@ before writing. Paths outside the home require elevation (pkexec).
 """
 
 import difflib
+import hashlib
 import os
+import shutil
 import subprocess
 import tempfile
+import time
 
 try:
     from .render_core import FileBlock
@@ -27,8 +30,13 @@ except (ImportError, ValueError):
 
 
 def is_privileged_path(path):
-    """True if the path is outside the user's home."""
-    home = os.path.expanduser("~")
+    """True if the path is outside the user's home.
+
+    O HOME é resolvido com realpath (e não só expanduser): com $HOME atrás
+    de symlinks, a versão antiga mandava TODAS as escritas em casa por
+    pkexec desnecessariamente.
+    """
+    home = os.path.realpath(os.path.expanduser("~"))
     real = os.path.realpath(os.path.expanduser(path))
     return not (real == home or real.startswith(home + os.sep))
 
@@ -54,17 +62,38 @@ def is_allowed_path(path, allowed_dirs=None):
 
 MAX_DIFF_BYTES = 1024 * 1024
 
+_DIFF_TRUNCATION_NOTE = _(
+    "WARNING: preview truncated at 1 MB; the file is bigger and this diff "
+    "is NOT complete."
+)
+
+
+def _file_digest(path):
+    """SHA-256 do ficheiro actual (None se não existir) — para fechar a
+    janela TOCTOU entre o diff mostrado ao utilizador e a escrita."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
 
 def preview_diff(path, new_content):
     """Return the unified diff, or None if the file does not exist.
 
     Reads at most 1 MB of the existing file to prevent loading
-    huge files into memory.
+    huge files into memory. Ficheiros maiores levam uma NOTA explícita
+    no diff: o utilizador estava a autorizar uma edição com base num
+    diff que mostrava o resto do ficheiro como "removido".
     """
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
         return None
     try:
+        truncated = os.path.getsize(path) > MAX_DIFF_BYTES
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             old_lines = f.readlines(MAX_DIFF_BYTES)
     except OSError:
@@ -74,19 +103,66 @@ def preview_diff(path, new_content):
         old_lines, new_lines,
         fromfile=path, tofile=path
     )
-    return "".join(diff)
+    text = "".join(diff)
+    if truncated:
+        text += f"\n\n!!! {_DIFF_TRUNCATION_NOTE}\n"
+    return text
+
+
+def _backup_path(path):
+    """Caminho do backup .bak com timestamp (nunca sobrepõe um anterior)."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return f"{path}.{stamp}.bak"
+
+
+def _make_backup(path):
+    """Backup do ficheiro original antes de qualquer edição (best effort).
+
+    O modelo "autorização pelo utilizador" só é defensável se o erro for
+    reversível: sem backup, um "OK" num diff errado era irreversível.
+    """
+    try:
+        if os.path.isfile(path):
+            backup = _backup_path(path)
+            shutil.copy2(path, backup)
+            return backup
+    except OSError as e:
+        # Não bloquear a escrita por falha de backup, mas deixar registo.
+        print(f"Warning: could not create backup of {path}: {e}")
+    return None
 
 
 def _write_privileged(temp_path, dest_path):
-    """Copy temp file to a privileged destination via pkexec."""
+    """Copy temp file to a privileged destination via pkexec (atómico).
+
+    O caminho antigo `pkexec cp temp dest` (1) truncava o destino — não
+    atómico: um corte a meio deixava uma config de sistema partida e sem
+    backup, e (2) o resultado ficava root:root 0600 — editar /etc/hosts
+    (0644) partia a resolução de nomes. Agora: backup → cópia para
+    `dest.new` → preservar owner/mode do original → rename atómico.
+    """
+    new_path = dest_path + ".linux-ai.new"
+    backup = _make_backup(dest_path)
+    script = (
+        'cp -- "$1" "$2.linux-ai.new" && '
+        'chown --reference="$2" "$2.linux-ai.new" && '
+        'chmod --reference="$2" "$2.linux-ai.new" && '
+        'mv -f "$2.linux-ai.new" "$2"'
+    )
     result = subprocess.run(
-        ["pkexec", "cp", temp_path, dest_path],
-        capture_output=True, text=True
+        ["pkexec", "sh", "-c", script, "sh", temp_path, dest_path],
+        capture_output=True, text=True,
     )
     if result.returncode != 0:
+        # Limpar o .new parcial, se ficou atrás
+        subprocess.run(
+            ["pkexec", "sh", "-c", 'rm -f -- "$1"', "sh", new_path],
+            capture_output=True,
+        )
         raise PermissionError(
             result.stderr.strip() or f"Failed to write {dest_path} (pkexec)"
         )
+    return backup
 
 
 def confirm_and_write(parent, block, allowed_dirs=None):
@@ -103,6 +179,12 @@ def confirm_and_write(parent, block, allowed_dirs=None):
     path = os.path.realpath(os.path.expanduser(block.path))
     if not is_allowed_path(path, allowed_dirs):
         return ("error", _("Path not allowed: {path}").format(path=path))
+
+    # Hash ANTES do diálogo: se o ficheiro mudar entretanto, o diff
+    # mostrado já não corresponde à realidade e a escrita é recusada
+    # (TOCTOU: antes, o utilizador autorizava um diff e aplicava-se
+    # outro — sem revalidação nem backup).
+    digest_before = _file_digest(path)
     diff = preview_diff(path, block.content)
 
     if not HAS_GTK:
@@ -142,6 +224,14 @@ def confirm_and_write(parent, block, allowed_dirs=None):
     if response != Gtk.ResponseType.OK:
         return ("cancelled", path)
 
+    # Revalidar DEPOIS do diálogo: ficheiro mudou => recusar e pedir novo diff
+    if _file_digest(path) != digest_before:
+        return (
+            "error",
+            _("File changed since the preview was shown; review it again: {path}")
+            .format(path=path),
+        )
+
     try:
         if is_privileged_path(path):
             fd, temp_path = tempfile.mkstemp(text=True)
@@ -153,12 +243,22 @@ def confirm_and_write(parent, block, allowed_dirs=None):
                 os.unlink(temp_path)
         else:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            _make_backup(path)
             fd, temp_path = tempfile.mkstemp(
                 dir=os.path.dirname(path) or ".", text=True
             )
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(block.content)
+                # Preservar o mode do original: mkstemp cria 0600 e um
+                # os.replace directo fazia um script editado perder +x e
+                # configs de sistema ficarem 0600.
+                try:
+                    st = os.stat(path)
+                    os.chmod(temp_path, st.st_mode & 0o7777)
+                    os.chown(temp_path, st.st_uid, st.st_gid)
+                except OSError:
+                    pass  # ficheiro novo ou sem permissão para chown
                 os.replace(temp_path, path)
             except Exception:
                 try:
@@ -191,6 +291,6 @@ def offer_file_blocks(parent, reply_text, notify, allowed_dirs=None):
         except Exception as e:
             status, msg = "error", str(e)
         if status == "written":
-            notify(f"File written: {msg}")
+            notify(_("File written: {path}").format(path=msg))
         elif status == "error":
-            notify(f"Error writing file: {msg}")
+            notify(_("Error writing file: {detail}").format(detail=msg))

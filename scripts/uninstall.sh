@@ -35,10 +35,22 @@ remove_desktop_entry() {
     DESKTOP_FILE="$HOME/.local/share/applications/linux-ai-assistant.desktop"
     if [ -f "$DESKTOP_FILE" ]; then
         rm "$DESKTOP_FILE"
-        update-desktop-database "$HOME/.local/share/applications"
+        # Guarda: sob set -e, um binário ausente abortava aqui e nunca
+        # chegava a remover config/cache/autostart
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database "$HOME/.local/share/applications"
+        fi
         echo -e "${GREEN}Shortcut removed.${NC}"
     else
         echo -e "${BLUE}Shortcut not found.${NC}"
+    fi
+
+    # Remover também o autostart criado por `autostart.sh enable` — sem
+    # isto ficava um autostart pendente apontando a uma instalação apagada.
+    AUTOSTART_FILE="$HOME/.config/autostart/linux-ai-assistant.desktop"
+    if [ -f "$AUTOSTART_FILE" ]; then
+        rm -f "$AUTOSTART_FILE"
+        echo -e "${GREEN}Autostart entry removed.${NC}"
     fi
 }
 

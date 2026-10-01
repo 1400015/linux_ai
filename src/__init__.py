@@ -1,7 +1,9 @@
 # Linux AI Assistant Package
-__version__ = "1.0.0"
+try:
+    from ._version import __version__
+except ImportError:  # pragma: no cover - import fora do pacote
+    __version__ = "1.0.0"
 
-# Set up logging for the package.
 import logging
 import sys
 
@@ -22,25 +24,43 @@ _console_handler.setLevel(logging.INFO)
 _console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 _console_handler.setFormatter(_console_formatter)
 
-try:
+logger.addHandler(_console_handler)
+
+
+def setup_file_logging():
+    """Instala o file handler de DEBUG (chamado no arranque da app/CLI).
+
+    Antes isto corria NO import do pacote: `import src` criava
+    ~/.cache/linux_ai_assistant/app.log como efeito colateral — o import
+    não era idempotente nem seguro para biblioteca/testes.
+    """
     from logging.handlers import RotatingFileHandler
     from pathlib import Path
 
-    log_dir = Path.home() / ".cache" / "linux_ai_assistant"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "app.log"
+    try:
+        log_dir = Path.home() / ".cache" / "linux_ai_assistant"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "app.log"
 
-    # Rotate: a plain FileHandler grew app.log without bound (DEBUG records
-    # from every request, forever).
-    _file_handler = RotatingFileHandler(
-        log_file, maxBytes=1024 * 1024, backupCount=3, encoding="utf-8",
-    )
-    _file_handler.setLevel(logging.DEBUG)
-    _file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    _file_handler.setFormatter(_file_formatter)
+        # 0600: o log em DEBUG inclui nomes de modelos, erros de providers
+        # e contagens de tokens — não deve ser legível por outros
+        # utilizadores locais (o handler antigo criava com umask 0644).
+        import os
+        fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.close(fd)
 
-    logger.addHandler(_file_handler)
-except Exception as e:
-    print(f"Warning: Could not set up file logging: {e}")
-
-logger.addHandler(_console_handler)
+        # Rotate: a plain FileHandler grew app.log without bound (DEBUG
+        # records from every request, forever). delay=True evita reabrir
+        # quando não há registos.
+        _file_handler = RotatingFileHandler(
+            log_file, maxBytes=1024 * 1024, backupCount=3, encoding="utf-8",
+            delay=True,
+        )
+        _file_handler.setLevel(logging.DEBUG)
+        _file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        _file_handler.setFormatter(_file_formatter)
+        logger.addHandler(_file_handler)
+        return True
+    except Exception as e:
+        print(f"Warning: Could not set up file logging: {e}")
+        return False
