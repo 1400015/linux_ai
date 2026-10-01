@@ -6,12 +6,13 @@ CODE_RE = re.compile(r"```(\S*)\n(.*?)```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 
 
-def esc(text):
+def esc(text: str) -> str:
+    """Escape text for safe inclusion in Pango/markup."""
     return xml.sax.saxutils.escape(text)
 
 
 class FileBlock:
-    """Bloco ``` com caminho de ficheiro na primeira linha."""
+    """A ``` block with a file path on the first line."""
 
     def __init__(self, path, content):
         self.path = path
@@ -28,7 +29,7 @@ class FileBlock:
         return blocks
 
 
-def _inline_to_markup(text):
+def _inline_to_markup(text: str) -> str:
     parts = []
     pos = 0
     for m in INLINE_CODE_RE.finditer(text):
@@ -41,7 +42,7 @@ def _inline_to_markup(text):
     return "".join(parts)
 
 
-def render_text_markup(text):
+def render_text_markup(text: str) -> str:
     parts = []
     pos = 0
     for m in CODE_RE.finditer(text):
@@ -51,25 +52,25 @@ def render_text_markup(text):
     return "".join(parts)
 
 
-# --- Logica do buffer de chat (sem GTK, para ser testavel headless) -----------
+# --- Chat buffer logic (GTK-free, so it can be tested headless) -----------
 #
-# O placeholder "Thinking..." e a resposta em streaming sao inseridos no mesmo
-# Gtk.TextBuffer. Procurar a linha "[AI]" para apagar era fragil: a resposta
-# tambem comeca por "[AI]", pelo que a busca eliminava a resposta inteira.
-# A solucao e guardar o intervalo exato de offsets do placeholder e apagar
-# apenas esse intervalo.
+# The "Thinking..." placeholder and the streaming response are inserted into
+# the same Gtk.TextBuffer. Searching for the "[AI]" line to delete was
+# fragile: the response also starts with "[AI]", so the search deleted the
+# entire response. The fix is to store the exact offset interval of the
+# placeholder and delete only that interval.
 
-def placeholder_span(char_count_before, text):
-    """Intervalo (inicio, fim) ocupado por `text` inserido a partir de `char_count_before`."""
+def placeholder_span(char_count_before: int, text: str) -> tuple[int, int]:
+    """Interval (start, end) occupied by `text` inserted starting at `char_count_before`."""
     start = max(0, int(char_count_before))
     return start, start + len(text)
 
 
-def valid_span(start, end, char_count):
-    """Devolve (start, end) se o intervalo for utilizavel no buffer, ou None.
+def valid_span(start: int | None, end: int | None, char_count: int) -> tuple[int, int] | None:
+    """Return (start, end) if the interval is usable in the buffer, or None.
 
-    Protege contra offsets obsoletos: se o buffer encolheu (ou nada foi
-    inserido), a operacao e um no-op em vez de corromper o texto.
+    Guards against stale offsets: if the buffer shrank (or nothing was
+    inserted), the operation is a no-op instead of corrupting the text.
     """
     if start is None or end is None:
         return None
@@ -79,7 +80,7 @@ def valid_span(start, end, char_count):
     return start, end
 
 
-def header_offset(char_count_before, label):
-    """Offset do fim do cabecalho ``\\n[label]\\n`` dentro de uma mensagem."""
+def header_offset(char_count_before: int, label: str) -> int:
+    """Offset of the end of the ``\\n[label]\\n`` header inside a message."""
     return max(0, int(char_count_before)) + len("\n[%s]\n" % label)
 

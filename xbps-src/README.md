@@ -1,9 +1,9 @@
 # Native Void Linux package
 
-The template builds a pinned upstream snapshot. The included patch applies the
-runtime/install fixes to that snapshot, so the recipe does not depend on a
-nonexistent release tag or on a contributor's fork. Refresh the snapshot and
-remove the patch once these changes are available in an upstream release.
+The template builds a pinned upstream snapshot, so the recipe does not depend on
+a nonexistent release tag or on a contributor's fork. The runtime and install
+fixes that used to be carried by a patch are now part of the snapshot itself,
+so no `patches/` directory is required.
 
 ## Build
 
@@ -18,7 +18,7 @@ cp -r /path/to/linux_ai/xbps-src/linux-ai-assistant srcpkgs/
 sudo xbps-install -R "$PWD/hostdir/binpkgs" linux-ai-assistant
 ```
 
-Copy the entire package directory, including `patches/`, not just the template.
+Copy the entire package directory, not just the template.
 Copying a recipe alone does not create or publish an installable binary package.
 
 The Python console entry point is installed in `/usr/bin`, the desktop entry in

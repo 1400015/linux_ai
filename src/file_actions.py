@@ -1,7 +1,7 @@
 """File writing actions with confirmation and diff.
 
-Em mode especialista, a IA pode devolver blocos ``` with a path de
-file. These blocks are offered to the user with a diff/preview
+In expert mode, the AI can return ``` blocks with a file path on the
+first line. These blocks are offered to the user with a diff/preview
 before writing. Paths outside the home require elevation (pkexec).
 """
 
@@ -37,7 +37,7 @@ MAX_DIFF_BYTES = 1024 * 1024
 
 
 def preview_diff(path, new_content):
-    """Devolve a diff unificado, ou None se o file no existe.
+    """Return the unified diff, or None if the file does not exist.
 
     Reads at most 1 MB of the existing file to prevent loading
     huge files into memory.
@@ -59,21 +59,21 @@ def preview_diff(path, new_content):
 
 
 def _write_privileged(temp_path, dest_path):
-    """Copia tempfile for destino privilegiado via pkexec."""
+    """Copy temp file to a privileged destination via pkexec."""
     result = subprocess.run(
         ["pkexec", "cp", temp_path, dest_path],
         capture_output=True, text=True
     )
     if result.returncode != 0:
         raise PermissionError(
-            result.stderr.strip() or f"Falha ao write {dest_path} (pkexec)"
+            result.stderr.strip() or f"Failed to write {dest_path} (pkexec)"
         )
 
 
 def confirm_and_write(parent, block):
     """Show confirmation dialog with diff and write the file.
 
-    Retorna ("written"|"cancelled"|"error", msg).
+    Returns ("written"|"cancelled"|"error", msg).
     """
     path = os.path.expanduser(block.path)
     diff = preview_diff(path, block.content)
@@ -143,9 +143,9 @@ def confirm_and_write(parent, block):
 
 
 def offer_file_blocks(parent, reply_text, notify):
-    """Deteta blocos de file na response e oferece escrita.
+    """Detect file blocks in the response and offer writing.
 
-    Ignora respostas with mais de 3 blocos (provavelmente apenas
+    Ignores replies with more than 3 blocks (probably just
     code examples). `notify(msg)` is called in the UI context.
     """
     blocks = FileBlock.parse_all(reply_text)
@@ -159,6 +159,6 @@ def offer_file_blocks(parent, reply_text, notify):
         except Exception as e:
             status, msg = "error", str(e)
         if status == "written":
-            notify(f"Ficheiro escrito: {msg}")
+            notify(f"File written: {msg}")
         elif status == "error":
-            notify(f"Erro ao write ficheiro: {msg}")
+            notify(f"Error writing file: {msg}")

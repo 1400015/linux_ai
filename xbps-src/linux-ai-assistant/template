@@ -11,7 +11,7 @@ depends="python3 python3-gobject python3-cairo python3-requests python3-dotenv
  python3-json-logger gtk+3 libnotify scrot tesseract-ocr tesseract-ocr-por
  tesseract-ocr-eng polkit"
 short_desc="Floating AI assistant for Linux"
-maintainer="Joao Azevedo <joao@example.com>"
+maintainer="linux-ai-assistant@maintainer.example.com"
 license="MIT"
 homepage="https://github.com/1400015/linux_ai"
 distfiles="https://github.com/1400015/linux_ai/archive/${_commit}.tar.gz"
