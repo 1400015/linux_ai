@@ -20,6 +20,7 @@ echo ""
 DetectDistribution() {
     if [ -f /etc/os-release ]; then
         # Read the information from /etc/os-release
+        # shellcheck disable=SC1091  # so existe no sistema de destino
         . /etc/os-release
         
         # Check whether it is d77void
