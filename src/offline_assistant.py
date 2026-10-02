@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .knowledge_base import knowledge_content, knowledge_for, package_manager_for
 from .local_knowledge import (PROCEDURE_BY_ID, PROCEDURES, localized, normalize,
                               render_procedure, search_procedures)
+from .device_actions import support_package
 from .diagnostics import analyze, render_findings
 
 
@@ -232,10 +233,16 @@ class Command:
 
 @dataclass
 class Reply:
-    """Result of an offline query."""
+    """Result of an offline query.
+
+    ``commands`` are ready to confirm. ``interaction`` names a chooser
+    (wifi, printer, scanner) whose options come from a local scan, not
+    from the model.
+    """
 
     text: str
     commands: List[Command] = field(default_factory=list)
+    interaction: str = ""
 
 
 from .i18n import OFFLINE_TEXTS as _TEXTS, OFFLINE_SERVICE_ACTIONS as _SERVICE_ACTIONS, offline_text as _t
@@ -287,7 +294,7 @@ _KEYWORDS: Dict[str, List[str]] = {
     "disk": ["disk", "disco", "df -h", "espaço em disco", "espaco em disco",
              "storage"],
     "memory": ["memory", "memória", "memoria", " ram ", "free -h"],
-    "network": ["network", "rede", "wifi", "dns", "ip addr", "ping", "internet"],
+    "network": ["network", "rede", "dns", "ip addr", "ping", "internet"],
     "firewall": ["firewall", "ufw", "nftables", "iptables", "firewalld",
                  "firewall-cmd"],
     "shell": ["shell", "chsh", "zsh", "default shell"],
@@ -316,6 +323,18 @@ _KEYWORDS: Dict[str, List[str]] = {
              "o que podes", "comandos disponíveis"],
 }
 
+_WIFI_RE = re.compile(
+    r"\b(?:wi-?fi|wireless|wlan)\b|redes?\s+sem\s+fios",
+    re.IGNORECASE,
+)
+_PRINTER_RE = re.compile(
+    r"\b(?:printers?|impressoras?|imprimantes?)\b",
+    re.IGNORECASE,
+)
+_SCANNER_RE = re.compile(
+    r"\b(?:scanners?|digitalizadores?)\b",
+    re.IGNORECASE,
+)
 _INSTALL_RE = re.compile(
     r"(?<![\w-])(?:install|instalar|instala|installer|installieren)\s+([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
     re.IGNORECASE,
@@ -366,6 +385,10 @@ def _match_intent(low: str) -> Tuple[Optional[str], int]:
     for intent, pattern in (("remove", _REMOVE_RE), ("install", _INSTALL_RE)):
         if pattern.search(low):
             return intent, 1
+    # Device setup is more specific than a generic network question.
+    for intent, pattern in (("wifi", _WIFI_RE), ("printer", _PRINTER_RE), ("scanner", _SCANNER_RE)):
+        if pattern.search(low):
+            return intent, 1
     if re.search(r"\b(?:versão|versao|version)\s+(?:do|da|of|de)\s+(?:python|java|node|ruby)\b", low):
         return None, 0
     best: Optional[str] = None
@@ -409,6 +432,26 @@ _PACKAGE_TAIL_RE = re.compile(
 )
 _NEXT_WORDS = {"next", "continue", "continuar", "continua", "seguinte", "proximo", "proximo passo", "e depois", "what next", "then"}
 
+_EXECUTABLE_INTENTS = frozenset({
+    "update", "install", "remove", "services", "timezone", "hostname", "clean",
+    "wifi", "printer", "scanner",
+})
+_PROBLEM_RE = re.compile(
+    r"\b(?:diagnostic\w*|diagnostico|diagnóstico|failed|fails|broken|problema|erro|falha|"
+    r"nao funciona|não funciona|not working|nao arranca|não arranca|sem rede|sem internet)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_refusal(text: str) -> bool:
+    """True when the sentence refuses an action.
+
+    ``sem`` is a negation (``sem instalar``). ``rede sem fios`` is only the
+    Portuguese name of Wi-Fi, so that phrase is removed before the check.
+    """
+    cleaned = _WIFI_RE.sub(" ", text or "")
+    return _NEGATION_RE.search(cleaned) is not None
+
 
 def _packages(text: str) -> List[str]:
     """Parse the entire argument list; never silently discard another request."""
@@ -422,6 +465,13 @@ def _packages(text: str) -> List[str]:
         return []
     tokens = re.split(r"\s*(?:,|\s+(?:and|e|y|et|und)\s+)\s*|\s+", tail)
     if not tokens or len(tokens) > 20:
+        return []
+    # A leading article is not a package name. A stopword later in the
+    # sentence still rejects the whole request, so "install nano on Ubuntu"
+    # is not turned into an install of nano.
+    while tokens and tokens[0].lower() in _STOPWORDS:
+        tokens.pop(0)
+    if not tokens:
         return []
     packages = []
     for token in tokens:
@@ -446,6 +496,7 @@ class OfflineAssistant:
         # Sondas injectáveis (mesmo contrato de detect_distro): sem isto, um
         # host com systemd a correr detetava uma distro "void" como systemd
         # e os testes dependiam do ambiente onde correm.
+        self._which = which
         self._distro = detect_distro(
             os_release, which=which,
             is_systemd_running=is_systemd_running,
@@ -541,14 +592,60 @@ class OfflineAssistant:
                 return Reply(render_procedure(matches[0], lang, distro))
             return Reply(self._help(distro, lang))
 
-        problem = re.search(r"\b(?:diagnostic\w*|diagnostico|diagnóstico|failed|fails|broken|problema|erro|falha|nao funciona|não funciona|not working|nao arranca|não arranca|sem rede|sem internet)\b", low)
-        if problem and intent in {"services", "network", "disk", "memory", "repos", "logs"}:
+        if _PROBLEM_RE.search(low) and intent in {"services", "network", "disk", "memory", "repos", "logs"}:
             matches = search_procedures(text, distro, limit=1)
             if matches:
                 return self._start_diagnostic(matches[0].id, lang)
+        # A problem or a refusal names the device but must not connect,
+        # add a queue, or install its support package.
+        if intent in {"wifi", "printer", "scanner"} and (
+                _PROBLEM_RE.search(low) or _is_refusal(text)):
+            if _PROBLEM_RE.search(low):
+                matches = search_procedures(text, distro, limit=1)
+                if matches:
+                    return self._start_diagnostic(matches[0].id, lang)
+                return Reply(_t(lang, "ambiguous_action"))
+            return Reply(_t(lang, "negated_action"))
 
         self.reset_conversation()
+        return self._dispatch(intent, text, lang)
 
+    def propose(self, message: str, lang: str = "en") -> Reply:
+        """Offer a confirmed action for ``message`` without changing diagnostics.
+
+        Used while a model answer is on screen. The offer is built from the
+        user sentence and the local catalog. It is empty when the sentence
+        is a question about a failure, a negation, or has nothing to run.
+        """
+        if lang not in _TEXTS:
+            lang = "en"
+        text = (message or "").strip()
+        if not text:
+            return Reply("")
+        low = " " + text.lower() + " "
+        mutating = bool(
+            _MUTATION_RE.search(text) or _SVC_RE.search(text)
+            or _WIFI_RE.search(text) or _PRINTER_RE.search(text) or _SCANNER_RE.search(text)
+        )
+        if mutating and _is_refusal(text):
+            return Reply("")
+        if _INSTALL_RE.search(text) and _REMOVE_RE.search(text):
+            return Reply("")
+        if mutating and re.search(
+                r"\b(?:if i|se eu|what happens|o que acontece|whether|talvez|maybe)\b", low):
+            return Reply("")
+        if _PROBLEM_RE.search(low):
+            return Reply("")
+        intent, score = _match_intent(low)
+        if not intent or score == 0 or intent not in _EXECUTABLE_INTENTS:
+            return Reply("")
+        reply = self._dispatch(intent, text, lang)
+        if not reply.commands and not reply.interaction:
+            return Reply("")
+        return reply
+
+    def _dispatch(self, intent: str, text: str, lang: str) -> Reply:
+        distro = self._distro
         dispatch = {
             "help": lambda: Reply(self._help(distro, lang)),
             "distro": lambda: Reply(self._distro_reply(distro, lang)),
@@ -567,6 +664,9 @@ class OfflineAssistant:
             "alias": lambda: Reply(_t(lang, "alias")),
             "clean": lambda: self._clean_reply(distro, lang),
             "autostart": lambda: Reply(_t(lang, "autostart")),
+            "wifi": lambda: self._wifi_reply(distro, lang),
+            "printer": lambda: self._printer_reply(distro, lang),
+            "scanner": lambda: self._scanner_reply(distro, lang),
             # Knowledge-base intents
             "config": lambda: Reply(self._config_reply(distro, lang)),
             "logs": lambda: Reply(self._logs_reply(distro, lang)),
@@ -574,6 +674,51 @@ class OfflineAssistant:
             "docs": lambda: Reply(self._docs_reply(distro, lang, text)),
         }
         return dispatch[intent]()
+
+    def _has_tool(self, name: str) -> bool:
+        """Use the injected ``which`` so tests do not see the host's tools."""
+        return self._which(name) is not None
+
+    def _install_named(self, package: str, description: str) -> Optional[Command]:
+        template = self._distro.pkg.get("install")
+        if not template or not _valid(package):
+            return None
+        argv = [package if part == "{pkg}" else part for part in template]
+        return Command(argv=argv, privileged=True, description=description)
+
+    def _wifi_reply(self, distro: DistroInfo, lang: str) -> Reply:
+        if self._has_tool("nmcli"):
+            return Reply(_t(lang, "wifi_offer"), interaction="wifi")
+        package = support_package("wifi", distro.pkg_manager)
+        command = self._install_named(package, f"Install {package}") if package else None
+        return Reply(
+            _t(lang, "wifi_unavailable", pkg=package or "NetworkManager"),
+            [command] if command else [],
+        )
+
+    def _printer_reply(self, distro: DistroInfo, lang: str) -> Reply:
+        if self._has_tool("lpinfo"):
+            return Reply(_t(lang, "printer_offer"), interaction="printer")
+        package = support_package("printer", distro.pkg_manager)
+        command = self._install_named(package, f"Install {package}") if package else None
+        return Reply(
+            _t(lang, "printer_unavailable", pkg=package or "cups"),
+            [command] if command else [],
+        )
+
+    def _scanner_reply(self, distro: DistroInfo, lang: str) -> Reply:
+        package = support_package("scanner", distro.pkg_manager)
+        command = self._install_named(package, f"Install {package}") if package else None
+        if self._has_tool("scanimage"):
+            return Reply(
+                _t(lang, "scanner_offer"),
+                [command] if command else [],
+                interaction="scanner",
+            )
+        return Reply(
+            _t(lang, "scanner_unavailable", pkg=package or "sane-airscan"),
+            [command] if command else [],
+        )
 
     def _local_guides(self, text: str, lang: str) -> Reply:
         search_only = bool(re.match(r"^(?:pesquisar conhecimento|procurar conhecimento|search knowledge)\b", text, re.I))
@@ -667,6 +812,14 @@ class OfflineAssistant:
         if key == "addresses" and "169.254." in output:
             return _t(lang, "observed_link_local")
         return _t(lang, "observed_inconclusive")
+
+    @staticmethod
+    def run_command(command: Command, timeout: int = 120):
+        """Run a confirmed catalog command. Privileged argv goes through pkexec."""
+        if command.privileged:
+            return OfflineAssistant.run_privileged(command, timeout=timeout)
+        from .device_actions import run_argv
+        return run_argv(list(command.argv), timeout=timeout)
 
     @staticmethod
     def run_privileged(command: Command, timeout: int = 120):

@@ -144,6 +144,37 @@ class TestGtkStream(unittest.TestCase):
         self.assertEqual(status, 'cancelled')
         self.assertIs(factory.call_args.kwargs['transient_for'], parent)
 
+    def _layer_shell(self, sticks):
+        return SimpleNamespace(
+            init_for_window=Mock(),
+            set_layer=Mock(),
+            set_namespace=Mock(),
+            set_anchor=Mock(),
+            set_margin=Mock(),
+            is_layer_window=Mock(return_value=sticks),
+            Layer=SimpleNamespace(TOP='top'),
+            Edge=SimpleNamespace(LEFT='left', RIGHT='right', TOP='top', BOTTOM='bottom'),
+        )
+
+    def test_float_button_falls_back_when_layer_shell_does_not_stick(self):
+        from src import dock
+        shell = self._layer_shell(False)
+        with patch.object(dock, 'HAS_LAYER_SHELL', True), \
+                patch.object(dock, 'is_wayland', return_value=True), \
+                patch.object(dock, 'GtkLayerShell', shell, create=True):
+            self.assertFalse(dock.apply_float_button(Mock(), 'right'))
+        shell.init_for_window.assert_called_once()
+
+    def test_float_button_uses_layer_shell_when_init_sticks(self):
+        from src import dock
+        shell = self._layer_shell(True)
+        with patch.object(dock, 'HAS_LAYER_SHELL', True), \
+                patch.object(dock, 'is_wayland', return_value=True), \
+                patch.object(dock, 'GtkLayerShell', shell, create=True):
+            self.assertTrue(dock.apply_float_button(Mock(), 'left'))
+        shell.set_margin.assert_called_once()
+        self.assertEqual(shell.set_anchor.call_args.args[1], 'left')
+
 
 if __name__ == '__main__':
     unittest.main()

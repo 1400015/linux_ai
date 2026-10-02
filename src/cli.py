@@ -14,6 +14,7 @@ import sys
 import json
 import time
 import argparse
+import getpass
 import logging
 from pathlib import Path
 from typing import Optional, Dict
@@ -22,7 +23,12 @@ from .config_manager import ConfigManager
 from .ai_client import AIClient, AIProviderError
 from .system_utils import SystemUtils
 from . import offline_assistant
-from .i18n import get_language, set_language_from_config
+from .device_actions import (
+    choose_numbered, collect_printers, collect_scanners, collect_wifi,
+    confirmed, connect_wifi, format_command_offer, printer_add_argv,
+    queue_name_for, split_offer, wifi_needs_password,
+)
+from .i18n import _, get_language, set_language_from_config
 from .history_store import HistoryStore
 from .assistant_context import build_system_message
 from .conversation_io import read_conversation, write_conversation
@@ -469,15 +475,172 @@ Examples:
         self.conversation_history = self.conversation_history[-1000:]
 
     def _run_offline(self, message: str) -> str:
-        """Answer from local knowledge and print the suggested commands."""
+        """Answer from local knowledge and, on a terminal, offer to run the action."""
         reply = self.offline.handle(message, get_language())
         print(f"\n[OFFLINE]\n{reply.text}\n")
-        if reply.commands:
-            print("[!] These commands need administrator rights; run them yourself:")
-            for command in reply.commands:
-                print(f"    $ {command.display()}")
-            print()
+        extra = self._offer_action(reply)
+        if extra:
+            return reply.text + "\n\n" + extra
         return reply.text
+
+    def _offer_model_action(self, message: str) -> str:
+        """Offer a catalog action for the user's sentence, not for model text."""
+        propose = getattr(self.offline, "propose", None)
+        if not callable(propose):
+            return ""
+        try:
+            reply = propose(message, get_language())
+        except Exception as exc:
+            logger.error("Could not prepare a confirmed action: %s", exc, exc_info=True)
+            return ""
+        interaction, commands = split_offer(reply)
+        if not interaction and not commands:
+            return ""
+        if getattr(reply, "text", ""):
+            print(f"\n{reply.text}\n")
+        return self._offer_action(reply)
+
+    def _offer_action(self, reply) -> str:
+        """Print the exact argv. Run it only after a confirmation on a TTY.
+
+        A pipe or a unit test is not a terminal: the commands are shown and
+        nothing is scanned or executed.
+        """
+        interaction, commands = split_offer(reply)
+        if interaction:
+            if not sys.stdin.isatty():
+                self._print_commands(commands)
+                print(_("This step needs an interactive terminal."))
+                return ""
+            if interaction == "wifi":
+                return self._choose_wifi()
+            if interaction == "printer":
+                return self._choose_printer(commands)
+            if interaction == "scanner":
+                return self._choose_scanner(commands)
+            return ""
+        if not commands:
+            return ""
+        self._print_commands(commands)
+        if not sys.stdin.isatty():
+            print(_("This step needs an interactive terminal."))
+            return ""
+        return self._confirm_and_run(commands)
+
+    def _print_commands(self, commands):
+        if not commands:
+            return
+        print(format_command_offer(
+            commands,
+            _("These changes need administrator rights (pkexec):"),
+            _("Run suggested commands?"),
+        ))
+        print()
+
+    def _ask(self, prompt: str) -> str:
+        try:
+            return input(prompt)
+        except EOFError:
+            return ""
+
+    def _confirm_and_run(self, commands) -> str:
+        if not confirmed(self._ask(_("Run these commands? [y/N] "))):
+            print(_("Cancelled"))
+            return ""
+        chunks = []
+        for command in commands:
+            ok, output = offline_assistant.OfflineAssistant.run_command(command)
+            line = f"$ {command.display()}"
+            detail = output or (_("Done.") if ok else _("Failed."))
+            print(line)
+            print(detail)
+            chunks.append(line)
+            chunks.append(detail)
+            if not ok:
+                break
+        return "\n".join(chunks)
+
+    def _choose_wifi(self) -> str:
+        networks, error = collect_wifi()
+        if not networks:
+            text = error or _("No Wi-Fi networks found.")
+            print(text)
+            return text
+        index = choose_numbered(
+            networks, self._ask, sys.stdout.write,
+            lambda network: (
+                f"{network.ssid}  {network.signal}%  {network.security or '--'}"
+            ),
+            prompt=_("Number (Enter cancels): "),
+        )
+        if index is None:
+            print(_("Cancelled"))
+            return ""
+        network = networks[index]
+        secret = ""
+        if wifi_needs_password(network):
+            try:
+                secret = getpass.getpass(_("Password: "))
+            except EOFError:
+                secret = ""
+            if not secret:
+                print(_("Cancelled"))
+                return ""
+        ok, output = connect_wifi(network.ssid, secret or None)
+        secret = ""
+        if ok:
+            text = _("Connected to {ssid}.").format(ssid=network.ssid)
+        else:
+            text = _("Could not connect to {ssid}.").format(ssid=network.ssid)
+            if output:
+                text = text + "\n" + output
+        print(text)
+        return text
+
+    def _choose_printer(self, commands) -> str:
+        devices, error = collect_printers()
+        if not devices:
+            if commands:
+                self._print_commands(commands)
+                return self._confirm_and_run(commands)
+            text = error or _("No printers found.")
+            print(text)
+            return text
+        index = choose_numbered(
+            devices, self._ask, sys.stdout.write,
+            lambda device: device.uri + ("" if device.driverless else " (driver)"),
+            prompt=_("Number (Enter cancels): "),
+        )
+        if index is None:
+            print(_("Cancelled"))
+            return ""
+        device = devices[index]
+        default = queue_name_for(device.uri)
+        typed = self._ask(_("Queue name [{name}]: ").format(name=default)).strip()
+        try:
+            argv = printer_add_argv(typed or default, device.uri)
+        except ValueError as exc:
+            print(exc)
+            return str(exc)
+        command = offline_assistant.Command(
+            argv=argv, privileged=True, description=f"Add printer {argv[2]}",
+        )
+        self._print_commands([command])
+        return self._confirm_and_run([command])
+
+    def _choose_scanner(self, commands) -> str:
+        devices, error = collect_scanners()
+        if devices:
+            lines = [f"{item.device} — {item.description}" for item in devices]
+            text = "\n".join(lines)
+            print(text)
+            return text
+        if commands:
+            self._print_commands(commands)
+            return self._confirm_and_run(commands)
+        text = error or _("No scanners found.")
+        print(text)
+        return text
 
     def handle_chat(self, args):
         """Process the chat command. Devolve exit code (0 sucesso, 1 falha)."""
@@ -490,8 +653,10 @@ Examples:
         full_history = self._build_request_messages(message)
 
         # Get the response (or answer offline when the provider is unusable)
+        answered_offline = False
         if not self.ai_client.provider_ready(args.provider):
             response_text = self._run_offline(message)
+            answered_offline = True
         elif args.stream:
             print("\n[AI] ", end="", flush=True)
             response_text = ""
@@ -509,6 +674,7 @@ Examples:
                 # modelo — não persistir como resposta, cair para offline.
                 print(f"\n[!] {e}\n")
                 response_text = self._run_offline(message)
+                answered_offline = True
         else:
             response_text = self.ai_client.chat(
                 full_history,
@@ -519,6 +685,12 @@ Examples:
                 print(f"\n[AI]\n{response_text}\n")
             else:
                 response_text = self._run_offline(message)
+                answered_offline = True
+
+        if response_text and not answered_offline:
+            extra = self._offer_model_action(message)
+            if extra:
+                response_text = response_text + "\n\n" + extra
 
         # Save to history
         if not args.no_history:

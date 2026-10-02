@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ from src.render_core import (
     valid_span,
     header_offset,
 )
-from src.system_utils import SystemUtils
+from src.system_utils import SystemUtils, capture_geometry
 
 
 class FakeConfig:
@@ -132,12 +133,10 @@ class TestValidatePath(unittest.TestCase):
 
 
 class TestReadWriteFileRespectsSandbox(unittest.TestCase):
-    def test_write_outside_allowed_dir_is_denied(self):
-        with tempfile.TemporaryDirectory() as allowed:
-            utils = SystemUtils(FakeConfig(edit_dirs=[allowed]))
-            ok, msg = utils.write_file("/etc/passwd", "pwned")
-            self.assertFalse(ok)
-            self.assertIn("denied", msg)
+    def test_direct_write_is_not_offered(self):
+        # An unjournaled SystemUtils.write_file bypassed the change journal.
+        # Confirmed writes go through file_actions.confirm_and_write.
+        self.assertFalse(hasattr(SystemUtils, "write_file"))
 
     def test_read_outside_allowed_dir_is_denied(self):
         utils = SystemUtils(FakeConfig(edit_dirs=["/nonexistent-dir"]))
@@ -636,18 +635,6 @@ class TestCorruptConfigRepair(unittest.TestCase):
             self.assertTrue((Path(d) / "config.json.corrupt").exists())
 
 
-# --- Bug 18: write_file recusava criar diretorias novas ---------------------
-
-class TestWriteFileCreatesParentDirs(unittest.TestCase):
-    def test_new_nested_directory_is_created(self):
-        with tempfile.TemporaryDirectory() as d:
-            utils = SystemUtils(FakeConfig(edit_dirs=[d]))
-            target = Path(d) / "new" / "nested" / "f.txt"
-            ok, msg = utils.write_file(str(target), "hello")
-            self.assertTrue(ok, msg)
-            self.assertEqual(target.read_text(encoding="utf-8"), "hello")
-
-
 # --- Bug 19: override por env perdia o tipo sem `default` -------------------
 
 class TestEnvOverrideTyping(unittest.TestCase):
@@ -1058,6 +1045,96 @@ class TestI18nUnification(unittest.TestCase):
         from src.i18n import offline_service_action
         self.assertEqual(offline_service_action("xx", "enable"), "enable")
         self.assertEqual(offline_service_action("pt", "enable"), "ativar")
+
+
+class TestGroqBaseUrl(unittest.TestCase):
+    def test_default_is_the_openai_compatible_base(self):
+        base = ConfigManager.DEFAULT_CONFIG["api"]["providers"]["groq"]["base_url"]
+        self.assertEqual(base, "https://api.groq.com/openai/v1")
+
+    def test_shipped_template_matches(self):
+        shipped = json.loads((ROOT / "config" / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(shipped["app"]["version"], "1.3.1")
+        self.assertEqual(
+            shipped["api"]["providers"]["groq"]["base_url"],
+            "https://api.groq.com/openai/v1",
+        )
+
+    def test_legacy_default_is_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({
+                "app": {"version": "1.3.0"},
+                "api": {"providers": {"groq": {"base_url": "https://api.groq.com/v1"}}},
+            }), encoding="utf-8")
+            config = ConfigManager(str(path))
+            self.addCleanup(config.flush)
+            self.assertEqual(
+                config.get("api.providers.groq.base_url"),
+                "https://api.groq.com/openai/v1",
+            )
+            self.assertEqual(config.get("app.version"), "1.3.1")
+
+    def test_custom_groq_base_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({
+                "app": {"version": "1.3.0"},
+                "api": {"providers": {"groq": {"base_url": "https://example.test/v1"}}},
+            }), encoding="utf-8")
+            config = ConfigManager(str(path))
+            self.addCleanup(config.flush)
+            self.assertEqual(config.get("api.providers.groq.base_url"), "https://example.test/v1")
+
+
+class TestCaptureGeometry(unittest.TestCase):
+    def test_accepts_the_grim_form(self):
+        self.assertEqual(capture_geometry("12,34 200x100\n"), "12,34 200x100")
+        self.assertEqual(capture_geometry("-4,0 1x2"), "-4,0 1x2")
+
+    def test_rejects_anything_else(self):
+        for value in ("", "hello", "12,34 0x10", "12,34 10x0", "12, 34 10x10",
+                      "12,34 10x10;rm", None, 12):
+            self.assertIsNone(capture_geometry(value), value)
+
+
+class TestWaylandRegionCapture(unittest.TestCase):
+    def setUp(self):
+        if not hasattr(os, "geteuid"):
+            patcher = patch("os.geteuid", return_value=1000, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.utils = SystemUtils(FakeConfig())
+        self.utils.is_wayland = True
+        self.utils._which = lambda name: {
+            "grim": "/usr/bin/grim",
+            "slurp": "/usr/bin/slurp",
+        }.get(name)
+
+    def _run(self, argv, stdout):
+        def run(command, **kwargs):
+            argv.append(list(command))
+            text = stdout if str(command[0]).endswith("slurp") else ""
+            return SimpleNamespace(returncode=0, stdout=text, stderr="")
+        return run
+
+    def test_slurp_geometry_is_the_grim_region(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "src.system_utils.subprocess.run", side_effect=self._run(calls, "8,9 20x30\n")
+        ):
+            target = str(Path(directory) / "shot.png")
+            ok, path = self.utils.capture_active_window(target)
+        self.assertTrue(ok, path)
+        self.assertEqual(calls[0][0], "/usr/bin/slurp")
+        self.assertEqual(calls[1], ["/usr/bin/grim", "-g", "8,9 20x30", target])
+
+    def test_unusable_slurp_output_is_not_passed_to_grim(self):
+        calls = []
+        with patch("src.system_utils.subprocess.run", side_effect=self._run(calls, "select a window\n")):
+            ok, _message = self.utils.capture_active_window(os.devnull)
+        self.assertFalse(ok)
+        self.assertEqual(calls, [["/usr/bin/slurp"]])
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ Para usar este plugin:
 1. Renomeie este ficheiro para o nome do seu provedor
 2. Implemente a função de chat
 3. Atualize o config.json com as configurações do provedor
+4. Acrescente esse nome, sem .py, a plugins.enabled
+   (sem este passo o ficheiro não é importado)
 """
 
 import json

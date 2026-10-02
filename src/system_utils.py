@@ -1,6 +1,7 @@
 import os
 import json
 import getpass
+import re
 import shutil
 import shlex
 import subprocess
@@ -18,6 +19,23 @@ from .process_output import run_bounded
 
 # Maximum bytes retained from a diagnostic process.
 MAX_COMMAND_OUTPUT = 1_000_000
+
+# grim -g and slurp both speak "x,y WxH". Anything else is not a geometry.
+_CAPTURE_GEOMETRY = re.compile(r"^-?\d+,-?\d+ [1-9]\d*x[1-9]\d*$")
+
+
+def capture_geometry(value):
+    """Return a grim/slurp geometry, or None when the text is not one.
+
+    The selected region is passed as a single argv element. Rejecting every
+    other shape keeps a surprising slurp message from becoming that argument.
+    """
+    if not isinstance(value, str):
+        return None
+    geometry = value.strip()
+    if _CAPTURE_GEOMETRY.fullmatch(geometry) is None:
+        return None
+    return geometry
 
 
 def _cpu_value(entry: Dict[str, str]) -> float:
@@ -375,58 +393,6 @@ class SystemUtils:
             logger.error(f"Error reading file: {e}")
             return False, f"Error reading file: {e}"
 
-    def write_file(self, filepath: str, content: str, append: bool = False) -> Tuple[bool, str]:
-        """
-        Write to a file on the system.
-
-        Args:
-            filepath: Path of the file.
-            content: Content to write.
-            append: If True, appends to the file; otherwise, replaces it.
-
-        Returns:
-            Tuple (success, message).
-        """
-        if not filepath or not isinstance(filepath, str):
-            return False, "Invalid path"
-
-        if not content or not isinstance(content, str):
-            return False, "Invalid content"
-
-        # Validate path
-        if not self._validate_path(filepath):
-            logger.warning(f"Access denied to file: {filepath}")
-            return False, f"Access denied to file: {filepath}"
-
-        try:
-            file_path = Path(filepath)
-
-            # Create the parent directories first: os.access() on a
-            # non-existent directory reports "not writable" even when we are
-            # able to create it, so the old check blocked writes to any new
-            # nested path.
-            try:
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                return False, f"Error creating directory {file_path.parent}: {e}"
-
-            # Check permissions
-            if not os.access(file_path.parent, os.W_OK):
-                return False, f"No permission to write in: {file_path.parent}"
-
-            mode = 'a' if append else 'w'
-            with open(file_path, mode, encoding='utf-8') as f:
-                f.write(content)
-
-            logger.info(f"File {filepath} {'updated' if not append else 'appended'} successfully")
-            return True, f"File {filepath} {'updated' if not append else 'appended'} successfully"
-        except PermissionError:
-            logger.error(f"Permission denied to write: {filepath}")
-            return False, f"Permission denied to write: {filepath}"
-        except Exception as e:
-            logger.error(f"Error writing file: {e}")
-            return False, f"Error writing file: {e}"
-
     @staticmethod
     def _which(name: str) -> Optional[str]:
         """shutil.which com timeout — sem isso `which` podia bloquear indefinidamente."""
@@ -465,7 +431,7 @@ class SystemUtils:
             w, h = rect.get("width"), rect.get("height")
             if None in (x, y, w, h) or w <= 0 or h <= 0:
                 return None
-            return f"{x},{y} {w}x{h}"
+            return capture_geometry(f"{int(x)},{int(y)} {int(w)}x{int(h)}")
         except Exception as e:
             logger.warning(f"Could not get focused window geometry: {e}")
             return None
@@ -490,8 +456,13 @@ class SystemUtils:
                     f"{result.stderr.strip()!r}"
                 )
                 return None
-            geometry = result.stdout.strip()
-            return geometry or None
+            geometry = capture_geometry(result.stdout)
+            if geometry is None and result.stdout.strip():
+                logger.warning(
+                    "slurp returned an unusable geometry: %r",
+                    result.stdout.strip()[:80],
+                )
+            return geometry
         except Exception as e:
             logger.warning(f"Could not get selection from slurp: {e}")
             return None

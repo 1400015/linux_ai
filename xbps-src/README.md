@@ -1,12 +1,12 @@
 # Native Void Linux package
 
-The template builds upstream snapshot `fbaa4ad25c016ab20ab0f4294ba6913d71c3c228`
-with the bundled `patches/review-corrections.patch` to produce version 1.2.0.
-The patch carries the security fixes, conversation sessions, assistance modes
-and bundled local diagnostic guides that are not yet in that published snapshot. Both the archive checksum and application of
-the patch have been verified. Keep the patch beside the template when copying
-the recipe. After these changes reach upstream, a future recipe can pin that
-commit and remove the patch.
+The template builds published snapshot `be865168e74f42f858bc69f412522df84b3e53d1`
+(application 1.3.0, package revision 2). That snapshot already contains the
+security fixes, sessions, assistance modes and Wayland window fixes, so the
+recipe no longer carries a patch. The archive checksum was verified against
+the GitHub tarball. Copy the whole package directory, including this README,
+when moving the recipe. After a newer commit is published, update `_commit`
+and `checksum` together.
 
 ## Build
 

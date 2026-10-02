@@ -26,7 +26,28 @@ except ImportError:  # pragma: no cover - import fora do pacote
 # migração se aplica. Executadas por ordem de versão sobre configs antigas
 # cujo `app.version` seja inferior. Adicionar novas migrações AQUI e nunca
 # alterar retroactivamente as existentes.
-MIGRATIONS: Dict[str, Any] = {}
+_GROQ_OPENAI_BASE = "https://api.groq.com/openai/v1"
+_GROQ_LEGACY_BASE = "https://api.groq.com/v1"
+
+
+def _migrate_groq_openai_base(manager) -> None:
+    """Point the untouched Groq default at the OpenAI-compatible base URL.
+
+    A custom base URL is left alone. Only the previous built-in value is
+    rewritten, because that value never reached Groq's chat endpoint.
+    """
+    providers = manager.config.get("api", {})
+    if not isinstance(providers, dict):
+        return
+    providers = providers.get("providers", {})
+    groq = providers.get("groq") if isinstance(providers, dict) else None
+    if isinstance(groq, dict) and groq.get("base_url") == _GROQ_LEGACY_BASE:
+        groq["base_url"] = _GROQ_OPENAI_BASE
+
+
+MIGRATIONS: Dict[str, Any] = {
+    "1.3.1": _migrate_groq_openai_base,
+}
 
 
 def _version_tuple(version: str):
@@ -100,7 +121,7 @@ class ConfigManager:
                 },
                 "groq": {
                     "api_key": "",
-                    "base_url": "https://api.groq.com/v1",
+                    "base_url": _GROQ_OPENAI_BASE,
                     "model": "llama-3.1-8b-instant",
                     "timeout": 60
                 },

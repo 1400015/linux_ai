@@ -193,22 +193,11 @@ class LinuxAIAssistant:
 
         edge = self.config.get("app.button_edge", "right")
 
-        # Wayland ignores move(), so tiling compositors (dwl-based, etc.)
-        # tile this 52x52 window like a normal one. Use a layer-shell
-        # surface anchored to the configured edge instead, when available.
+        # Wayland ignores move(), so tiling compositors treat this 52x52
+        # window as a normal one. A layer-shell surface avoids that. When
+        # the protocol does not take effect, fall through to move().
         from . import dock
-        if dock.is_wayland(button_window) and dock.HAS_LAYER_SHELL:
-            LayerShell = dock.GtkLayerShell
-            LayerShell.init_for_window(button_window)
-            LayerShell.set_layer(button_window, LayerShell.Layer.TOP)
-            LayerShell.set_namespace(button_window, "linux-ai-float-button")
-            edges = {"left": LayerShell.Edge.LEFT,
-                     "right": LayerShell.Edge.RIGHT,
-                     "top": LayerShell.Edge.TOP,
-                     "bottom": LayerShell.Edge.BOTTOM}
-            anchor = edges.get(edge, LayerShell.Edge.RIGHT)
-            LayerShell.set_anchor(button_window, anchor, True)
-            LayerShell.set_margin(button_window, anchor, 12)
+        if dock.apply_float_button(button_window, edge):
             button_window.show_all()
             self.float_button_window = button_window
             return

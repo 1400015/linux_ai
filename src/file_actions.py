@@ -48,9 +48,9 @@ def is_privileged_path(path):
 def is_allowed_path(path, allowed_dirs=None):
     """True if `path` is inside $HOME or one of `allowed_dirs`.
 
-    The AI file-block path must honour the same sandbox as
-    SystemUtils.write_file(); otherwise expert mode could write anywhere
-    via pkexec regardless of `permissions.allowed_edit_dirs`.
+    The AI file-block path is the only write entry point. It must honour
+    `permissions.allowed_edit_dirs`; otherwise expert mode could write
+    anywhere via pkexec. Confirmed writes go through the change journal.
     """
     real = os.path.realpath(os.path.expanduser(path))
     home = os.path.realpath(os.path.expanduser("~"))

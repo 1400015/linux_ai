@@ -123,6 +123,35 @@ def apply_dock(window, edge, width):
     return "window"
 
 
+def apply_float_button(window, edge):
+    """Anchor the helper button on the configured screen edge.
+
+    Returns True only when gtk-layer-shell actually owns the window. The
+    caller falls back to ordinary placement when this returns False: a
+    missing symbol, a rejected protocol or an init that does not stick
+    must not skip that placement.
+    """
+    if not is_wayland(window) or not HAS_LAYER_SHELL:
+        return False
+    try:
+        GtkLayerShell.init_for_window(window)
+        GtkLayerShell.set_layer(window, GtkLayerShell.Layer.TOP)
+        GtkLayerShell.set_namespace(window, "linux-ai-float-button")
+        edges = {"left": GtkLayerShell.Edge.LEFT,
+                 "right": GtkLayerShell.Edge.RIGHT,
+                 "top": GtkLayerShell.Edge.TOP,
+                 "bottom": GtkLayerShell.Edge.BOTTOM}
+        anchor = edges.get(edge, GtkLayerShell.Edge.RIGHT)
+        GtkLayerShell.set_anchor(window, anchor, True)
+        GtkLayerShell.set_margin(window, anchor, 12)
+        if GtkLayerShell.is_layer_window(window):
+            return True
+        logger.warning("Layer-shell init had no effect on the float button; falling back")
+    except Exception as e:
+        logger.warning(f"Layer-shell float button failed, falling back: {e}")
+    return False
+
+
 def apply_float(window, always_on_top: bool = True):
     """Return the window to floating mode.
 

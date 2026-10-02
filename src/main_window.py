@@ -18,7 +18,8 @@ gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, GLib
 import logging
 
-from . import dock, file_actions, offline_assistant
+from . import device_dialogs, dock, file_actions, offline_assistant
+from .device_actions import split_offer
 from .ai_client import AIProviderError
 from .chat_view import ChatView
 from .history_store import HistoryStore, MAX_HISTORY_MESSAGES
@@ -1589,17 +1590,28 @@ class MainWindow(Gtk.Window):
                                   "".join(pending_chunks), True)
                     pending_chunks = []
 
+            action = None
             if offline_reply is not None:
                 pending_chunks.clear()
                 response_text = offline_reply.text
                 GLib.idle_add(self._replace_ai_reply, request_id, cancel_event, response_text)
-                if offline_reply.commands and not cancel_event.is_set():
-                    GLib.idle_add(self._offer_offline_commands,
-                                  offline_reply.commands, request_id,
-                                  cancel_event)
+                action = offline_reply
+            elif response_text and not cancel_event.is_set():
+                # The model may explain the step. The command, if any, comes
+                # from the user's sentence and the local catalog.
+                propose = getattr(offline, "propose", None)
+                if callable(propose):
+                    try:
+                        action = propose(message, get_language())
+                    except Exception as exc:
+                        logger.error("Could not prepare a confirmed action: %s", exc, exc_info=True)
 
             cancelled = cancel_event.is_set()
             GLib.idle_add(self._finalize_response, request_id, response_text, cancelled)
+            interaction, commands = split_offer(action)
+            if (interaction or commands) and not cancelled:
+                GLib.idle_add(self._offer_confirmed_action, interaction, commands,
+                              request_id, cancel_event)
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
@@ -1632,6 +1644,42 @@ class MainWindow(Gtk.Window):
             return False
         self._add_system_message(text)
         return False
+
+    def _offer_confirmed_action(self, interaction, commands, request_id, cancel_event):
+        """Confirm a catalog action after the reply is on screen.
+
+        A device chooser owns its own command list: the generic dialog must
+        not also open, or a scanner install would be offered before the scan.
+        """
+        if request_id != self._active_request or cancel_event.is_set():
+            return False
+        if interaction:
+            self._start_device_choice(interaction, commands, request_id, cancel_event)
+            return False
+        if commands:
+            return self._offer_offline_commands(commands, request_id, cancel_event)
+        return False
+
+    def _start_device_choice(self, kind, commands, request_id, cancel_event):
+        """Look up devices on a worker, then let the user pick on this thread."""
+        store = getattr(self, "history_store", None)
+        session_id = store.active_session_id if store is not None else None
+        looking = {
+            "wifi": _("Looking up Wi-Fi networks…"),
+            "printer": _("Looking up printers…"),
+            "scanner": _("Looking up scanners…"),
+        }.get(kind)
+        if looking:
+            self._add_system_message(looking)
+
+        def still_current():
+            return request_id == self._active_request and not cancel_event.is_set()
+
+        def report(text):
+            # `text` is already redacted. The password never reaches history.
+            GLib.idle_add(self._record_offline_result, request_id, text, session_id)
+
+        device_dialogs.start(self, kind, commands, report, still_current)
 
     def _offer_offline_commands(self, commands, request_id, cancel_event):
         """Ask for confirmation before running privileged offline commands."""

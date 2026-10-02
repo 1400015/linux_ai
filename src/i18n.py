@@ -924,6 +924,26 @@ OFFLINE_TEXTS["en"].update({
     "observed_link_local": "A 169.254.x.x address appears. It does not establish that DHCP succeeded; identify the relevant interface and network manager.",
     "observed_inconclusive": "This observation alone does not establish the cause. Compare it with the symptom and the next check.",
     "detected_components": "Release: {version}. Detected executables: {tools}. Package executable confirmed: {pkg_verified}; running service manager confirmed: {svc_verified}. Installed tools are not proof that a service controls the machine.",
+    "wifi_offer": (
+        "I can list the visible Wi-Fi networks and connect to the one you choose. "
+        "The password is typed in a dialog and is not stored in the conversation."
+    ),
+    "wifi_unavailable": (
+        "NetworkManager (nmcli) is not available. I can install {pkg} if you confirm."
+    ),
+    "printer_offer": (
+        "I can look for printers and add a queue for a driverless IPP device. "
+        "I will show the exact command before creating the queue."
+    ),
+    "printer_unavailable": (
+        "CUPS (lpinfo) is not available. I can install {pkg} if you confirm."
+    ),
+    "scanner_offer": (
+        "I can look for scanners. If none appear, I can install scanner support if you confirm."
+    ),
+    "scanner_unavailable": (
+        "SANE (scanimage) is not available. I can install {pkg} if you confirm."
+    ),
 })
 OFFLINE_TEXTS["pt"].update({
     "negated_action": "A mensagem contém uma negação. Não propus qualquer alteração. Para diagnosticar, pede um guia local; para alterar, indica separadamente a ação exata que pretendes.",
@@ -946,6 +966,26 @@ OFFLINE_TEXTS["pt"].update({
     "observed_link_local": "Existe um endereço 169.254.x.x. Não confirma sucesso do DHCP; identifica a interface relevante e o gestor de rede.",
     "observed_inconclusive": "Esta observação isolada não estabelece a causa. Compara-a com o sintoma e a próxima verificação.",
     "detected_components": "Versão: {version}. Executáveis detetados: {tools}. Executável de pacotes confirmado: {pkg_verified}; gestor de serviços em execução confirmado: {svc_verified}. Ter um programa instalado não prova que controle a máquina.",
+    "wifi_offer": (
+        "Posso listar as redes Wi-Fi visíveis e ligar à que escolheres. "
+        "A palavra-passe fica na caixa de diálogo e não entra na conversa."
+    ),
+    "wifi_unavailable": (
+        "O NetworkManager (nmcli) não está disponível. Posso instalar {pkg} se confirmares."
+    ),
+    "printer_offer": (
+        "Posso procurar impressoras e criar uma fila para um aparelho IPP sem driver próprio. "
+        "Mostro o comando exato antes de criar a fila."
+    ),
+    "printer_unavailable": (
+        "O CUPS (lpinfo) não está disponível. Posso instalar {pkg} se confirmares."
+    ),
+    "scanner_offer": (
+        "Posso procurar scanners. Se não aparecer nenhum, posso instalar o suporte se confirmares."
+    ),
+    "scanner_unavailable": (
+        "O SANE (scanimage) não está disponível. Posso instalar {pkg} se confirmares."
+    ),
 })
 
 # Localized verb shown to the user per action.
@@ -1039,6 +1079,35 @@ TRANSLATIONS["pt"].update({
     "Confirm file recovery": "Confirmar recuperação do ficheiro",
     "Restore file": "Repor ficheiro",
     "File recovered. Recovery backup: {path}": "Ficheiro reposto. Cópia de recuperação: {path}",
+    "Looking up Wi-Fi networks…": "A procurar redes Wi-Fi…",
+    "Looking up printers…": "A procurar impressoras…",
+    "Looking up scanners…": "A procurar scanners…",
+    "Available Wi-Fi networks": "Redes Wi-Fi disponíveis",
+    "Password": "Palavra-passe",
+    "Connect": "Ligar",
+    "The password is sent only to NetworkManager and is not written in the chat.": "A palavra-passe segue só para o NetworkManager e não fica escrita na conversa.",
+    "No Wi-Fi networks found.": "Não encontrei redes Wi-Fi.",
+    "Connected to {ssid}.": "Ligado a {ssid}.",
+    "Could not connect to {ssid}.": "Não foi possível ligar a {ssid}.",
+    "Add printer": "Adicionar impressora",
+    "Queue name": "Nome da fila",
+    "No printers found.": "Não encontrei impressoras.",
+    "This device needs a driver. I will not add it automatically.": "Este aparelho precisa de um driver. Não o adiciono automaticamente.",
+    "Printer {name} added.": "Impressora {name} adicionada.",
+    "Could not add printer {name}.": "Não foi possível adicionar a impressora {name}.",
+    "Scanners": "Scanners",
+    "No scanners found.": "Não encontrei scanners.",
+    "Install scanner support": "Instalar suporte de scanner",
+    "Install {pkg}": "Instalar {pkg}",
+    "Scanner support installed.": "Suporte de scanner instalado.",
+    "Could not install {pkg}.": "Não foi possível instalar {pkg}.",
+    "In use": "Em uso",
+    "Run these commands? [y/N] ": "Executar estes comandos? [s/N] ",
+    "This step needs an interactive terminal.": "Este passo precisa de um terminal interativo.",
+    "Number (Enter cancels): ": "Número (Enter cancela): ",
+    "Queue name [{name}]: ": "Nome da fila [{name}]: ",
+    "Password: ": "Palavra-passe: ",
+    "Cancel": "Cancelar",
     "pending": "pendente",
     "applied": "aplicada",
     "restored": "reposta",

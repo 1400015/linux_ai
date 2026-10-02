@@ -226,7 +226,7 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 | Google AI Studio | https://generativelanguage.googleapis.com/v1 | gemini-2.5-flash |
 | Anthropic | https://api.anthropic.com/v1 | claude-3-5-haiku-latest |
 | Mistral | https://api.mistral.ai/v1 | mistral-small-latest |
-| Groq | https://api.groq.com/v1 | llama-3.1-8b-instant |
+| Groq | https://api.groq.com/openai/v1 | llama-3.1-8b-instant |
 | Cohere | https://api.cohere.ai/v1 | command-r |
 | Local Model | http://localhost:11434/v1 | llama3.2 |
 

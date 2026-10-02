@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Linux AI Assistant",
-    "version": "1.2.0",
+    "version": "1.3.1",
     "width": 400,
     "height": 500,
     "x_position": 100,
@@ -46,7 +46,7 @@
       },
       "groq": {
         "api_key": "",
-        "base_url": "https://api.groq.com/v1",
+        "base_url": "https://api.groq.com/openai/v1",
         "model": "llama-3.1-8b-instant",
         "timeout": 60
       },
