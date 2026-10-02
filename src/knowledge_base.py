@@ -59,7 +59,7 @@ KNOWLEDGE_BASE: Dict[str, DistroKnowledge] = {
         display_name="Void Linux",
         wiki_name="Void Handbook",
         wiki_url="https://docs.voidlinux.org/",
-        wiki_search_url="https://wiki.voidlinux.org/index.php?search={query}",
+        wiki_search_url="https://docs.voidlinux.org/?search={query}",
         docs_urls=("https://docs.voidlinux.org/config/",),
         summary=("Void Linux is an independent, rolling-release distribution "
                  "built from scratch, available in glibc and musl variants."),
@@ -245,7 +245,7 @@ KNOWLEDGE_BASE: Dict[str, DistroKnowledge] = {
         display_name="Fedora Linux",
         wiki_name="Fedora Documentation",
         wiki_url="https://docs.fedoraproject.org/",
-        wiki_search_url="https://ask.fedoraproject.org/search?q={query}",
+        wiki_search_url="https://discussion.fedoraproject.org/search?q={query}",
         docs_urls=("https://docs.fedoraproject.org/en-US/quick-docs/",
                    "https://ask.fedoraproject.org/"),
         summary=("Fedora is upstream of Red Hat Enterprise Linux, shipping "
@@ -412,8 +412,11 @@ _FAMILY_BY_ID: Dict[str, str] = {
     "debian": "debian",
     "ubuntu": "ubuntu",
     "linuxmint": "mint",
+    "pop": "ubuntu", "elementary": "ubuntu",
+    "raspbian": "debian", "kali": "debian",
     "arch": "arch",
     "manjaro": "manjaro",
+    "artix": "arch",
     "fedora": "fedora",
     "rhel": "rhel", "centos": "rhel", "rocky": "rhel", "almalinux": "rhel",
     "ol": "rhel", "centos_stream": "rhel",
@@ -422,6 +425,69 @@ _FAMILY_BY_ID: Dict[str, str] = {
     "alpine": "alpine",
     "gentoo": "gentoo", "funtoo": "gentoo",
 }
+
+# The same family resolution supplies both documentation and command templates.
+# This describes the distribution convention, not proof that a tool is installed.
+PACKAGE_MANAGER_BY_FAMILY = {
+    "void": "xbps", "debian": "apt", "ubuntu": "apt", "mint": "apt",
+    "arch": "pacman", "manjaro": "pacman", "fedora": "dnf", "rhel": "dnf",
+    "opensuse": "zypper", "alpine": "apk",
+}
+
+
+def package_manager_for(distro_id: str, id_like: Tuple[str, ...] = ()) -> str:
+    """Return the distro convention; callers verify executable availability."""
+    profile = knowledge_for(distro_id, id_like)
+    return PACKAGE_MANAGER_BY_FAMILY.get(profile.family if profile else "", "unknown")
+
+
+_PORTUGUESE_FACTS = {
+    "void": {
+        "repositories": "/usr/share/xbps.d/ contém os valores de base; /etc/xbps.d/ contém as substituições locais. Confirma a arquitetura e a edição glibc ou musl.",
+        "network": "Identifica o gestor ativo: dhcpcd, NetworkManager, iwd ou wpa_supplicant podem fazer parte da configuração. Não deduzas o gestor apenas pela distribuição.",
+        "logs": "runit não fornece o journal de systemd. A localização depende do serviço de logging configurado; socklog pode guardar registos em /var/log/socklog/.",
+        "hostname": "/etc/hostname é usado no arranque pelos serviços de base do runit.",
+        "locale": "/etc/locale.conf; consulta também a secção de locales do Handbook para a edição instalada.",
+        "services_note": "Definições runit em /etc/sv/<nome>/; serviços ativados através de ligações em /var/service/. Confirma o gestor realmente em execução.",
+        "distinct": ("Void utiliza normalmente runit; as definições de serviços são diretórios em /etc/sv.", "XBPS gere pacotes com xbps-install, xbps-remove e xbps-query.", "Void é uma distribuição de atualização contínua.", "Existem edições glibc e musl; os repositórios devem corresponder à edição instalada."),
+    },
+    "debian": {
+        "repositories": "APT consulta /etc/apt/sources.list e /etc/apt/sources.list.d/; os ficheiros podem usar os formatos .list ou .sources.",
+        "network": "A configuração depende do gestor ativo, como NetworkManager, systemd-networkd ou ifupdown (/etc/network/interfaces). Confirma qual controla a interface.",
+        "logs": "Com systemd ativo, consulta o journal. /var/log/syslog pode existir se estiver configurado um serviço de syslog.",
+        "hostname": "/etc/hostname e entradas relevantes em /etc/hosts.",
+        "locale": "Normalmente /etc/default/locale; a geração de locales depende da configuração instalada.",
+        "services_note": "systemd é habitual, mas a instalação pode utilizar outro init. Confirma o gestor em execução antes de escolher comandos.",
+        "distinct": ("APT é o gestor habitual sobre a base de dados dpkg.", "Confirma a versão instalada antes de escolher repositórios.", "A instalação concreta determina os gestores de rede e serviços."),
+    },
+    "ubuntu": {
+        "repositories": "APT consulta /etc/apt/sources.list e /etc/apt/sources.list.d/, incluindo ficheiros .sources nas versões que usam o formato deb822.",
+        "network": "Netplan pode definir a configuração em /etc/netplan/ e delegar em NetworkManager ou systemd-networkd. Confirma o backend da instalação.",
+        "logs": "Com systemd ativo, consulta o journal; /var/log/syslog depende do serviço de logging instalado.",
+        "hostname": "/etc/hostname e entradas relevantes em /etc/hosts; hostnamectl apenas quando systemd for aplicável.",
+        "locale": "Normalmente /etc/default/locale; confirma os locales instalados.",
+        "services_note": "systemd é habitual. Contentores ou instalações personalizadas podem exigir comandos diferentes.",
+        "distinct": ("Ubuntu utiliza normalmente APT e dpkg.", "Netplan pode configurar a rede; o backend depende da instalação.", "Confirma VERSION_ID para adaptar instruções à versão instalada."),
+    },
+    "generic": {
+        "repositories": "Depende do gestor de pacotes efetivamente instalado.",
+        "network": "Identifica o gestor ativo e a interface; não há um único gestor universal em Linux.",
+        "logs": "Identifica o serviço de logging e o componente. Journal e ficheiros em /var/log dependem da instalação.",
+        "hostname": "Normalmente /etc/hostname e /etc/hosts; confirma a configuração da distribuição.",
+        "locale": "Depende da distribuição; podem existir /etc/locale.conf ou /etc/default/locale.",
+        "services_note": "Confirma o init e o gestor de serviços em execução; a presença de systemctl ou sv não é prova suficiente.",
+        "distinct": ("Consulta ID, ID_LIKE e VERSION_ID em /etc/os-release para identificar a distribuição.",),
+    },
+}
+
+
+def knowledge_content(profile: DistroKnowledge, key: str, lang: str = "en"):
+    """Localized prose for the first supported procedure families."""
+    if lang == "pt":
+        facts = _PORTUGUESE_FACTS.get(profile.family)
+        if facts is not None and key in facts:
+            return facts[key]
+    return getattr(profile, key)
 
 # ID_LIKE token -> family (fallback when the ID is unknown)
 _FAMILY_BY_LIKE: Dict[str, str] = {
@@ -438,7 +504,7 @@ def knowledge_for(distro_id: str,
     """Resolve the best-matching profile for an os-release ID/ID_LIKE.
 
     Exact ID wins over ID_LIKE; unknown distros with no recognizable
-    ancestry get the generic profile so replies still have pointers.
+    ancestry return None. Empty IDs and "unknown" return the generic profile.
     """
     did = (distro_id or "").strip().lower()
     if did in _FAMILY_BY_ID:

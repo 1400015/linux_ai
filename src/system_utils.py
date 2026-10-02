@@ -13,26 +13,10 @@ import logging
 # Configurar logger
 logger = logging.getLogger(__name__)
 
-# Commands whose last argument is a file path. For these, the path goes
-# through `allowed_edit_dirs` just like `read_file`/`write_file`.
-# (histórico: antes só este conjunto era validado; ver _validate_file_args)
-_FILE_ARG_COMMANDS = {"cat", "head", "tail", "less", "more", "file", "stat"}
+from .command_policy import validate_arguments
+from .process_output import run_bounded
 
-# Política de flags por comando: flags que executam código ou leem ficheiros
-# fora da sandbox, mesmo com o comando na allowlist. A allowlist por NOME
-# base não consegue exprimir "este comando é seguro": `man -P <prog> <pág>`
-# executa <prog> como pager (via shell!) e `dig -f <ficheiro>` lê um
-# ficheiro — ambos com comandos de diagnóstico por defeito. (P0 de
-# segurança: allowlist sem política de flags = execução arbitrária.)
-_BLOCKED_FLAGS: Dict[str, set] = {
-    "man": {"-P", "--pager"},
-    "dig": {"-f"},
-    "nslookup": {"-"},  # reservado; nenhum flag conhecido é perigoso hoje
-    "traceroute": {"-f"},
-}
-
-# Teto do output capturado (bytes): `grep -r x /` encheria a RAM e o
-# contexto da IA. read_file já tem caps equivalentes.
+# Maximum bytes retained from a diagnostic process.
 MAX_COMMAND_OUTPUT = 1_000_000
 
 
@@ -128,39 +112,8 @@ class SystemUtils:
             return False
 
     def _validate_file_args(self, cmd_parts: List[str]) -> bool:
-        """Validate path arguments and dangerous flags of allowlisted commands.
-
-        Dois pilares:
-        1. FLAGS bloqueadas (ver _BLOCKED_FLAGS): a allowlist por nome base
-           não impede que uma flag execute código ou leia ficheiros.
-        2. CAMINHOS absolutos/~: aplicado a TODOS os comandos da allowlist,
-           não só aos "obviamente" leitores — antes, `grep . /var/log/auth.log`
-           (grep estava na allowlist, fora de _FILE_ARG_COMMANDS) contornava
-           a sandbox por completo.
-        """
-        cmd_base = cmd_parts[0]
-
-        blocked = _BLOCKED_FLAGS.get(cmd_base)
-        if blocked:
-            for arg in cmd_parts[1:]:
-                if arg in blocked:
-                    logger.warning(
-                        f"Blocked flag '{arg}' for allowlisted command '{cmd_base}'"
-                    )
-                    return False
-
-        for arg in cmd_parts[1:]:
-            if arg.startswith("-") or arg == "/dev/stdin":
-                continue
-            if not (arg.startswith("/") or arg.startswith("~")):
-                continue
-            if not self._validate_path(arg):
-                logger.warning(
-                    f"Argument outside allowed directories for '{cmd_base}': {arg}"
-                )
-                return False
-        return True
-
+        """Validate filename operands and all supported dangerous flag forms."""
+        return validate_arguments(cmd_parts, self._validate_path)
 
     def get_system_info(self) -> Dict[str, str]:
         """Get system information"""
@@ -350,29 +303,10 @@ class SystemUtils:
         try:
             logger.info(f"Running command: {' '.join(cmd_parts)}")
 
-            result = subprocess.run(
-                cmd_parts,  # Use list instead of shell=True for security
-                capture_output=True,
-                # Um byte inválido não deve transformar o comando num erro
-                text=True,
-                errors="replace",
-                timeout=timeout,
-            )
-
-            def _cap(text: str) -> str:
-                if text and len(text) > MAX_COMMAND_OUTPUT:
-                    return (
-                        text[:MAX_COMMAND_OUTPUT]
-                        + f"\n... (output truncated at {MAX_COMMAND_OUTPUT} bytes)"
-                    )
-                return text
-
-            if result.returncode == 0:
-                logger.debug(f"Command executed successfully: {cmd_base}")
-                return True, _cap(result.stdout)
-            else:
-                logger.warning(f"Command failed ({result.returncode}): {cmd_base}")
-                return False, _cap(result.stderr or result.stdout)
+            returncode, stdout, stderr = run_bounded(cmd_parts, timeout, MAX_COMMAND_OUTPUT)
+            if returncode == 0:
+                return True, stdout
+            return False, stderr or stdout
 
         except subprocess.TimeoutExpired:
             logger.error(f"Timeout running command: {cmd_base}")
@@ -418,12 +352,19 @@ class SystemUtils:
                 # Cap each line: a single-line file (minified JSON, a log
                 # without newlines) could otherwise be read whole into RAM.
                 max_line_chars = 10000
-                for i, line in enumerate(f):
+                for i in range(max_lines + 1):
+                    line = f.readline(max_line_chars + 1)
+                    if not line:
+                        break
                     if i >= max_lines:
                         lines.append(f"\n... (more than {max_lines} lines omitted)")
                         break
-                    if len(line) > max_line_chars:
+                    if len(line) > max_line_chars and not line.endswith('\n'):
                         line = line[:max_line_chars] + "... (line truncated)\n"
+                        while True:
+                            rest = f.readline(max_line_chars)
+                            if not rest or rest.endswith('\n'):
+                                break
                     lines.append(line)
 
             return True, ''.join(lines)
@@ -926,33 +867,13 @@ class SystemUtils:
                 ("\\" + ch) if ch in "*?[\\" else ch for ch in search_term
             )
             # Arguments as a list: `search_term` is never interpreted by the shell.
-            proc = subprocess.Popen(
-                ["find", root, "-type", "f", "-name", f"*{escaped_term}*"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
+            _, output, _ = run_bounded(
+                ["find", root, "-type", "f", "-name", f"*{escaped_term}*", "-print0"],
+                30, MAX_COMMAND_OUTPUT,
             )
-            try:
-                deadline = time.monotonic() + 30  # teto global de pesquisa
-                for line in proc.stdout:
-                    line = line.strip()
-                    if line:
-                        results.append(line)
-                        if len(results) >= max_results:
-                            break
-                    if time.monotonic() > deadline:
-                        logger.warning("search_files hit its 30s deadline")
-                        break
-            finally:
-                # `find` keeps running on large trees: always terminate
-                # and close the pipe to avoid exhausting file descriptors.
-                proc.kill()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-                if proc.stdout is not None:
-                    proc.stdout.close()
+            # Only complete NUL-terminated paths; discard a truncated last path
+            # and the output-cap diagnostic rather than returning a fake file.
+            results = [name for name in output.split("\0")[:-1] if name][:max_results]
 
             return results
         except FileNotFoundError:
@@ -1000,4 +921,3 @@ class SystemUtils:
             info["error"] = str(e)
 
         return info
-

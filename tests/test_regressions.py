@@ -420,10 +420,7 @@ class TestContextTrimming(unittest.TestCase):
         self.assertIn('"role": m["role"], "content": m["content"]', source)
 
     def test_history_normalisation_drops_timestamp(self):
-        try:
-            from src.main_window import MainWindow
-        except ImportError:
-            self.skipTest("GTK is not available")
+        from src.history_store import HistoryStore
 
         with tempfile.TemporaryDirectory() as d:
             history = Path(d) / "history.json"
@@ -432,13 +429,14 @@ class TestContextTrimming(unittest.TestCase):
                 {"timestamp": 2.0, "role": "assistant", "content": "bom dia"},
             ]))
 
-            with patch("src.main_window.Path.home", return_value=Path(d)):
-                window = MainWindow.__new__(MainWindow)
-                window.conversation_history = []
-                window._load_conversation_history()
+            store = HistoryStore(history)
+            try:
+                messages = store.load_messages()
+            finally:
+                store.close()
 
             self.assertEqual(
-                window.conversation_history,
+                messages,
                 [{"role": "user", "content": "ola"},
                  {"role": "assistant", "content": "bom dia"}],
             )

@@ -474,7 +474,7 @@ def available_languages():
 # desta lista (config editada à mão, locale de sistema exótico) recai em
 # INGLÊS automaticamente — e o utilizador pode redefinir nas Definições
 # (Appearance > Language) para qualquer uma daqui.
-SUPPORTED_LANGUAGES = ("en", "pt", "es", "fr", "de")
+SUPPORTED_LANGUAGES = tuple(available_languages())
 
 # Nomes nativos para o seletor de língua nas Definições.
 LANGUAGE_NAMES = {
@@ -686,8 +686,9 @@ OFFLINE_TEXTS = {
         ),
         "clean": (
             "To free space on {pretty}:\n{cmds}\n"
-            "- user cache: rm -rf ~/.cache/*  (safe to delete)\n"
-            "- journal (systemd): journalctl --vacuum-size=200M"
+            "These commands remove downloaded package caches, not unused packages. "
+            "Reinstallation may need Internet access. Inspect application caches individually; "
+            "do not delete ~/.cache indiscriminately. Preserve useful logs before pruning them."
         ),
         "autostart": (
             "To start an application automatically at login, create a .desktop "
@@ -813,8 +814,9 @@ OFFLINE_TEXTS = {
         ),
         "clean": (
             "Para libertar espaço em {pretty}:\n{cmds}\n"
-            "- cache do utilizador: rm -rf ~/.cache/*  (seguro apagar)\n"
-            "- journal (systemd): journalctl --vacuum-size=200M"
+            "Estes comandos removem caches de pacotes descarregados, não pacotes sem uso. "
+            "Reinstalar pode exigir Internet. Inspeciona as caches de cada aplicação; "
+            "não apagues ~/.cache indiscriminadamente. Guarda os registos úteis antes de reduzir a retenção."
         ),
         "autostart": (
             "Para iniciar uma aplicação automaticamente no login, cria um ficheiro "
@@ -899,6 +901,53 @@ OFFLINE_TEXTS = {
     },
 }
 
+# New offline guidance is complete in Portuguese and English. Other UI
+# languages explicitly use the existing English fallback for these templates.
+OFFLINE_TEXTS["en"].update({
+    "negated_action": "Your message contains a negation. I have not proposed any change. For a diagnostic question, request a local guide; for a change, state the exact intended action separately.",
+    "ambiguous_action": "The requested change is ambiguous or describes a problem. I have not proposed any command. State one action and the exact targets, or request a local guide.",
+    "package_arguments": "Use exact package names separated by spaces, commas or 'and'. I will not guess names or discard the rest of the request.",
+    "knowledge_help": "Bundled local guides: 'local guide network', 'search knowledge DNS', or 'guide disk-space'. These guides work without a model or Internet connection.",
+    "knowledge_not_found": "No applicable local guide matched. Try network, DNS, disk, memory, permissions, APT or XBPS. Unknown versions and components require confirmation before changes.",
+    "knowledge_results": "Local guides found:\n{results}\n\nOpen one with 'guide <identifier>'. Examples are guidance and are never executed from documents.",
+    "diagnostic_cancelled": "The diagnostic was cancelled and its local continuation state was cleared.",
+    "diagnostic_step": "{title} — step {number}/{total}\n{instruction}",
+    "diagnostic_observation": "Local read-only observation:\n{output}",
+    "diagnostic_manual": "No automatic observation is available for this step. Run the displayed read command yourself if appropriate, then paste a short result for interpretation.",
+    "diagnostic_next": "Paste the result to interpret it and continue, say 'next' for the following step, or 'cancel'. Advancing a step does not confirm the problem is resolved.",
+    "diagnostic_sources": "Sources reviewed {date}; not tested on this machine. {sources}",
+    "diagnostic_complete": "The guide has finished. Verify the original symptom after any separately approved correction; these observations do not establish a definitive cause.",
+    "observed_link_down": "At least one interface reports DOWN. Identify whether it is the intended connection; unused interfaces can normally be down.",
+    "observed_no_default": "No IPv4 default route was found in this excerpt. Check the intended connection and IPv6 before concluding that routing is broken.",
+    "observed_high_disk": "At least one mount is at or above 90% usage. Identify which mount contains the affected path before choosing what to clean.",
+    "observed_high_inodes": "At least one filesystem is at or above 90% inode usage. Investigate the source of many small files instead of deleting unrelated data.",
+    "observed_link_local": "A 169.254.x.x address appears. It does not establish that DHCP succeeded; identify the relevant interface and network manager.",
+    "observed_inconclusive": "This observation alone does not establish the cause. Compare it with the symptom and the next check.",
+    "detected_components": "Release: {version}. Detected executables: {tools}. Package executable confirmed: {pkg_verified}; running service manager confirmed: {svc_verified}. Installed tools are not proof that a service controls the machine.",
+})
+OFFLINE_TEXTS["pt"].update({
+    "negated_action": "A mensagem contém uma negação. Não propus qualquer alteração. Para diagnosticar, pede um guia local; para alterar, indica separadamente a ação exata que pretendes.",
+    "ambiguous_action": "A alteração é ambígua ou a mensagem descreve um problema. Não propus qualquer comando. Indica uma ação e os alvos exatos, ou pede um guia local.",
+    "package_arguments": "Usa nomes exatos de pacotes separados por espaços, vírgulas ou 'e'. Não vou adivinhar nomes nem ignorar o resto do pedido.",
+    "knowledge_help": "Guias locais incluídos: 'guia local rede', 'pesquisar conhecimento DNS' ou 'guia disk-space'. Funcionam sem modelo e sem ligação à Internet.",
+    "knowledge_not_found": "Não encontrei um guia local aplicável. Experimenta rede, DNS, disco, memória, permissões, APT ou XBPS. Versões e componentes desconhecidos exigem confirmação antes de alterar.",
+    "knowledge_results": "Guias locais encontrados:\n{results}\n\nAbre um com 'guia <identificador>'. Os exemplos são orientação e nunca são executados a partir de documentos.",
+    "diagnostic_cancelled": "O diagnóstico foi cancelado e o seu estado local de continuidade foi apagado.",
+    "diagnostic_step": "{title} — passo {number}/{total}\n{instruction}",
+    "diagnostic_observation": "Observação local só de leitura:\n{output}",
+    "diagnostic_manual": "Este passo não tem uma observação automática disponível. Executa o comando de leitura apresentado, se for adequado, e cola um resultado curto para interpretar.",
+    "diagnostic_next": "Cola o resultado para o interpretar e continuar, diz 'e depois?' para o passo seguinte, ou 'cancelar'. Avançar um passo não confirma que o problema ficou resolvido.",
+    "diagnostic_sources": "Fontes revistas em {date}; sem teste nesta máquina. {sources}",
+    "diagnostic_complete": "O guia terminou. Verifica o sintoma original depois de qualquer correção aprovada separadamente; estas observações não estabelecem uma causa definitiva.",
+    "observed_link_down": "Pelo menos uma interface indica DOWN. Confirma se é a ligação pretendida; interfaces não utilizadas podem estar normalmente desligadas.",
+    "observed_no_default": "Não encontrei uma rota default IPv4 neste excerto. Confirma a ligação pretendida e IPv6 antes de concluir que existe uma falha de encaminhamento.",
+    "observed_high_disk": "Pelo menos uma montagem tem ocupação igual ou superior a 90%. Identifica a montagem do caminho afetado antes de escolher o que limpar.",
+    "observed_high_inodes": "Pelo menos um sistema tem ocupação de inodes igual ou superior a 90%. Investiga a origem dos muitos ficheiros pequenos antes de apagar dados.",
+    "observed_link_local": "Existe um endereço 169.254.x.x. Não confirma sucesso do DHCP; identifica a interface relevante e o gestor de rede.",
+    "observed_inconclusive": "Esta observação isolada não estabelece a causa. Compara-a com o sintoma e a próxima verificação.",
+    "detected_components": "Versão: {version}. Executáveis detetados: {tools}. Executável de pacotes confirmado: {pkg_verified}; gestor de serviços em execução confirmado: {svc_verified}. Ter um programa instalado não prova que controle a máquina.",
+})
+
 # Localized verb shown to the user per action.
 OFFLINE_SERVICE_ACTIONS = {
     "en": {"enable": "enable", "start": "start", "restart": "restart",
@@ -919,3 +968,79 @@ def offline_service_action(lang, action):
     """Localized verb for a service action, English fallback."""
     catalog = OFFLINE_SERVICE_ACTIONS.get(lang) or OFFLINE_SERVICE_ACTIONS["en"]
     return catalog[action]
+
+
+TRANSLATIONS["pt"].update({
+    "Conversations": "Conversas",
+    "New conversation": "Nova conversa",
+    "Previous conversations": "Histórico anterior",
+    "Conversation name": "Nome da conversa",
+    "Search all conversations": "Pesquisar em todas as conversas",
+    "Archived": "Arquivada",
+    "Resume": "Retomar",
+    "Rename": "Renomear",
+    "Archive / restore": "Arquivar / restaurar",
+    "Delete": "Eliminar",
+    "Delete this conversation?": "Eliminar esta conversa?",
+    "Export conversation": "Exportar conversa",
+    "Export Markdown": "Exportar Markdown",
+    "Export JSON": "Exportar JSON",
+    "Import JSON": "Importar JSON",
+    "Import JSON conversation": "Importar conversa JSON",
+    "No matches": "Sem resultados",
+    "Assistance": "Assistência",
+    "Assistance mode": "Modo de assistência",
+    "Automatic (local guides if unavailable)": "Automático (guias locais se a IA estiver indisponível)",
+    "Local guides (no AI model)": "Guias locais (sem modelo de IA)",
+    "Local AI model": "Modelo de IA local",
+    "Remote AI provider": "Fornecedor de IA remoto",
+    "Local guides available": "Guias locais disponíveis",
+    "Provider is not configured": "Fornecedor não configurado",
+    "Configured; connection not tested": "Configurado; ligação não testada",
+    "Local model ready": "Modelo local disponível",
+    "Local server is unavailable": "Servidor local indisponível",
+    "Selected model is not installed": "O modelo selecionado não está instalado",
+    "Configuration is incompatible with this mode": "Configuração incompatível com este modo",
+    "Connection test failed": "O teste de ligação falhou",
+    "Local server URL": "Endereço do servidor local",
+    "Local model": "Modelo local",
+    "Strict local mode (loopback server and local models)": "Modo local estrito (servidor nesta máquina e modelos locais)",
+    "Models must already be installed. A localhost address alone does not guarantee local inference.": "Os modelos precisam de estar instalados. Um endereço localhost, por si só, não garante inferência local.",
+    "Test connection and list installed models": "Testar ligação e listar modelos instalados",
+    "Connection not tested": "Ligação não testada",
+    "Testing local connection…": "A testar a ligação local…",
+    "Showing the latest 100 messages. Export to view the full conversation.": "A mostrar as últimas 100 mensagens. Exporta para consultar a conversa completa.",
+    "Diagnostic report": "Relatório de diagnóstico",
+    "File changes": "Alterações a ficheiros",
+    "Path": "Caminho",
+    "Created": "Criada em",
+    "Conversation": "Conversa",
+    "Original SHA256": "SHA256 original",
+    "Written SHA256": "SHA256 escrito",
+    "Original backup": "Cópia original",
+    "Recovered": "Reposta em",
+    "Recovery backup": "Cópia de recuperação",
+    "Describe the symptom": "Descreve o sintoma",
+    "Paste a log excerpt (up to 64 KiB)": "Cola um excerto do registo (até 64 KiB)",
+    "Select local read checks to collect. No checks are selected by default.": "Seleciona as verificações locais de leitura a recolher. Nenhuma vem selecionada.",
+    "Prepare report": "Preparar relatório",
+    "Export report": "Exportar relatório",
+    "Reports stay on this machine. Review redacted data before sharing; unknown secrets may remain.": "Os relatórios ficam nesta máquina. Revê os dados antes de partilhar; podem restar segredos não reconhecidos.",
+    "Diagnostic input exceeds 64 KiB": "A entrada de diagnóstico excede 64 KiB",
+    "Preparing local report…": "A preparar o relatório local…",
+    "Review the preview before export. Automatic redaction is partial.": "Revê o resultado antes de exportar. A ocultação automática é parcial.",
+    "Report exported: {path}": "Relatório exportado: {path}",
+    "Show changes from all conversations": "Mostrar alterações de todas as conversas",
+    "Review recovery": "Rever recuperação",
+    "Only approved file writes are recorded. Command effects are not automatically reversible.": "Só são registadas escritas de ficheiros aprovadas. Os efeitos de comandos não são automaticamente reversíveis.",
+    "No file changes recorded.": "Sem alterações a ficheiros registadas.",
+    "Remove this newly created file and retain a recovery copy.": "Remover este ficheiro criado e conservar uma cópia de recuperação.",
+    "Backup exceeds the recovery preview limit (1 MiB). Review it manually.": "A cópia de segurança excede o limite de pré-visualização (1 MiB). Revê-a manualmente.",
+    "Confirm file recovery": "Confirmar recuperação do ficheiro",
+    "Restore file": "Repor ficheiro",
+    "File recovered. Recovery backup: {path}": "Ficheiro reposto. Cópia de recuperação: {path}",
+    "pending": "pendente",
+    "applied": "aplicada",
+    "restored": "reposta",
+    "failed": "falhou",
+})

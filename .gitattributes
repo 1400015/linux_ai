@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.sh text eol=lf
+xbps-src/*/template text eol=lf
+# Unified diffs use a single space as context for an empty source line.
+*.patch -whitespace

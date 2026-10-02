@@ -2,11 +2,11 @@ import os
 import sys
 import unittest
 
-SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "src")
-sys.path.insert(0, SRC_DIR)
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, ROOT)
 
-from render_core import FileBlock, render_text_markup
-from file_actions import is_privileged_path, preview_diff
+from src.render_core import FileBlock, render_text_markup
+from src.file_actions import is_privileged_path, preview_diff
 
 
 class TestFileBlock(unittest.TestCase):
@@ -62,26 +62,26 @@ class TestPreviewDiff(unittest.TestCase):
 
 class TestI18n(unittest.TestCase):
     def setUp(self):
-        sys.path.insert(0, SRC_DIR)
+        sys.path.insert(0, ROOT)
 
     def test_english_default(self):
-        import i18n
+        from src import i18n
         i18n.set_language("en")
         self.assertEqual(i18n._("Settings"), "Settings")
 
     def test_portuguese(self):
-        import i18n
+        from src import i18n
         i18n.set_language("pt")
         self.assertEqual(i18n._("Settings"), "Configurações")
         self.assertEqual(i18n._("Expert Mode"), "Modo Especialista")
 
     def test_fallback_to_english(self):
-        import i18n
+        from src import i18n
         i18n.set_language("pt")
         self.assertEqual(i18n._("No translation for this"), "No translation for this")
 
     def test_unknown_language_falls_back(self):
-        import i18n
+        from src import i18n
         i18n.set_language("xyz")
         self.assertEqual(i18n._("Settings"), "Settings")
 

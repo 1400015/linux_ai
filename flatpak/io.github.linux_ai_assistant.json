@@ -1,7 +1,7 @@
 {
     "app-id": "io.github.linux_ai_assistant",
     "runtime": "org.freedesktop.Platform",
-    "runtime-version": "23.08",
+    "runtime-version": "25.08",
     "sdk": "org.freedesktop.Sdk",
     "command": "linux-ai-assistant",
     "finish-args": [

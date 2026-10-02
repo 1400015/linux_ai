@@ -14,14 +14,60 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 - ✅ **Expert Mode** - Assistant specialized in Linux systems
 - ✅ **File editing** - Edit configuration files with authorization
 - ✅ **Command execution** - Run system commands with controlled permissions
-- ✅ **Conversation history** - Keeps conversation context
+- ✅ **Conversation sessions** - Independent context, resume, archive, search and Markdown/JSON export
 - ✅ **Code highlighting** - Fenced blocks and inline `code` are highlighted in the chat
 - ✅ **System tray icon** - Quick access through the taskbar icon
 - ✅ **Automatic startup** - Configurable to start with the system
 - ✅ **Docked mode** - Pin the window to a screen edge and reserve workspace (`_NET_WM_STRUT_PARTIAL` / gtk-layer-shell)
 - ✅ **Floating button** - Permanent floating button to show/hide the main window
 - ✅ **Multilingual** - UI translated via `src/i18n.py`; English is used when a language is not available
-- ✅ **Offline mode** - Answers basic questions and suggests local tasks with no API, no internet and no extra configuration
+- ✅ **Offline guides** - Twenty searchable Portuguese/English procedures and guided local diagnostics without an AI service
+- ✅ **Assistance modes** - Choose bundled guides, a local model, a remote provider, or automatic fallback
+
+## Local guides, models and conversations
+
+In Settings → Assistance, select the mode:
+
+- **Local guides:** no model requests; bundled information and allowed local read probes are available without Internet access.
+- **Local AI model:** use the configured loopback server and an already installed model. Connection testing lists installed models and distinguishes an unavailable server from a missing model. Ollama and OpenAI-compatible servers are supported.
+- **Remote AI provider:** use the remote provider selected in the API tab.
+- **Automatic:** preserve the selected provider and use local guides when it is unavailable.
+
+Provider failure falls back to bundled guides, never to another AI provider. Explicit local mode rejects non-loopback URLs, redirects, environment proxies and known cloud models; Ollama's advertised remote aliases are checked before inference. An arbitrary local server remains trusted software: the client cannot audit whether a custom OpenAI-compatible server forwards requests elsewhere. Model downloads are not part of connection testing. Installing or updating Linux packages can still require Internet access.
+
+The bundled procedures cover network links, IP addresses, routes, DNS, Wi-Fi, disk space/inodes, memory, permissions, mounts, services and APT/XBPS errors. Search only retrieves documentation. Starting a guide may run a separately allowlisted local read probe; source examples never authorize execution. Service/log access remains manual where the existing policy does not allow it. Sources have review dates and applicability metadata; documentation review is not a claim of on-device validation for every distribution version. Portuguese and English guide content is included; other guide languages currently fall back to English.
+
+Try these messages:
+
+```text
+pesquisar conhecimento DNS
+guia network-interface
+e depois?
+cancelar
+```
+
+The conversation selector and New conversation button isolate context. The History menu opens conversation management, including rename, archive/restore, search, export and JSON import. Existing flat history is retained in one legacy conversation. Diagnostic progress is scoped to a session, including CLI restarts; imported conversations never restore an active diagnostic. Exports do not replace existing files, and imports accept only a bounded, versioned user/assistant message format.
+
+CLI examples:
+
+```bash
+python -m src.cli mode offline
+python -m src.cli knowledge 'DNS'
+python -m src.cli sessions new 'Network diagnosis'
+python -m src.cli chat 'guia network-interface'
+python -m src.cli chat 'e depois?'
+python -m src.cli sessions list
+python -m src.cli chat --session SESSION_ID 'continue this conversation'
+python -m src.cli sessions export --format markdown --output conversation.md
+python -m src.cli sessions export --format json --output conversation.json
+python -m src.cli sessions import conversation.json
+dmesg | python -m src.cli chat --stdin 'Explain this error'
+python -m src.cli chat --input error.log 'Explain this error'
+python -m src.cli mode local --check
+python -m src.cli local-models
+```
+
+Text-file/stdin input is limited to 64 KiB. `--no-history` avoids saving the new exchange; `history --clear` clears only the selected conversation. Relevant bundled guides and detected distribution facts also inform model responses, with the response language following the application language.
 
 ## Requirements
 
@@ -451,20 +497,35 @@ Only commands in `allowed_commands` are executed, and file arguments are
 checked against `allowed_edit_dirs`. Prefer read-only commands: anything
 listed here can be run by the assistant without an extra confirmation.
 
-Two extra layers of protection apply on top of the allowlist (v1.1.0):
+Additional protections apply on top of the allowlist (v1.1.1):
 
 - **Blocked flags**: some flags execute code or read files even with a
-  "safe" command name (e.g. `man -P <program>` runs `<program>` as the
-  pager). Commands with such flags are refused; the map lives in
-  `_BLOCKED_FLAGS` (`src/system_utils.py`).
-- **Absolute-path sandbox for every command**: any argument that looks like
-  an absolute or `~` path is validated against `allowed_edit_dirs` for ALL
-  allowlisted commands (not only obvious file readers), so
-  `grep . /var/log/auth.log` cannot bypass the sandbox.
+  diagnostic command name. `man`, `neofetch` and interactive pagers are
+  refused even if manually added to the allowlist. Indirect input flags,
+  attached values and abbreviations of blocked flags are also refused.
+  The policy lives in `src/command_policy.py`.
+- **Filename operands**: file-reading commands validate absolute, relative
+  and bare filenames against `allowed_edit_dirs`, including filenames after
+  `--`. Regex and formatting arguments remain usable. Unknown long options
+  of file readers are refused, so abbreviations cannot change operand parsing.
+- **Bounded diagnostics**: command output is capped at 1 MB while reading the
+  pipes, and the deadline includes children holding those pipes open.
 
 `allowed_edit_dirs` now defaults to an **empty list** (minimum privilege):
 new installations have no editable system directories until you add them
 here or in Settings. Existing configurations keep their list.
+
+Expert file blocks still require a preview and confirmation. Privileged writes
+use one `pkexec` invocation, exclusive temporary files and backups, and reject
+changes to the destination since preview. Existing ownership and mode are
+preserved; a new privileged configuration is created with mode `0600`.
+
+GUI and CLI history and token statistics use shared locks and atomic JSON
+transactions. Shutdown drains queued history writes. Failed, cancelled or empty
+streams do not leave a partial GUI answer saved as a completed response; provider
+failures use the offline assistant. Cohere uses its v1 NDJSON chat contract.
+Local OpenAI-compatible servers receive no `stream_options` by default; set
+`api.providers.local_llm.stream_include_usage` to `true` if the server supports it.
 
 ## Troubleshooting
 
@@ -569,5 +630,6 @@ python -m unittest tests.test_regressions.TestCopyEffectiveKeyToConfig -v
 ```
 
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
+For local diagnostic reports, offline log interpretation and recovery of approved file writes, see [the second-phase guide](docs/segunda-fase-2026-10-02.md).
 The GUI must run inside a graphical user session; use
 `./scripts/autostart.sh enable` for session startup rather than a root runit service.
