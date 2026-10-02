@@ -27,6 +27,8 @@ from .history_store import HistoryStore
 from .assistant_context import build_system_message
 from .conversation_io import read_conversation, write_conversation
 from .local_knowledge import PROCEDURE_BY_ID, search_procedures, render_procedure
+from .diagnostics import PROBES, build_report, export_report
+from .change_journal import ChangeJournal
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,24 @@ Exemplos:
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
 
+        diagnose = subparsers.add_parser('diagnose', help='Prepare a local, redacted diagnostic report without AI')
+        diagnose.add_argument('symptom', nargs='*')
+        diagnostic_input = diagnose.add_mutually_exclusive_group()
+        diagnostic_input.add_argument('--input', type=Path, help='UTF-8 log excerpt, up to 64 KiB')
+        diagnostic_input.add_argument('--stdin', action='store_true')
+        diagnose.add_argument('--collect', action='append', choices=tuple(PROBES), default=[],
+                              help='Explicitly collect one fixed local read probe (repeatable)')
+        diagnose.add_argument('--format', choices=('markdown', 'json'), default='markdown')
+        diagnose.add_argument('--output', type=Path, help='New private export file; existing files are never replaced')
+        changes = subparsers.add_parser('changes', help='Review approved file writes and recover their contents')
+        change_actions = changes.add_subparsers(dest='change_action', required=True)
+        change_actions.add_parser('list')
+        for action in ('show', 'restore'):
+            change_parser = change_actions.add_parser(action)
+            change_parser.add_argument('id')
+            if action == 'restore':
+                change_parser.add_argument('--yes', action='store_true', help='Approve recovery after reviewing changes show <id>')
+
         # Command: system
         system_parser = subparsers.add_parser('system', help='System information')
         system_subparsers = system_parser.add_subparsers(dest='system_command')
@@ -220,6 +240,10 @@ Exemplos:
 
         if args.command == 'sessions':
             return self.handle_sessions(args)
+        if args.command == 'diagnose':
+            return self.handle_diagnose(args)
+        if args.command == 'changes':
+            return self.handle_changes(args)
         if args.command == 'mode':
             if args.value:
                 self.config.set_assistance_mode(args.value)
@@ -276,6 +300,8 @@ Available commands:
   history [options]         - View conversation history
   sessions [subcommand]     - Manage, search and export conversations
   knowledge [query]         - Search bundled local guides
+  diagnose [symptom]        - Prepare a local diagnostic report
+  changes [subcommand]     - Review or recover approved file writes
   mode [value]              - Show/select assistance mode
   local-models              - List installed models on the local server
   stats [options]           - Usage statistics
@@ -334,6 +360,47 @@ Examples:
         if not message:
             raise ValueError('Provide a message, --stdin or --input')
         return message
+
+    def handle_diagnose(self, args):
+        pasted = ''
+        if args.input:
+            if not args.input.is_file():
+                raise ValueError('Input must be a regular file')
+            with args.input.open('rb') as stream:
+                data = stream.read(65537)
+            if len(data) > 65536:
+                raise ValueError('Diagnostic input exceeds 64 KiB')
+            pasted = data.decode('utf-8')
+        elif args.stdin:
+            pasted = sys.stdin.read(65537)
+        report = build_report(' '.join(args.symptom), pasted, self.offline.distro, get_language(),
+                              args.collect, self.system_utils, session_id=self._store().active_session_id)
+        content = export_report(report, args.format)
+        if args.output:
+            write_conversation(args.output, content)
+            print(str(args.output))
+        else:
+            print(content)
+        return 0
+
+    def handle_changes(self, args):
+        journal = ChangeJournal()
+        def allowed():
+            return self.config.get('permissions.allowed_edit_dirs', [])
+        if args.change_action == 'list':
+            print(json.dumps(journal.list_changes(), ensure_ascii=False, indent=2))
+            return 0
+        if args.change_action == 'show':
+            record = next((item for item in journal.list_changes() if item['id'] == args.id), None)
+            if record is None:
+                raise KeyError('Unknown change')
+            print(json.dumps(record, ensure_ascii=False, indent=2))
+            return 0
+        if not args.yes:
+            print('Review changes show <id> first; --yes is required to approve recovery.', file=sys.stderr)
+            return 1
+        print(json.dumps(journal.restore(args.id, allowed), ensure_ascii=False, indent=2))
+        return 0
 
     def handle_sessions(self, args):
         store = self._store()

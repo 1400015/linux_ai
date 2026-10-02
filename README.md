@@ -630,5 +630,6 @@ python -m unittest tests.test_regressions.TestCopyEffectiveKeyToConfig -v
 ```
 
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
+For local diagnostic reports, offline log interpretation and recovery of approved file writes, see [the second-phase guide](docs/segunda-fase-2026-10-02.md).
 The GUI must run inside a graphical user session; use
 `./scripts/autostart.sh enable` for session startup rather than a root runit service.

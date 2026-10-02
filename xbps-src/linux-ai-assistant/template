@@ -1,6 +1,6 @@
 # Template file for 'linux-ai-assistant'
 pkgname=linux-ai-assistant
-version=1.2.0
+version=1.3.0
 revision=1
 _commit=fbaa4ad25c016ab20ab0f4294ba6913d71c3c228
 wrksrc="linux_ai-${_commit}"

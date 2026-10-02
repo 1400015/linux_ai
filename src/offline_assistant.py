@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .knowledge_base import knowledge_content, knowledge_for, package_manager_for
 from .local_knowledge import (PROCEDURE_BY_ID, PROCEDURES, localized, normalize,
                               render_procedure, search_procedures)
+from .diagnostics import analyze, render_findings
 
 
 # --------------------------------------------------------------------------
@@ -525,6 +526,11 @@ class OfflineAssistant:
             return self._continue_diagnostic(lang)
         if self._diagnostic and self._looks_like_observation(text):
             return self._continue_diagnostic(lang, text)
+
+        findings = analyze(text, self.distro, lang)
+        if findings:
+            return Reply(render_findings(findings, lang) + ("\n\nUsa «guia <id>» para continuar ou o menu Relatório de diagnóstico para exportar." if lang == "pt" else
+                         "\n\nUse 'guide <id>' to continue or the Diagnostic report menu to export."))
         if re.match(r"^(?:guia(?: local)?|local guide|guide|pesquisar conhecimento|procurar conhecimento|search knowledge)\b", normalized):
             return self._local_guides(text, lang)
 
@@ -645,6 +651,9 @@ class OfflineAssistant:
 
     @staticmethod
     def _interpret_probe(key: str, output: str, lang: str) -> str:
+        findings = analyze(output, lang=lang, probe_key=key)
+        if findings:
+            return render_findings(findings, lang)
         if not output:
             return ""
         if key == "links" and re.search(r"\bDOWN\b", output):

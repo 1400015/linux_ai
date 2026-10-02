@@ -79,8 +79,8 @@ class TestOfflineActions(unittest.TestCase):
 
 class TestLocalKnowledge(unittest.TestCase):
     def test_twenty_localized_procedures_with_review_metadata(self):
-        self.assertEqual(len(PROCEDURES), 20)
-        self.assertEqual(len(PROCEDURE_BY_ID), 20)
+        self.assertGreaterEqual(len(PROCEDURES), 25)
+        self.assertEqual(len(PROCEDURE_BY_ID), len(PROCEDURES))
         for item in PROCEDURES:
             with self.subTest(procedure=item.id):
                 self.assertEqual(item.verification, "documentation_review")
@@ -211,7 +211,8 @@ class TestGuidedDiagnostics(unittest.TestCase):
         second = bot.handle("e depois?", "pt")
         self.assertIn("169.254", second.text)
         third = bot.handle("e depois?", "pt")
-        self.assertIn("Não encontrei uma rota default", third.text)
+        self.assertIn("rota default", third.text)
+        self.assertIn("outra família IP", third.text)
         self.assertEqual(utils.calls, [("ip link show", 8), ("ip addr show", 8), ("ip route", 8)])
         self.assertFalse(first.commands or second.commands or third.commands)
 
@@ -232,7 +233,8 @@ class TestGuidedDiagnostics(unittest.TestCase):
         bot = assistant()
         bot.handle("guia disk-space", "pt")
         reply = bot.handle("/dev/sda1 100G 95G 5G 95% /", "pt")
-        self.assertIn("igual ou superior a 90%", reply.text)
+        self.assertIn("90%", reply.text)
+        self.assertIn("disk-space", reply.text)
         self.assertIn("passo 2/2", reply.text)
 
     def test_reset_drops_state_and_unknown_followup_does_not_run_probes(self):

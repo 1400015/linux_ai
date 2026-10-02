@@ -210,6 +210,39 @@ PROCEDURES = (
         ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html", "https://docs.voidlinux.org/xbps/repositories/index.html"), families=("void",), component="xbps"),
 )
 
+PROCEDURES += (
+    Procedure("service-port", ("Porta ocupada ou ligação recusada", "Busy port or refused connection"),
+        ("Distingue conflitos de escuta de uma ligação ao destino errado.", "Distinguish listener conflicts from a connection to the wrong destination."),
+        ("address already in use", "eaddrinuse", "connection refused", "porta", "port", "recusada"), (
+            _step("Confirma endereço, porta e protocolo usados.", "Confirm the address, port and protocol used.", "TCP e UDP são distintos. Uma escuta em loopback não aceita necessariamente ligações da rede.", "TCP and UDP are distinct. A loopback listener does not necessarily accept network connections."),
+            _step("Consulta os sockets em escuta.", "Inspect listening sockets.", "Identifica o processo antes de alterar a porta ou terminar serviços. A falta de PID pode dever-se às permissões.", "Identify the process before changing the port or stopping services. A missing PID may be due to permissions.", "ss -lntu"),
+        ), ("https://man7.org/linux/man-pages/man2/bind.2.html", "https://man7.org/linux/man-pages/man8/ss.8.html")),
+    Procedure("tls-clock", ("Certificado TLS e relógio", "TLS certificate and clock"),
+        ("Investiga relógio, destino e confiança sem desativar TLS.", "Investigate clock, destination and trust without disabling TLS."),
+        ("tls", "certificate", "certificado", "expired", "verify failed", "clock", "relogio"), (
+            _step("Confirma a data e a hora locais.", "Confirm local date and time.", "Um relógio incorreto pode tornar um certificado ainda não válido ou expirado. Confirma uma fonte de confiança antes de alterar a hora.", "An incorrect clock can make a certificate not yet valid or expired. Confirm a trusted source before changing the time.", "date -Is"),
+            _step("Confirma destino, cadeia de certificados e CA instalada.", "Confirm destination, certificate chain and installed CA.", "Um proxy pode apresentar outra cadeia. Não ignores certificados como solução permanente.", "A proxy may present another chain. Do not ignore certificates as a permanent solution."),
+        ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html", "https://docs.openssl.org/master/man1/openssl-verification-options/")),
+    Procedure("service-executable", ("Falha de execução systemd (203/EXEC)", "systemd execution failure (203/EXEC)"),
+        ("Verifica o programa configurado na unidade antes de reiniciar.", "Check the program configured in the unit before restarting."),
+        ("203/exec", "execstart", "failed at step exec", "executavel", "executable"), (
+            _step("Consulta a unidade e o ExecStart efetivos.", "Inspect the effective unit and ExecStart.", "Confirma caminho, argumentos e alterações por drop-ins; não deduzas o executável a partir do nome do serviço.", "Confirm path, arguments and drop-in overrides; do not infer the executable from the service name.", "systemctl cat <unidade>"),
+            _step("Verifica executável, interpretador e acesso do utilizador do serviço.", "Check executable, interpreter and access by the service user.", "203/EXEC indica falha de execução. Caminho ausente, permissão e interpretador inválido são hipóteses a confirmar.", "203/EXEC indicates execution failure. A missing path, permission and invalid interpreter are hypotheses to confirm."),
+        ), ("https://manpages.debian.org/bookworm/systemd/systemd.exec.5.en.html",), component="systemd"),
+    Procedure("apt-interrupted", ("Configuração dpkg interrompida", "Interrupted dpkg configuration"),
+        ("Identifica pacotes incompletos e a primeira falha de configuração.", "Identify incomplete packages and the first configuration failure."),
+        ("dpkg was interrupted", "dpkg", "half-configured", "half-installed", "interrompido"), (
+            _step("Inspeciona o estado da base de pacotes.", "Inspect package database state.", "dpkg --audit identifica pacotes parcialmente instalados. Confirma que não existe outra transação ativa.", "dpkg --audit identifies partially installed packages. Confirm that no other transaction is active.", "dpkg --audit"),
+            _step("Lê a primeira falha e verifica espaço e dependências.", "Read the first failure and check space and dependencies.", "dpkg --configure -a altera o sistema e executa scripts; só o uses numa recuperação aprovada. Não elimines a base de dados ou locks.", "dpkg --configure -a modifies the system and runs scripts; use it only in an approved recovery. Do not delete the database or locks."),
+        ), ("https://manpages.debian.org/bookworm/dpkg/dpkg.1.en.html",), families=("debian", "ubuntu", "mint"), component="apt"),
+    Procedure("xbps-shlibs", ("Bibliotecas XBPS não resolvidas", "Unresolved XBPS shared libraries"),
+        ("Distingue pacotes antigos de repositórios em transição.", "Distinguish outdated packages from transitioning repositories."),
+        ("unresolvable shlib", "unresolved shlibs", "xbps", "bibliotecas", "shared libraries"), (
+            _step("Guarda a mensagem exata e os pacotes envolvidos.", "Save the exact message and involved packages.", "unresolvable shlib pode resultar de pacotes antigos ou repositórios removidos. Confirma a configuração e a versão instalada.", "unresolvable shlib can result from outdated packages or removed repositories. Confirm configuration and installed version."),
+            _step("Distingue Transaction aborted due to unresolved shlibs.", "Distinguish Transaction aborted due to unresolved shlibs.", "Pode indicar repositórios em staged state durante grandes builds. Espera e confirma o estado oficial antes de forçar atualizações ou remover pacotes.", "It can indicate repositories in staged state during large builds. Wait and confirm official state before forcing updates or removing packages."),
+        ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html",), families=("void",), component="xbps"),
+)
+
 PROCEDURE_BY_ID = {item.id: item for item in PROCEDURES}
 _STOPWORDS = {"a", "o", "as", "os", "de", "do", "da", "e", "em", "no", "na", "the", "a", "an", "and", "is", "for", "to", "how", "como", "sobre", "about", "guide", "guia", "local", "offline", "knowledge", "conhecimento", "base", "search", "pesquisar", "procurar", "documentacao", "documentation"}
 

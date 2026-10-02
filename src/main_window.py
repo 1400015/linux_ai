@@ -25,6 +25,9 @@ from .history_store import HistoryStore, MAX_HISTORY_MESSAGES
 from .i18n import _, get_language
 from .assistant_context import build_system_message
 from .conversation_dialog import show_conversations
+from .change_journal import ChangeJournal
+from .change_dialog import show_file_changes
+from .diagnostic_dialog import show_diagnostic_report
 from .provider_settings import ProviderSettings, MODE_LABELS, STATUS_LABELS
 
 # Set up logger
@@ -89,6 +92,7 @@ class MainWindow(Gtk.Window):
         # Answers basic questions and offers local tasks when no API key is
         # configured or the provider cannot be reached.
         self.offline = offline_assistant.OfflineAssistant(system_utils, config_manager)
+        self.change_journal = ChangeJournal()
 
         # Configurar janela
         self.set_default_size(
@@ -595,6 +599,13 @@ class MainWindow(Gtk.Window):
         stats_item = Gtk.MenuItem(label=_("Statistics"))
         stats_item.connect("activate", self.on_stats_clicked)
         menu.append(stats_item)
+
+        report_item = Gtk.MenuItem(label=_("Diagnostic report"))
+        report_item.connect('activate', lambda item: show_diagnostic_report(self))
+        menu.append(report_item)
+        changes_item = Gtk.MenuItem(label=_("File changes"))
+        changes_item.connect('activate', lambda item: show_file_changes(self))
+        menu.append(changes_item)
 
         # Separador
         menu.append(Gtk.SeparatorMenuItem())
@@ -1744,7 +1755,8 @@ class MainWindow(Gtk.Window):
                 file_actions.offer_file_blocks(
                     self, response_text,
                     lambda msg: GLib.idle_add(self._add_system_message, msg),
-                    self.config.get("permissions.allowed_edit_dirs", []),
+                    lambda: self.config.get("permissions.allowed_edit_dirs", []),
+                    self.change_journal, self.history_store.active_session_id,
                 )
 
         self._on_message_processed(request_id, cancelled)
