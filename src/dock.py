@@ -70,9 +70,9 @@ def apply_dock(window, edge, width):
     """
     if is_wayland(window) and HAS_LAYER_SHELL:
         try:
-            # init_window() is safe to call more than once (it is a no-op
+            # init_for_window() is safe to call more than once (it is a no-op
             # after the first call), so re-docking does not stack anchors.
-            GtkLayerShell.init_window(window)
+            GtkLayerShell.init_for_window(window)
             GtkLayerShell.set_layer(window, GtkLayerShell.Layer.TOP)
             edges = {"left": GtkLayerShell.Edge.LEFT,
                      "right": GtkLayerShell.Edge.RIGHT,

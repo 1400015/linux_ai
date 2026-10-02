@@ -100,7 +100,7 @@ class LinuxAIAssistant:
 
             # Show window if auto_start is active
             if self.config.get("app.auto_start", False):
-                self.main_window.show()
+                self.main_window.show_all()
                 # O menu da tray nasce com "Show Window"; sincronizar quando
                 # a janela arranca visível.
                 self.main_window.sync_visibility()
@@ -192,6 +192,26 @@ class LinuxAIAssistant:
         button_window.add(button)
 
         edge = self.config.get("app.button_edge", "right")
+
+        # Wayland ignores move(), so tiling compositors (dwl-based, etc.)
+        # tile this 52x52 window like a normal one. Use a layer-shell
+        # surface anchored to the configured edge instead, when available.
+        from . import dock
+        if dock.is_wayland(button_window) and dock.HAS_LAYER_SHELL:
+            LayerShell = dock.GtkLayerShell
+            LayerShell.init_for_window(button_window)
+            LayerShell.set_layer(button_window, LayerShell.Layer.TOP)
+            LayerShell.set_namespace(button_window, "linux-ai-float-button")
+            edges = {"left": LayerShell.Edge.LEFT,
+                     "right": LayerShell.Edge.RIGHT,
+                     "top": LayerShell.Edge.TOP,
+                     "bottom": LayerShell.Edge.BOTTOM}
+            anchor = edges.get(edge, LayerShell.Edge.RIGHT)
+            LayerShell.set_anchor(button_window, anchor, True)
+            LayerShell.set_margin(button_window, anchor, 12)
+            button_window.show_all()
+            self.float_button_window = button_window
+            return
         display = Gdk.Display.get_default()
         monitor = display.get_monitor(0) if display is not None else None
         if monitor is not None:

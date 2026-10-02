@@ -1257,7 +1257,7 @@ class MainWindow(Gtk.Window):
         if self.get_visible():
             self.hide()
         else:
-            self.show()
+            self.show_all()
             self.present()
         self.sync_visibility()
         logger.debug("Window visibility toggled: visible=%s", self.get_visible())
