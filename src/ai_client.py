@@ -1,6 +1,5 @@
 import json
 import copy
-import os
 import time
 import atexit
 import logging
@@ -9,6 +8,12 @@ import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from .storage import update_json
+from .stream_events import iter_sse_json
+from .provider_modes import (
+    ASSISTANCE_MODES, LocalModelError, ProviderStatus, discover_local_models,
+    make_local_request, model_is_installed, validate_local_url, validate_model_name,
+)
 from requests.exceptions import RequestException, Timeout
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
@@ -125,6 +130,8 @@ class AIClient:
         self._usage_lock = threading.Lock()
         self._usage_timer = None
         self._usage_dirty = False
+        self._usage_pending = {}
+        self._usage_reset = False
         self._usage_path = Path.home() / ".config" / "linux_ai_assistant" / "usage.json"
         self._load_token_usage()
         # Never lose a debounced write at exit
@@ -216,20 +223,52 @@ class AIClient:
         """Get list of supported providers"""
         return self.SUPPORTED_PROVIDERS.copy()
 
-    def provider_ready(self, provider: str = None) -> bool:
-        """True if `provider` can be used without further configuration.
+    def get_assistance_mode(self) -> str:
+        mode = self.config.get("assistance.mode", "auto")
+        return mode if mode in ASSISTANCE_MODES else "offline"
 
-        `local_llm` needs no key; a plugin provider registered via
-        `register_provider()` handles its own auth; every other provider
-        requires an API key AND a base_url. The UI uses this to fall back to
-        the offline assistant before even trying a request.
-        """
-        provider = provider or self.config.get("api.default_provider", "openrouter")
+    def active_provider(self, provider: str = None) -> Optional[str]:
+        """Resolve selection without making any network requests."""
+        mode = self.get_assistance_mode()
+        if mode == "offline":
+            return None
+        if mode == "local":
+            if provider and provider != "local_llm":
+                raise ProviderNotConfigured("Remote providers are unavailable in local mode")
+            return "local_llm"
+        selected = provider or self.config.get("api.default_provider", "openrouter")
+        if mode == "remote" and selected == "local_llm":
+            raise ProviderNotConfigured("Choose a remote provider for remote mode")
+        return selected
+
+    def _local_settings(self) -> Dict[str, Any]:
+        api_config = self._get_api_config("local_llm")
+        # Individual accessors respect environment overrides for URL/model.
+        prefix = "api.providers.local_llm."
+        return {
+            key: self.config.get(prefix + key, api_config.get(key, default))
+            for key, default in (("base_url", ""), ("model", ""),
+                                 ("backend", "ollama"), ("strict_local", True))
+        }
+
+    def _strict_local(self, settings: Dict[str, Any], mode: str = None) -> bool:
+        # Explicit local mode always stays on the machine, even if a legacy
+        # LAN-server setting allowed remote addresses in automatic mode.
+        if mode is not None and mode not in ASSISTANCE_MODES:
+            raise LocalModelError("Assistance mode must be auto, offline, local or remote")
+        return (mode or self.get_assistance_mode()) == "local" or settings.get("strict_local") is not False
+
+    def _provider_configured(self, provider: str) -> bool:
         api_config = self._get_api_config(provider)
         if provider == "local_llm":
-            # Com deep-merge, o base_url por defeito existe; falso positivo
-            # antigo era uma config vazia a reportar "pronto".
-            return bool(api_config.get("base_url"))
+            settings = self._local_settings()
+            try:
+                strict = self._strict_local(settings)
+                validate_local_url(settings["base_url"], strict)
+                validate_model_name(settings["model"], strict)
+                return settings["backend"] in {"ollama", "openai"}
+            except LocalModelError:
+                return False
         if not api_config:
             # Plugin provider: sem entrada na config, mas registado em runtime
             return getattr(self, f"_chat_{provider}", None) is not None
@@ -238,6 +277,125 @@ class AIClient:
             # sempre, com a UI a pensar que o provider estava pronto.
             return False
         return bool(self._get_api_key(provider))
+
+    def provider_ready(self, provider: str = None) -> bool:
+        """Legacy configuration check; use provider_status for reachability.
+
+        This method deliberately performs no I/O: a configured URL is not
+        evidence that a server is running or the selected model is installed.
+        """
+        try:
+            selected = self.active_provider(provider)
+            return bool(selected and self._provider_configured(selected))
+        except ProviderNotConfigured:
+            return False
+
+    def _probe_local_settings(self, settings: Optional[Dict[str, Any]] = None):
+        effective = self._local_settings()
+        if settings is not None:
+            if not isinstance(settings, dict):
+                raise LocalModelError("Invalid local model settings")
+            effective.update({key: value for key, value in settings.items() if key in effective})
+        return effective
+
+    def _discover_local(self, timeout: float = 3.0, settings: Optional[Dict[str, Any]] = None,
+                        mode: str = None):
+        settings = self._probe_local_settings(settings)
+        return discover_local_models(settings["base_url"], settings["backend"],
+                                     self._strict_local(settings, mode), timeout)
+
+    def list_local_models(self, timeout: float = 3.0, settings: Optional[Dict[str, Any]] = None,
+                          mode: str = None) -> List[str]:
+        """List already installed models; never pull, generate or contact cloud."""
+        try:
+            names, _ = self._discover_local(timeout, settings, mode)
+            return names
+        except (LocalModelError, RequestException) as error:
+            raise AIProviderError(redact_url(str(error))) from error
+
+    def test_local_connection(self, timeout: float = 3.0,
+                              settings: Optional[Dict[str, Any]] = None,
+                              mode: str = None) -> ProviderStatus:
+        """Check server and installed model without sending a user prompt."""
+        mode = self.get_assistance_mode() if mode is None else mode
+        try:
+            settings = self._probe_local_settings(settings)
+            model = settings["model"]
+            strict = self._strict_local(settings, mode)
+            validate_local_url(settings["base_url"], strict)
+            validate_model_name(model, strict)
+        except LocalModelError as error:
+            return ProviderStatus(mode, "local_llm", "blocked", detail=str(error))
+        try:
+            names, rejected = self._discover_local(timeout, settings, mode)
+        except RequestException as error:
+            responded = getattr(error, "response", None) is not None
+            return ProviderStatus(mode, "local_llm", "error" if responded else "unreachable",
+                                  configured=True, reachable=responded, model=model,
+                                  detail=redact_url(str(error)))
+        except LocalModelError as error:
+            return ProviderStatus(mode, "local_llm", "error", configured=True,
+                                  model=model, detail=str(error))
+        if model_is_installed(model, rejected, settings["backend"]):
+            return ProviderStatus(mode, "local_llm", "blocked", configured=True, reachable=True,
+                                  model=model, models=tuple(names), detail="Selected model uses an upstream cloud server")
+        installed = model_is_installed(model, names, settings["backend"])
+        return ProviderStatus(mode, "local_llm", "ready" if installed else "model_missing",
+                              configured=True, reachable=True, model=model, models=tuple(names),
+                              detail="" if installed else "Selected model is not installed on this server")
+
+    def provider_status(self, check_connection: bool = False, timeout: float = 3.0,
+                        provider: str = None) -> ProviderStatus:
+        """Report mode, configuration and (only on request) local readiness.
+
+        Cloud connection tests would transmit requests to a third party, so
+        remote providers report configuration only, never an invented ready
+        status. Normal startup remains free of connection probes.
+        """
+        mode = self.get_assistance_mode()
+        try:
+            selected = self.active_provider(provider)
+        except ProviderNotConfigured as error:
+            return ProviderStatus(mode, provider, "blocked", detail=str(error))
+        if selected is None:
+            return ProviderStatus(mode, None, "offline", detail="Built-in knowledge and guided diagnostics")
+        if selected == "local_llm":
+            if check_connection:
+                return self.test_local_connection(timeout)
+            settings = self._local_settings()
+            try:
+                strict = self._strict_local(settings)
+                validate_local_url(settings["base_url"], strict)
+                validate_model_name(settings["model"], strict)
+            except LocalModelError as error:
+                return ProviderStatus(mode, selected, "blocked", model=str(settings["model"]), detail=str(error))
+            configured = self._provider_configured(selected)
+            return ProviderStatus(mode, selected, "configured" if configured else "unconfigured",
+                                  configured=configured, model=settings["model"],
+                                  detail="Connection has not been checked")
+        configured = self._provider_configured(selected)
+        return ProviderStatus(mode, selected, "configured" if configured else "unconfigured",
+                              configured=configured, model=self._get_api_config(selected).get("model", ""),
+                              detail="Connection has not been checked")
+
+    def _validate_local_inference(self, base_url: str, model: str):
+        """Enforce local policy before any prompt can leave the client."""
+        settings = self._local_settings()
+        strict = self._strict_local(settings)
+        try:
+            base_url = validate_local_url(base_url, strict)
+            model = validate_model_name(model, strict)
+            if self.get_assistance_mode() == "local" and strict:
+                # Recheck metadata for every explicit local request: model
+                # aliases can change, and cloud aliases need not say :cloud.
+                names, rejected = self._discover_local(timeout=3.0)
+                if model_is_installed(model, rejected, settings["backend"]):
+                    raise LocalModelError("Selected model uses an upstream cloud server")
+                if not model_is_installed(model, names, settings["backend"]):
+                    raise LocalModelError("Selected model is not installed on this server")
+            return base_url, model
+        except (LocalModelError, RequestException) as error:
+            raise ProviderNotConfigured(redact_url(str(error))) from error
 
     def _count_tokens(self, text: str) -> int:
         """Estimate number of tokens (simplified)"""
@@ -254,6 +412,10 @@ class AIClient:
             self.token_usage[provider]["input"] += int(input_tokens)
             self.token_usage[provider]["output"] += int(output_tokens)
             self.token_usage[provider]["total"] += int(input_tokens) + int(output_tokens)
+            pending = self._usage_pending.setdefault(provider, {"input": 0, "output": 0, "total": 0})
+            pending["input"] += int(input_tokens)
+            pending["output"] += int(output_tokens)
+            pending["total"] += int(input_tokens) + int(output_tokens)
             self._schedule_usage_save()
         logger.debug(f"Token usage - {provider}: input={input_tokens}, output={output_tokens}")
 
@@ -332,32 +494,32 @@ class AIClient:
             logger.warning(f"Could not load token usage: {redact_url(str(e))}")
 
     def _save_token_usage(self):
-        """Persist usage stats so the CLI can show them (atomic, 0600).
-
-        Caller must hold `_usage_lock`.
-        """
-        path = self._usage_path
-        temp_path = None
+        """Merge only this client's new usage under an inter-process lock."""
+        pending = copy.deepcopy(self._usage_pending)
+        reset = self._usage_reset
+        def merge(previous):
+            totals = {} if reset or not isinstance(previous, dict) else previous
+            for provider, delta in pending.items():
+                entry = totals.get(provider)
+                if not isinstance(entry, dict):
+                    entry = {}
+                clean = {}
+                for key in ("input", "output", "total"):
+                    try:
+                        value = int(entry.get(key, 0))
+                    except (TypeError, ValueError, OverflowError):
+                        value = 0
+                    clean[key] = value + delta[key]
+                totals[provider] = clean
+            return totals
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # Snapshot so the dump cannot race with concurrent updates
-            snapshot = copy.deepcopy(self.token_usage)
-            temp_path = path.with_name(path.name + ".tmp")
-            fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(snapshot, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, path)
-            # Only forgotten once the write actually succeeded.
+            self.token_usage = update_json(self._usage_path, merge, {})
+            self._usage_pending.clear()
+            self._usage_reset = False
             self._usage_dirty = False
-        except Exception as e:
-            logger.warning(f"Could not save token usage: {redact_url(str(e))}")
-            if temp_path is not None:
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
+        except Exception as error:
+            self._usage_dirty = True
+            logger.warning("Could not save token usage: %s", redact_url(str(error)))
 
     def get_token_usage(self, provider: str = None) -> Dict[str, Any]:
         """Get token usage"""
@@ -373,6 +535,8 @@ class AIClient:
                 self._usage_timer.cancel()
                 self._usage_timer = None
             self.token_usage = {}
+            self._usage_pending.clear()
+            self._usage_reset = True
             self._usage_dirty = False
             self._save_token_usage()
         logger.info("Token usage reset")
@@ -387,7 +551,14 @@ class AIClient:
 
         response = None
         try:
-            if stream:
+            local_settings = self._local_settings()
+            try:
+                local_base = validate_local_url(local_settings["base_url"], self._strict_local(local_settings))
+            except LocalModelError:
+                local_base = ""
+            if local_base and url == local_base + "/chat/completions":
+                response = make_local_request(url, payload, merged_headers, timeout, stream)
+            elif stream:
                 response = self.session.post(
                     url, json=payload, headers=merged_headers, timeout=timeout, stream=True
                 )
@@ -438,7 +609,7 @@ class AIClient:
             # Falha estruturada com a response anexada: a UI/CLI apanham-na
             # por tipo e `_is_transient` continua a decidir o retry (5xx).
             raise AIProviderError(
-                f"{e}" + (f" | {redact_url(body_snippet)}" if body_snippet else ""),
+                f"{redact_url(str(e))}" + (f" | {redact_url(body_snippet)}" if body_snippet else ""),
                 response=response,
             ) from e
         except Exception as e:
@@ -463,32 +634,12 @@ class AIClient:
 
     @staticmethod
     def _iter_sse_openai_style(response, usage_events: Optional[list] = None):
-        """Iterate an SSE stream in OpenAI style (`data: {...}`).
-
-        `usage_events` (opcional) recebe o objeto `usage` do chunk final
-        quando o provider o envia (`stream_options.include_usage`), para o
-        caller registar tokens REAIS em streaming. Null-safety: alguns
-        backends enviam `"delta": null` no último chunk — `.get("delta",
-        {})` NÃO protege (o default só se aplica se a chave não existir) e
-        o stream morria com AttributeError a meio da resposta.
-        """
-        for line in response.iter_lines():
-            if not line:
-                continue
-            # Um byte inválido não deve abortar o stream inteiro
-            decoded_line = line.decode("utf-8", errors="replace")
-            if not decoded_line.startswith("data: "):
-                continue
-            data_str = decoded_line[6:]
-            if data_str == "[DONE]":
-                return
-            try:
-                data = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+        for data in iter_sse_json(response):
+            if data.get("error"):
+                raise AIProviderError("Provider stream error: " + redact_url(str(data["error"])))
             if usage_events is not None and isinstance(data.get("usage"), dict):
                 usage_events.append(data["usage"])
-            choices = data.get("choices")
+            choices = data.get("choices") or []
             if choices:
                 content = (choices[0].get("delta") or {}).get("content") or ""
                 if content:
@@ -496,82 +647,61 @@ class AIClient:
 
     @staticmethod
     def _iter_sse_anthropic(response, usage_events: Optional[list] = None):
-        """Iterate an SSE stream from Anthropic.
-
-        `usage_events` recebe os usage parciais (`message_start` traz
-        input_tokens; `message_delta` traz output_tokens) — o caller soma
-        os eventos para obter o total real.
-        """
-        for line in response.iter_lines():
-            if not line:
-                continue
-            decoded_line = line.decode("utf-8", errors="replace")
-            if not decoded_line.startswith("data: "):
-                continue
-            try:
-                data = json.loads(decoded_line[6:])
-            except json.JSONDecodeError:
-                continue
+        for data in iter_sse_json(response):
+            if data.get("type") == "error":
+                raise AIProviderError("Anthropic stream error: " + redact_url(str(data.get("error"))))
             if usage_events is not None:
-                msg_type = data.get("type")
-                if msg_type == "message_start" and isinstance(
-                        data.get("message", {}).get("usage"), dict):
-                    usage_events.append(data["message"]["usage"])
-                elif msg_type == "message_delta" and isinstance(data.get("usage"), dict):
-                    usage_events.append(data["usage"])
+                usage = (data.get("message") or {}).get("usage") if data.get("type") == "message_start" else data.get("usage")
+                if isinstance(usage, dict):
+                    usage_events.append(usage)
             delta = data.get("delta")
-            if data.get("type") == "content_block_delta" and isinstance(delta, dict):
-                text = delta.get("text")
-                if text:
-                    yield text
+            if data.get("type") == "content_block_delta" and isinstance(delta, dict) and delta.get("text"):
+                yield delta["text"]
 
     @staticmethod
     def _iter_sse_cohere(response, usage_events: Optional[list] = None):
-        """Iterate an SSE stream from Cohere."""
-        for line in response.iter_lines():
+        """Cohere v1 is newline-delimited JSON, not the v2 SSE contract."""
+        for raw in response.iter_lines():
+            line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
             if not line:
                 continue
-            decoded_line = line.decode("utf-8", errors="replace")
-            if not decoded_line.startswith("data: "):
-                continue
+            if line.startswith("data:"):
+                line = line[5:].lstrip(" ")
             try:
-                data = json.loads(decoded_line[6:])
-            except json.JSONDecodeError:
-                continue
-            if data.get("type") in (None, "content-delta") and "text" in data:
-                yield data["text"]
+                data = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise AIProviderError("Invalid JSON in Cohere stream") from error
+            event = data.get("event_type")
+            if event == "text-generation":
+                if data.get("text"):
+                    yield data["text"]
+            elif event == "stream-end":
+                reply = data.get("response") or {}
+                meta = reply.get("meta") or {}
+                usage = meta.get("billed_units") or meta.get("tokens")
+                if usage_events is not None and isinstance(usage, dict):
+                    usage_events.append(usage)
+                if data.get("finish_reason") in {"ERROR", "ERROR_TOXIC"}:
+                    raise AIProviderError("Cohere stream failed: " + str(data.get("finish_reason")))
+            elif event == "error" or data.get("error"):
+                raise AIProviderError("Cohere stream error: " + redact_url(str(data.get("error") or data.get("message"))))
 
     @staticmethod
     def _iter_sse_google(response, usage_events: Optional[list] = None):
-        """Iterate an SSE stream from Google AI Studio.
-
-        `usage_events` recebe o `usageMetadata` do último evento.
-        """
-        for line in response.iter_lines():
-            if not line:
-                continue
-            decoded_line = line.decode("utf-8", errors="replace")
-            if not decoded_line.startswith("data: "):
-                continue
-            data_str = decoded_line[6:]
-            if data_str == "[DONE]":
-                return
-            try:
-                data = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+        for data in iter_sse_json(response):
+            if data.get("error"):
+                raise AIProviderError("Google stream error: " + redact_url(str(data["error"])))
+            block = (data.get("promptFeedback") or {}).get("blockReason")
+            if block:
+                raise AIProviderError("Google blocked the prompt: " + str(block))
             if usage_events is not None and isinstance(data.get("usageMetadata"), dict):
                 usage_events.append(data["usageMetadata"])
-            candidates = data.get("candidates")
-            if not candidates:
-                continue
-            # `"content": null` nos candidatos (respostas vazias) não é
-            # Exception-safe com .get encadeado; protege com `or {}`.
-            parts = (candidates[0].get("content") or {}).get("parts") or []
-            for part in parts:
-                text = part.get("text")
-                if text:
-                    yield text
+            candidates = data.get("candidates") or []
+            if candidates:
+                parts = (candidates[0].get("content") or {}).get("parts") or []
+                for part in parts:
+                    if part.get("text"):
+                        yield part["text"]
 
     def _validate_messages(self, messages: List[Dict[str, str]]) -> bool:
         """Validate message format."""
@@ -623,7 +753,13 @@ class AIClient:
             logger.error("Empty message list")
             return None
 
-        provider = provider or self.config.get("api.default_provider", "openrouter")
+        try:
+            provider = self.active_provider(provider)
+            if provider is None:
+                raise ProviderNotConfigured("AI requests are disabled in offline mode")
+        except ProviderNotConfigured as error:
+            logger.info("%s", error)
+            return None
         api_config = self._get_api_config(provider)
         # Plugins register `_chat_<name>` even without an api.providers entry
         chat_method = getattr(self, f"_chat_{provider}", None)
@@ -632,10 +768,20 @@ class AIClient:
             logger.error(f"Unknown provider: {provider}")
             return None
 
-        model = model or api_config.get("model")
+        model = model or (self._local_settings()["model"] if provider == "local_llm" else api_config.get("model"))
         api_key = self._get_api_key(provider)
         base_url = api_config.get("base_url")
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
+
+        if provider == "local_llm":
+            settings = self._local_settings()
+            model = model or settings["model"]
+            base_url = settings["base_url"]
+            try:
+                base_url, model = self._validate_local_inference(base_url, model)
+            except ProviderNotConfigured as error:
+                logger.error("Local model unavailable: %s", error)
+                return None
 
         if not api_key and provider != "local_llm" and api_config:
             logger.error(f"API key not configured for {provider}")
@@ -737,9 +883,11 @@ class AIClient:
         era contabilizado e as estatísticas/orçamento ficavam mortas.
         """
         payload = dict(payload)
-        # Ignorado por providers que não conhecem a chave; não a enviar
-        # perdia o usage real no OpenRouter/Mistral/Groq.
-        payload["stream_options"] = {"include_usage": True}
+        # Local compatibility is opt-in; remote providers support real usage.
+        include_usage = self.config.get("api.providers." + provider + ".stream_include_usage",
+                                        provider != "local_llm")
+        if include_usage:
+            payload["stream_options"] = {"include_usage": True}
 
         usage_events: List[Dict] = []
         received: List[str] = []
@@ -765,10 +913,12 @@ class AIClient:
         """Registar tokens de um stream terminado (real ou estimado)."""
         try:
             if usage_events:
-                # Eventos parciais (ex.: Anthropic manda input no start e
-                # output no delta) somam-se cada um com a sua parte.
+                # Usage fields are cumulative, not increments. Retain input
+                # from Anthropic's start and the latest output/Google totals.
+                reported = {}
                 for event in usage_events:
-                    self._record_usage(provider, {"usage": event})
+                    reported.update({key: value for key, value in event.items() if value is not None})
+                self._record_usage(provider, {"usage": reported})
             elif full_text:
                 input_text = " ".join(
                     m.get("content", "") for m in messages if isinstance(m, dict)
@@ -1023,7 +1173,7 @@ class AIClient:
             elif role == "user":
                 chat_history.append({"role": "USER", "message": msg["content"]})
             elif role == "assistant":
-                chat_history.append({"role": "ASSISTANT", "message": msg["content"]})
+                chat_history.append({"role": "CHATBOT", "message": msg["content"]})
         # The final user turn is the `message`, not part of the history
         if chat_history and chat_history[-1]["role"] == "USER":
             last_user_text = chat_history.pop()["message"]
@@ -1057,13 +1207,9 @@ class AIClient:
             finally:
                 response.close()
 
-            self._record_usage("cohere", data)
-
-            if not data.get("response"):
-                logger.warning("No response from Cohere")
-                return ""
-
-            return data["response"]
+            meta = data.get("meta") or {}
+            self._record_usage("cohere", {"usage": meta.get("billed_units") or meta.get("tokens") or {}})
+            return data.get("text") or ""
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing Cohere JSON: {redact_url(str(e))}")
             return None
@@ -1123,7 +1269,9 @@ class AIClient:
         if not messages:
             raise AIProviderError("Empty message list")
 
-        provider = provider or self.config.get("api.default_provider", "openrouter")
+        provider = self.active_provider(provider)
+        if provider is None:
+            raise ProviderNotConfigured("AI requests are disabled in offline mode")
         api_config = self._get_api_config(provider)
         stream_method = getattr(self, f"_stream_{provider}", None)
         # Plugins may register only a chat function (fallback below)
@@ -1132,10 +1280,15 @@ class AIClient:
         if not api_config and stream_method is None and chat_method is None:
             raise ProviderNotConfigured(f"Unknown provider: {provider}")
 
-        model = model or api_config.get("model")
+        model = model or (self._local_settings()["model"] if provider == "local_llm" else api_config.get("model"))
         api_key = self._get_api_key(provider)
         base_url = api_config.get("base_url")
         timeout = api_config.get("timeout", self.DEFAULT_TIMEOUT)
+
+        if provider == "local_llm":
+            settings = self._local_settings()
+            model = model or settings["model"]
+            base_url, model = self._validate_local_inference(settings["base_url"], model)
 
         # Same fast-fail as chat(): do not send `Authorization: Bearer None`
         if not api_key and provider != "local_llm" and api_config:
@@ -1146,7 +1299,13 @@ class AIClient:
         try:
             # Call the provider's specific stream method
             if stream_method:
-                yield from stream_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
+                received_text = False
+                for chunk in stream_method(messages, model, api_key, base_url, temperature, max_tokens, timeout):
+                    if chunk:
+                        received_text = True
+                        yield chunk
+                if not received_text:
+                    raise AIProviderError("Empty response from " + provider)
             else:
                 # Fallback: make a normal request and yield all content
                 response = self.chat(messages, provider, model, temperature, max_tokens)
@@ -1154,7 +1313,7 @@ class AIClient:
                     yield response
                 else:
                     raise AIProviderError(f"No response from {provider} (check the logs)")
-        except (AIProviderError, ProviderNotConfigured):
+        except AIProviderError:
             raise
         except Exception as e:
             logger.error(f"Stream error for {provider}: {redact_url(str(e))}")
@@ -1272,7 +1431,7 @@ class AIClient:
             elif role == "user":
                 chat_history.append({"role": "USER", "message": msg["content"]})
             elif role == "assistant":
-                chat_history.append({"role": "ASSISTANT", "message": msg["content"]})
+                chat_history.append({"role": "CHATBOT", "message": msg["content"]})
         if chat_history and chat_history[-1]["role"] == "USER":
             last_user_text = chat_history.pop()["message"]
         # Mesmo guard do caminho não-streaming: v1 responde 400 com
@@ -1298,12 +1457,16 @@ class AIClient:
             "Content-Type": "application/json"
         }
 
+        usage_events, received = [], []
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                yield from self._iter_sse_cohere(response)
+                for chunk in self._iter_sse_cohere(response, usage_events):
+                    received.append(chunk)
+                    yield chunk
             finally:
                 response.close()
+                self._finish_stream_usage("cohere", usage_events, messages, "".join(received))
         except AIProviderError:
             raise
         except Exception as e:

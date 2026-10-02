@@ -17,6 +17,10 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from .knowledge_base import knowledge_content, knowledge_for, package_manager_for
+from .local_knowledge import (PROCEDURE_BY_ID, PROCEDURES, localized, normalize,
+                              render_procedure, search_procedures)
+
 
 # --------------------------------------------------------------------------
 # Command templates (argv lists; may contain the {pkg}/{svc}/{tz}/{host}
@@ -29,21 +33,21 @@ PKG_MANAGERS = {
         "remove": ["xbps-remove", "-Ry", "{pkg}"],
         "search": ["xbps-query", "-Rs", "{pkg}"],
         "update": [["xbps-install", "-Su"]],
-        "clean": [["xbps-remove", "-O"], ["xbps-remove", "-o"]],
+        "clean": [["xbps-remove", "-O"]],
     },
     "apt": {
         "install": ["apt-get", "install", "-y", "{pkg}"],
         "remove": ["apt-get", "remove", "-y", "{pkg}"],
         "search": ["apt-cache", "search", "{pkg}"],
         "update": [["apt-get", "update"], ["apt-get", "upgrade", "-y"]],
-        "clean": [["apt-get", "autoremove", "-y"], ["apt-get", "clean"]],
+        "clean": [["apt-get", "clean"]],
     },
     "dnf": {
         "install": ["dnf", "install", "-y", "{pkg}"],
         "remove": ["dnf", "remove", "-y", "{pkg}"],
         "search": ["dnf", "search", "{pkg}"],
         "update": [["dnf", "upgrade", "-y"]],
-        "clean": [["dnf", "autoremove", "-y"], ["dnf", "clean", "all"]],
+        "clean": [["dnf", "clean", "all"]],
     },
     "pacman": {
         "install": ["pacman", "-S", "--noconfirm", "{pkg}"],
@@ -98,24 +102,12 @@ SERVICE_MANAGERS = {
     },
 }
 
-# distro id / id_like -> package manager
-_DISTRO_PKG = {
-    "void": "xbps",
-    "debian": "apt", "ubuntu": "apt", "linuxmint": "apt", "pop": "apt",
-    "raspbian": "apt", "kali": "apt", "elementary": "apt",
-    "fedora": "dnf", "rhel": "dnf", "centos": "dnf", "rocky": "dnf",
-    "almalinux": "dnf",
-    "arch": "pacman", "manjaro": "pacman", "artix": "pacman",
-    "opensuse": "zypper", "opensuse-leap": "zypper",
-    "opensuse-tumbleweed": "zypper", "sles": "zypper",
-    "alpine": "apk",
+_PACKAGE_EXECUTABLES = {
+    "xbps": "xbps-install", "apt": "apt-get", "dnf": "dnf",
+    "pacman": "pacman", "zypper": "zypper", "apk": "apk",
 }
-
-# id_like values that imply a package manager
-_LIKE_PKG = {
-    "debian": "apt", "ubuntu": "apt", "arch": "pacman", "fedora": "dnf",
-    "rhel": "dnf", "suse": "zypper", "alpine": "apk", "void": "xbps",
-}
+_COMPONENT_TOOLS = ("ip", "nmcli", "networkctl", "resolvectl", "dhcpcd",
+                    "rfkill", "sv", "rc-service", "systemctl", "findmnt", "df", "free")
 
 
 def read_os_release(path: str = "/etc/os-release") -> Dict[str, str]:
@@ -148,6 +140,10 @@ class DistroInfo:
     svc: Dict[str, Any] = field(default_factory=dict)
     timezone_argv: Optional[List[str]] = None
     hostname_argv: Optional[List[str]] = None
+    version_id: str = ""
+    available_tools: Tuple[str, ...] = ()
+    package_manager_verified: bool = False
+    service_manager_verified: bool = False
 
 
 def detect_distro(os_release: Optional[Dict[str, str]] = None,
@@ -166,16 +162,15 @@ def detect_distro(os_release: Optional[Dict[str, str]] = None,
     )
     pretty = release.get("PRETTY_NAME") or release.get("NAME") or distro_id
 
-    pkg_manager = "unknown"
-    for name in (distro_id, *id_like):
-        if name in _DISTRO_PKG:
-            pkg_manager = _DISTRO_PKG[name]
-            break
+    pkg_manager = package_manager_for(distro_id, id_like)
+    tools = tuple(name for name in (*_PACKAGE_EXECUTABLES.values(), *_COMPONENT_TOOLS)
+                  if which(name))
+    pkg_verified = _PACKAGE_EXECUTABLES.get(pkg_manager) in tools
     if pkg_manager == "unknown":
-        for name in id_like:
-            if name in _LIKE_PKG:
-                pkg_manager = _LIKE_PKG[name]
-                break
+        installed = [name for name, executable in _PACKAGE_EXECUTABLES.items()
+                     if executable in tools]
+        if len(installed) == 1:
+            pkg_manager, pkg_verified = installed[0], True
 
     if is_systemd_running is None:
         is_systemd_running = os.path.isdir("/run/systemd/system")
@@ -183,11 +178,11 @@ def detect_distro(os_release: Optional[Dict[str, str]] = None,
     # installed (a runit system can have systemctl installed for chroots).
     if is_systemd_running:
         service_manager = "systemd"
-    elif which("sv"):
+    elif "sv" in tools:
         service_manager = "runit"
-    elif which("rc-service"):
+    elif "rc-service" in tools:
         service_manager = "openrc"
-    elif which("systemctl"):
+    elif "systemctl" in tools:
         service_manager = "systemd"
     elif distro_id == "void" or "void" in id_like:
         service_manager = "runit"
@@ -215,6 +210,10 @@ def detect_distro(os_release: Optional[Dict[str, str]] = None,
         svc=svc,
         timezone_argv=timezone_argv,
         hostname_argv=hostname_argv,
+        version_id=release.get("VERSION_ID", ""),
+        available_tools=tools,
+        package_manager_verified=pkg_verified,
+        service_manager_verified=bool(is_systemd_running),
     )
 
 
@@ -239,16 +238,15 @@ class Reply:
 
 
 from .i18n import OFFLINE_TEXTS as _TEXTS, OFFLINE_SERVICE_ACTIONS as _SERVICE_ACTIONS, offline_text as _t
-from .knowledge_base import knowledge_for
 
 # Order matters: check the more specific verbs first so "restart" is not
 # mistaken for "start". Word boundaries keep "start" out of "restart".
 _ACTION_WORDS = [
-    ("disable", ("disable", "desativar")),
-    ("restart", ("restart", "reiniciar")),
-    ("stop", ("stop", "parar")),
-    ("enable", ("enable", "ativar")),
-    ("start", ("start", "iniciar")),
+    ("disable", ("disable", "desativar", "desactivar", "désactiver", "desactiver", "deaktivieren")),
+    ("restart", ("restart", "reiniciar", "redémarrer", "redemarrer", "neustarten")),
+    ("stop", ("stop", "parar", "detener", "arrêter", "arreter", "stoppen")),
+    ("enable", ("enable", "ativar", "activar", "activer", "aktivieren")),
+    ("start", ("start", "iniciar", "démarrer", "demarrer", "starten")),
 ]
 
 def _service_action_word(lang: str, action: str) -> str:
@@ -273,11 +271,12 @@ def _fill(argv: List[str], **replacements: str) -> List[str]:
 _KEYWORDS: Dict[str, List[str]] = {
     "update": ["update", "upgrade", "atualiz", "actualiz", "upgrade the system",
                "atualizar o sistema"],
-    "install": ["install", "instalar", "instala"],
-    "remove": ["remove", "uninstall", "remover", "desinstalar"],
+    "install": ["install", "instalar", "instala", "installer", "installieren"],
+    "remove": ["remove", "uninstall", "remover", "desinstalar", "désinstaller", "desinstaller",
+               "deinstallieren", "entfernen"],
     "search": ["search package", "find package", "procurar pacote",
                "pesquisar pacote", "search for a package"],
-    "services": ["service", "serviço", "servico", "systemd", "runit", "openrc",
+    "services": ["service", "services", "serviço", "servico", "servicio", "dienst", "systemd", "runit", "openrc",
                  "ativar serviço", "ativar servico", "enable service",
                  "start service", "restart service"],
     "timezone": ["timezone", "time zone", "fuso", "timedatectl", "fuso horário",
@@ -299,7 +298,7 @@ _KEYWORDS: Dict[str, List[str]] = {
     "distro": ["distro", "distribution", "distribuição", "versão", "versao",
                "kernel", "what linux", "que linux", "que distro"],
     # Knowledge-base intents: "how does THIS distro do X"
-    "config": ["configuration file", "config file", "where is the config",
+    "config": ["configuration file", "configuration files", "config file", "config files", "where is the config",
                "config location", "where is it configured", "onde fica a config",
                "ficheiro de configura", "ficheiros de configura",
                "arquivo de configura", "fichier de config",
@@ -317,20 +316,21 @@ _KEYWORDS: Dict[str, List[str]] = {
 }
 
 _INSTALL_RE = re.compile(
-    r"(?:install|instalar|instala)\s+([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
+    r"(?<![\w-])(?:install|instalar|instala|installer|installieren)\s+([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
     re.IGNORECASE,
 )
 _REMOVE_RE = re.compile(
-    r"(?:remove|uninstall|remover|desinstalar)\s+([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
+    r"(?<![\w-])(?:remove|uninstall|remover|desinstalar|désinstaller|desinstaller|deinstallieren|entfernen)"
+    r"\s+([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
     re.IGNORECASE,
 )
 _SEARCH_RE = re.compile(
-    r"(?:search|procurar|pesquisar)\s+(?:for\s+|por\s+)?([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
+    r"\b(?:search|procurar|pesquisar)\s+(?:for\s+|por\s+)?([A-Za-z0-9][A-Za-z0-9@._+-]{0,63})",
     re.IGNORECASE,
 )
 _SVC_RE = re.compile(
-    r"(?:enable|start|restart|stop|disable|ativar|iniciar|reiniciar|parar|desativar)"
-    r"\s+(?:service\s+|serviço\s+|servico\s+|o\s+serviço\s+|o\s+servico\s+)?"
+    r"(?<![\w-])(?:" + '|'.join(re.escape(word) for _, words in _ACTION_WORDS for word in words) + r")"
+    r"\s+(?:(?:(?:o|el|le|den)\s+)?(?:service|serviço|servico|servicio|dienst)\s+)?"
     r"([A-Za-z0-9][A-Za-z0-9@._:-]{0,63})",
     re.IGNORECASE,
 )
@@ -354,16 +354,30 @@ _HOST_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$")
 _STOPWORDS = {
     "a", "an", "the", "um", "uma", "o", "os", "as", "package", "pacote",
     "service", "serviço", "servico", "my", "meu", "minha",
+    "on", "for", "with", "to", "para", "com", "no", "na", "em", "then",
+    "depois", "if", "se", "please", "por", "favor",
+    "and", "e", "y", "et", "und",
 }
 
 
 def _match_intent(low: str) -> Tuple[Optional[str], int]:
+    # Destructive/install verbs need an unambiguous, complete verb match.
+    for intent, pattern in (("remove", _REMOVE_RE), ("install", _INSTALL_RE)):
+        if pattern.search(low):
+            return intent, 1
+    if re.search(r"\b(?:versão|versao|version)\s+(?:do|da|of|de)\s+(?:python|java|node|ruby)\b", low):
+        return None, 0
     best: Optional[str] = None
     best_score = 0
     for intent, words in _KEYWORDS.items():
         score = 0
         for word in words:
-            if word in low:
+            keyword = word.strip()
+            if keyword in {"atualiz", "actualiz"} or keyword.endswith(' de configura') or keyword == 'fichier de config':
+                matched = re.search(r"\b" + re.escape(keyword) + r"\w*", low)
+            else:
+                matched = re.search(r"(?<![\w-])" + re.escape(keyword) + r"(?![\w-])", low)
+            if matched:
                 score += 1
         if score > best_score:
             best = intent
@@ -378,6 +392,45 @@ def _valid(token: Optional[str]) -> Optional[str]:
     if token.lower() in _STOPWORDS:
         return None
     return token if _SAFE_TOKEN.match(token) else None
+
+
+_NEGATION_RE = re.compile(
+    r"\b(?:nao|não|nunca|jamais|not|never|without|sem|kein|keine|nicht|pas|sin|no)\b|\bdon['’]t\b",
+    re.IGNORECASE,
+)
+_MUTATION_RE = re.compile(
+    r"(?<![\w-])(?:install|instalar|instala|installer|installieren|remove|uninstall|remover|desinstalar|désinstaller|desinstaller|deinstallieren|entfernen|update|upgrade|atualiz\w*|actualiz\w*|clean|limpar|enable|disable|start|stop|restart|ativar|desativar|iniciar|parar|reiniciar|hostname|timezone|fuso)(?![\w-])",
+    re.IGNORECASE,
+)
+_PACKAGE_TAIL_RE = re.compile(
+    r"(?<![\w-])(?:install|instalar|instala|installer|installieren|remove|uninstall|remover|desinstalar|désinstaller|desinstaller|deinstallieren|entfernen)\s+(.+)$",
+    re.IGNORECASE,
+)
+_NEXT_WORDS = {"next", "continue", "continuar", "continua", "seguinte", "proximo", "proximo passo", "e depois", "what next", "then"}
+
+
+def _packages(text: str) -> List[str]:
+    """Parse the entire argument list; never silently discard another request."""
+    match = _PACKAGE_TAIL_RE.search(text.strip())
+    if not match:
+        return []
+    tail = re.sub(r"\s+(?:please|por favor)\s*[.!?]*$", "", match.group(1), flags=re.I)
+    tail = tail.rstrip("!?")
+    tail = re.sub(r"^(?:packages?|pacotes?)\s+", "", tail, flags=re.I)
+    if re.search(r"\b(?:and|e|y|et|und|then|depois)\s+(?:install|instalar|remove|remover|update|upgrade|atualizar|clean|limpar|restart|reiniciar|enable|ativar)\b", tail, re.I):
+        return []
+    tokens = re.split(r"\s*(?:,|\s+(?:and|e|y|et|und)\s+)\s*|\s+", tail)
+    if not tokens or len(tokens) > 20:
+        return []
+    packages = []
+    for token in tokens:
+        package = _valid(token)
+        # apt interprets a trailing +/- as a different requested action.
+        if not package or package.endswith(("+", "-")):
+            return []
+        if package not in packages:
+            packages.append(package)
+    return packages
 
 
 class OfflineAssistant:
@@ -402,12 +455,43 @@ class OfflineAssistant:
         # a ter factos e apontadores válidos.
         self._kb = (knowledge_for(self._distro.distro_id, self._distro.id_like)
                     or knowledge_for("unknown"))
+        self._diagnostic = None
 
     @property
     def distro(self) -> DistroInfo:
         return self._distro
 
     # -- public API --------------------------------------------------------
+
+    def reset_conversation(self):
+        """Drop observations and diagnostic continuation when switching sessions."""
+        self._diagnostic = None
+
+    def diagnostic_state(self) -> Optional[Dict[str, Any]]:
+        """Return a minimal independent snapshot, never command output or prose."""
+        return dict(self._diagnostic) if self._diagnostic is not None else None
+
+    def restore_diagnostic(self, state) -> bool:
+        """Restore validated continuation metadata without executing any probe.
+
+        Session files are untrusted input. Accept only an exact data-only shape,
+        a procedure applicable to this machine and an in-range integer step.
+        Invalid state clears any previous continuation rather than retaining it.
+        """
+        self.reset_conversation()
+        if type(state) is not dict or set(state) != {"id", "step"}:
+            return False
+        procedure_id = state["id"]
+        index = state["step"]
+        if type(procedure_id) is not str or type(index) is not int:
+            return False
+        procedure = PROCEDURE_BY_ID.get(procedure_id)
+        if procedure is None or not procedure.applies_to(self._distro):
+            return False
+        if not 0 <= index < len(procedure.steps):
+            return False
+        self._diagnostic = {"id": procedure_id, "step": index}
+        return True
 
     def handle(self, message: str, lang: str = "en") -> Reply:
         """Answer `message` using only local knowledge."""
@@ -420,9 +504,44 @@ class OfflineAssistant:
         if not text:
             return Reply(self._help(distro, lang))
 
+        mutating = bool(_MUTATION_RE.search(text) or _SVC_RE.search(text))
+        if mutating and _NEGATION_RE.search(text):
+            return Reply(_t(lang, "negated_action"))
+        if _INSTALL_RE.search(text) and _REMOVE_RE.search(text):
+            return Reply(_t(lang, "ambiguous_action"))
+        if mutating and re.search(
+                r"\b(?:if i|se eu|what happens|o que acontece|whether|talvez|maybe)\b", low):
+            return Reply(_t(lang, "ambiguous_action"))
+        if mutating and re.search(r"\b(?:erro|error|failed|falha|problema|problem|unable|cannot)\b", low):
+            matches = search_procedures(text, distro, limit=1)
+            return Reply(render_procedure(matches[0], lang, distro) if matches else
+                         _t(lang, "ambiguous_action"))
+
+        normalized = normalize(text).strip(" .?!")
+        if normalized in {"cancel", "cancelar", "parar diagnostico", "stop diagnosis"}:
+            self.reset_conversation()
+            return Reply(_t(lang, "diagnostic_cancelled"))
+        if self._diagnostic and normalized in _NEXT_WORDS:
+            return self._continue_diagnostic(lang)
+        if self._diagnostic and self._looks_like_observation(text):
+            return self._continue_diagnostic(lang, text)
+        if re.match(r"^(?:guia(?: local)?|local guide|guide|pesquisar conhecimento|procurar conhecimento|search knowledge)\b", normalized):
+            return self._local_guides(text, lang)
+
         intent, score = _match_intent(low)
         if not intent or score == 0:
+            matches = search_procedures(text, distro, limit=1)
+            if matches:
+                return Reply(render_procedure(matches[0], lang, distro))
             return Reply(self._help(distro, lang))
+
+        problem = re.search(r"\b(?:diagnostic\w*|diagnostico|diagnóstico|failed|fails|broken|problema|erro|falha|nao funciona|não funciona|not working|nao arranca|não arranca|sem rede|sem internet)\b", low)
+        if problem and intent in {"services", "network", "disk", "memory", "repos", "logs"}:
+            matches = search_procedures(text, distro, limit=1)
+            if matches:
+                return self._start_diagnostic(matches[0].id, lang)
+
+        self.reset_conversation()
 
         dispatch = {
             "help": lambda: Reply(self._help(distro, lang)),
@@ -436,7 +555,7 @@ class OfflineAssistant:
             "hostname": lambda: self._hostname_reply(distro, lang, text),
             "disk": lambda: self._disk_reply(distro, lang),
             "memory": lambda: self._memory_reply(distro, lang),
-            "network": lambda: Reply(_t(lang, "network")),
+            "network": lambda: self._start_diagnostic("network-interface", lang),
             "firewall": lambda: Reply(self._firewall_text(distro, lang)),
             "shell": lambda: Reply(_t(lang, "shell")),
             "alias": lambda: Reply(_t(lang, "alias")),
@@ -449,6 +568,96 @@ class OfflineAssistant:
             "docs": lambda: Reply(self._docs_reply(distro, lang, text)),
         }
         return dispatch[intent]()
+
+    def _local_guides(self, text: str, lang: str) -> Reply:
+        search_only = bool(re.match(r"^(?:pesquisar conhecimento|procurar conhecimento|search knowledge)\b", text, re.I))
+        query = re.sub(r"^(?:guia(?:\s+local)?|local guide|guide|pesquisar conhecimento|procurar conhecimento|search knowledge)\s*", "", text, flags=re.I).strip()
+        exact = PROCEDURE_BY_ID.get(query.lower())
+        if exact and exact.applies_to(self._distro):
+            if search_only:
+                return Reply(render_procedure(exact, lang, self._distro))
+            return self._start_diagnostic(exact.id, lang)
+        matches = search_procedures(query, self._distro)
+        if not query:
+            matches = tuple(item for item in PROCEDURES if item.applies_to(self._distro))
+        if not matches:
+            return Reply(_t(lang, "knowledge_not_found"))
+        if len(matches) == 1:
+            if search_only:
+                return Reply(render_procedure(matches[0], lang, self._distro))
+            return self._start_diagnostic(matches[0].id, lang)
+        lines = [f"- {item.id}: {localized(item.title, lang)} — {localized(item.summary, lang)}" for item in matches]
+        return Reply(_t(lang, "knowledge_results", results="\n".join(lines)))
+
+    @staticmethod
+    def _looks_like_observation(text: str) -> bool:
+        return "\n" in text or bool(re.search(r"\b(?:UP|DOWN|UNKNOWN|default via|Mem:|Swap:|Filesystem|Sist\.\s*Fich|failed|not-found|active \(running\))|[0-9]{1,3}%", text))
+
+    def _start_diagnostic(self, procedure_id: str, lang: str) -> Reply:
+        self._diagnostic = {"id": procedure_id, "step": 0}
+        return self._diagnostic_step(lang)
+
+    def _continue_diagnostic(self, lang: str, observation: str = "") -> Reply:
+        procedure = PROCEDURE_BY_ID[self._diagnostic["id"]]
+        index = self._diagnostic["step"]
+        interpretation = self._interpret_probe(procedure.steps[index].probe_key,
+                                               observation[:12000], lang) if observation else ""
+        if index + 1 >= len(procedure.steps):
+            self.reset_conversation()
+            return Reply((interpretation + "\n\n" if interpretation else "") +
+                         _t(lang, "diagnostic_complete") + "\n" + localized(procedure.recovery, lang))
+        self._diagnostic["step"] += 1
+        reply = self._diagnostic_step(lang)
+        if interpretation:
+            reply.text = interpretation + "\n\n" + reply.text
+        return reply
+
+    def _diagnostic_step(self, lang: str) -> Reply:
+        procedure = PROCEDURE_BY_ID[self._diagnostic["id"]]
+        index = self._diagnostic["step"]
+        step = procedure.steps[index]
+        text = _t(lang, "diagnostic_step", title=localized(procedure.title, lang),
+                  number=index + 1, total=len(procedure.steps),
+                  instruction=localized(step.instruction, lang))
+        if step.command:
+            text += "\n" + step.command
+        output = self._probe(step.probe_key) if step.probe_key else None
+        if output:
+            text += "\n\n" + _t(lang, "diagnostic_observation", output=output)
+            text += "\n" + self._interpret_probe(step.probe_key, output, lang)
+        else:
+            text += "\n\n" + _t(lang, "diagnostic_manual")
+        text += "\n" + localized(step.interpretation, lang)
+        text += "\n\n" + _t(lang, "diagnostic_next")
+        text += "\n" + _t(lang, "diagnostic_sources", date=procedure.reviewed_at,
+                               sources=" ".join(procedure.sources))
+        return Reply(text)
+
+    def _probe(self, key: str) -> Optional[str]:
+        # This registry is code, not parsed from user messages or documents.
+        commands = {"links": "ip link show", "addresses": "ip addr show",
+                    "routes": "ip route", "disk": "df -h", "inodes": "df -i",
+                    "memory": "free -h"}
+        command = commands.get(key)
+        if command and command.split()[0] not in self._distro.available_tools:
+            return None
+        return self._run(command) if command else None
+
+    @staticmethod
+    def _interpret_probe(key: str, output: str, lang: str) -> str:
+        if not output:
+            return ""
+        if key == "links" and re.search(r"\bDOWN\b", output):
+            return _t(lang, "observed_link_down")
+        if key == "routes" and not re.search(r"^default\s", output, re.M):
+            return _t(lang, "observed_no_default")
+        if key in {"disk", "inodes"}:
+            percentages = [int(value) for value in re.findall(r"\b(\d{1,3})%", output)]
+            if percentages and max(percentages) >= 90:
+                return _t(lang, "observed_high_disk" if key == "disk" else "observed_high_inodes")
+        if key == "addresses" and "169.254." in output:
+            return _t(lang, "observed_link_local")
+        return _t(lang, "observed_inconclusive")
 
     @staticmethod
     def run_privileged(command: Command, timeout: int = 120):
@@ -476,14 +685,14 @@ class OfflineAssistant:
         if self.system_utils is None:
             return None
         try:
-            ok, output = self.system_utils.execute_command(command)
+            ok, output = self.system_utils.execute_command(command, timeout=8)
         except Exception:
             return None
-        return output.strip() if ok else None
+        return str(output).strip()[:12000] if ok else None
 
     def _help(self, distro: DistroInfo, lang: str) -> str:
         return _t(lang, "help", pretty=distro.pretty_name,
-                  pkg=distro.pkg_manager, svc=distro.service_manager)
+                  pkg=distro.pkg_manager, svc=distro.service_manager) + "\n" + _t(lang, "knowledge_help")
 
     def _distro_reply(self, distro: DistroInfo, lang: str) -> str:
         like = f", like: {'/'.join(distro.id_like)}" if distro.id_like else ""
@@ -492,10 +701,14 @@ class OfflineAssistant:
                   distro_id=distro.distro_id, like=like,
                   pkg=distro.pkg_manager, svc=distro.service_manager,
                   kernel=kernel)
+        text += "\n" + _t(lang, "detected_components", version=distro.version_id or "?",
+                            tools=", ".join(distro.available_tools) or "?",
+                            pkg_verified=str(distro.package_manager_verified),
+                            svc_verified=str(distro.service_manager_verified))
         # Base de conhecimento: o que torna ESTA distribuição diferente
         kb = self._kb
         if kb is not None and kb.distinct:
-            bullets = "\n".join("  - " + item for item in kb.distinct)
+            bullets = "\n".join("  - " + item for item in knowledge_content(kb, "distinct", lang))
             text += _t(lang, "distro_notes", pretty=distro.pretty_name,
                        bullets=bullets)
         text += self._kb_reference(lang)
@@ -516,14 +729,14 @@ class OfflineAssistant:
         if kb is None:
             return self._help(distro, lang)
         rows = [
-            (_t(lang, "Repositories"), kb.repositories),
-            (_t(lang, "Network"), kb.network),
-            (_t(lang, "Logs"), kb.logs),
-            (_t(lang, "Hostname"), kb.hostname),
-            (_t(lang, "Locale"), kb.locale),
+            (_t(lang, "Repositories"), knowledge_content(kb, "repositories", lang)),
+            (_t(lang, "Network"), knowledge_content(kb, "network", lang)),
+            (_t(lang, "Logs"), knowledge_content(kb, "logs", lang)),
+            (_t(lang, "Hostname"), knowledge_content(kb, "hostname", lang)),
+            (_t(lang, "Locale"), knowledge_content(kb, "locale", lang)),
         ]
         if kb.services_note:
-            rows.append((_t(lang, "Services"), kb.services_note))
+            rows.append((_t(lang, "Services"), knowledge_content(kb, "services_note", lang)))
         body = "\n".join(f"  {label}: {content}" for label, content in rows)
         return _t(lang, "config_files", pretty=distro.pretty_name,
                   body=body) + self._kb_reference(lang)
@@ -537,14 +750,14 @@ class OfflineAssistant:
         else:
             cmds = "  dmesg | tail -50"
         return (_t(lang, "logs", pretty=distro.pretty_name,
-                   logs=kb.logs, cmds=cmds) + self._kb_reference(lang))
+                   logs=knowledge_content(kb, "logs", lang), cmds=cmds) + self._kb_reference(lang))
 
     def _repos_reply(self, distro: DistroInfo, lang: str) -> str:
         kb = self._kb
         if kb is None or not kb.repositories:
             return self._help(distro, lang)
         return (_t(lang, "repos", pretty=distro.pretty_name,
-                   repos=kb.repositories) + self._kb_reference(lang))
+                   repos=knowledge_content(kb, "repositories", lang)) + self._kb_reference(lang))
 
     def _docs_reply(self, distro: DistroInfo, lang: str, text: str) -> str:
         """Documentação oficial da distribuição, com pesquisa por query."""
@@ -572,9 +785,14 @@ class OfflineAssistant:
         if tokens and kb.wiki_search_url:
             from urllib.parse import quote_plus
             query = " ".join(tokens)
-            url = kb.wiki_search_url.format(query=quote_plus(query))
+            url = kb.wiki_search_url.replace("{query}", quote_plus(query))
             result += _t(lang, "docs_search", wiki_name=kb.wiki_name,
                          query=query, url=url)
+        matches = search_procedures(text, distro, limit=1)
+        if matches:
+            result = render_procedure(matches[0], lang, distro) + "\n\n" + result
+        else:
+            result += "\n\n" + _t(lang, "knowledge_help")
         return result
 
     def _no_pkg(self, lang: str) -> Reply:
@@ -595,10 +813,11 @@ class OfflineAssistant:
         template = distro.pkg.get("install")
         if not template:
             return self._no_pkg(lang)
-        match = _INSTALL_RE.search(text)
-        package = _valid(match.group(1)) if match else None
-        if package:
-            argv = _fill(template, pkg=package)
+        packages = _packages(text)
+        if packages:
+            argv = [value for part in template for value in
+                    (packages if part == "{pkg}" else [part])]
+            package = ", ".join(packages)
             cmd = shlex.join(argv)
             return Reply(
                 _t(lang, "install_named", pkg=package, cmd=cmd),
@@ -607,23 +826,24 @@ class OfflineAssistant:
             )
         shown = shlex.join(template)
         return Reply(_t(lang, "install_generic", pretty=distro.pretty_name,
-                          cmd=shown, example="htop"))
+                          cmd=shown, example="htop") + "\n" + _t(lang, "package_arguments"))
 
     def _remove_reply(self, distro: DistroInfo, lang: str, text: str) -> Reply:
         template = distro.pkg.get("remove")
         if not template:
             return self._no_pkg(lang)
-        match = _REMOVE_RE.search(text)
-        package = _valid(match.group(1)) if match else None
-        if package:
-            argv = _fill(template, pkg=package)
+        packages = _packages(text)
+        if packages:
+            argv = [value for part in template for value in
+                    (packages if part == "{pkg}" else [part])]
+            package = ", ".join(packages)
             return Reply(
                 _t(lang, "remove_named", pkg=package, cmd=shlex.join(argv)),
                 [Command(argv=argv, privileged=True,
                          description=f"Remove {package}")],
             )
         return Reply(_t(lang, "remove_generic", pretty=distro.pretty_name,
-                          cmd=shlex.join(template)))
+                          cmd=shlex.join(template)) + "\n" + _t(lang, "package_arguments"))
 
     def _search_reply(self, distro: DistroInfo, lang: str, text: str) -> Reply:
         template = distro.pkg.get("search")
@@ -655,6 +875,9 @@ class OfflineAssistant:
                 action = key
                 break
         if name and action:
+            remainder = text[match.end():].strip().rstrip(".!?")
+            if remainder and remainder.lower() not in {"please", "por favor"}:
+                return Reply(_t(lang, "ambiguous_action"))
             argv = _fill(svc[action], svc=name)
             verb = _service_action_word(lang, action)
             return Reply(

@@ -1,9 +1,12 @@
 # Native Void Linux package
 
-The template builds a pinned upstream snapshot, so the recipe does not depend on
-a nonexistent release tag or on a contributor's fork. The runtime and install
-fixes that used to be carried by a patch are now part of the snapshot itself,
-so no `patches/` directory is required.
+The template builds upstream snapshot `fbaa4ad25c016ab20ab0f4294ba6913d71c3c228`
+with the bundled `patches/review-corrections.patch` to produce version 1.2.0.
+The patch carries the security fixes, conversation sessions, assistance modes
+and bundled local diagnostic guides that are not yet in that published snapshot. Both the archive checksum and application of
+the patch have been verified. Keep the patch beside the template when copying
+the recipe. After these changes reach upstream, a future recipe can pin that
+commit and remove the patch.
 
 ## Build
 

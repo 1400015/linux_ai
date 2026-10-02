@@ -7,11 +7,15 @@ before writing. Paths outside the home require elevation (pkexec).
 
 import difflib
 import hashlib
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
+import uuid
+from xml.sax.saxutils import escape
 
 try:
     from .render_core import FileBlock
@@ -94,8 +98,8 @@ def preview_diff(path, new_content):
         return None
     try:
         truncated = os.path.getsize(path) > MAX_DIFF_BYTES
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            old_lines = f.readlines(MAX_DIFF_BYTES)
+        with open(path, "rb") as f:
+            old_lines = f.read(MAX_DIFF_BYTES).decode('utf-8', errors='replace').splitlines(keepends=True)
     except OSError:
         return None
     new_lines = new_content.splitlines(keepends=True)
@@ -112,7 +116,7 @@ def preview_diff(path, new_content):
 def _backup_path(path):
     """Caminho do backup .bak com timestamp (nunca sobrepõe um anterior)."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    return f"{path}.{stamp}.bak"
+    return f"{path}.{stamp}.{uuid.uuid4().hex}.bak"
 
 
 def _make_backup(path):
@@ -124,7 +128,9 @@ def _make_backup(path):
     try:
         if os.path.isfile(path):
             backup = _backup_path(path)
-            shutil.copy2(path, backup)
+            with open(path, 'rb') as source, open(backup, 'xb') as target:
+                shutil.copyfileobj(source, target, 65536)
+            shutil.copystat(path, backup)
             return backup
     except OSError as e:
         # Não bloquear a escrita por falha de backup, mas deixar registo.
@@ -132,37 +138,23 @@ def _make_backup(path):
     return None
 
 
-def _write_privileged(temp_path, dest_path):
-    """Copy temp file to a privileged destination via pkexec (atómico).
-
-    O caminho antigo `pkexec cp temp dest` (1) truncava o destino — não
-    atómico: um corte a meio deixava uma config de sistema partida e sem
-    backup, e (2) o resultado ficava root:root 0600 — editar /etc/hosts
-    (0644) partia a resolução de nomes. Agora: backup → cópia para
-    `dest.new` → preservar owner/mode do original → rename atómico.
-    """
-    new_path = dest_path + ".linux-ai.new"
-    backup = _make_backup(dest_path)
-    script = (
-        'cp -- "$1" "$2.linux-ai.new" && '
-        'chown --reference="$2" "$2.linux-ai.new" && '
-        'chmod --reference="$2" "$2.linux-ai.new" && '
-        'mv -f "$2.linux-ai.new" "$2"'
-    )
+def _write_privileged(temp_path, dest_path, expected_digest=None, parent_identity=None):
+    """One elevation prompt; anchored, exclusive destination and backup files."""
+    if parent_identity is None:
+        parent = os.stat(os.path.dirname(dest_path))
+        parent_identity = (parent.st_dev, parent.st_ino)
+    helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
     result = subprocess.run(
-        ["pkexec", "sh", "-c", script, "sh", temp_path, dest_path],
+        ['pkexec', os.path.realpath(sys.executable), helper, temp_path, dest_path,
+         expected_digest if expected_digest is not None else '-',
+         str(parent_identity[0]), str(parent_identity[1])],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        # Limpar o .new parcial, se ficou atrás
-        subprocess.run(
-            ["pkexec", "sh", "-c", 'rm -f -- "$1"', "sh", new_path],
-            capture_output=True,
-        )
         raise PermissionError(
             result.stderr.strip() or f"Failed to write {dest_path} (pkexec)"
         )
-    return backup
+    return json.loads(result.stdout).get('backup')
 
 
 def confirm_and_write(parent, block, allowed_dirs=None):
@@ -185,6 +177,13 @@ def confirm_and_write(parent, block, allowed_dirs=None):
     # (TOCTOU: antes, o utilizador autorizava um diff e aplicava-se
     # outro — sem revalidação nem backup).
     digest_before = _file_digest(path)
+    parent_identity = None
+    if is_privileged_path(path):
+        try:
+            parent_stat = os.stat(os.path.dirname(path))
+            parent_identity = (parent_stat.st_dev, parent_stat.st_ino)
+        except OSError as error:
+            return ('error', str(error))
     diff = preview_diff(path, block.content)
 
     if not HAS_GTK:
@@ -204,7 +203,7 @@ def confirm_and_write(parent, block, allowed_dirs=None):
     scroll = Gtk.ScrolledWindow()
     scroll.set_min_content_height(240)
     scroll.set_min_content_width(560)
-    header = Gtk.Label(label=f"<b>{path}</b>")
+    header = Gtk.Label(label=f"<b>{escape(path)}</b>")
     # Without use_markup=True the label shows the literal <b> tags.
     header.set_use_markup(True)
     header.set_selectable(True)
@@ -238,7 +237,7 @@ def confirm_and_write(parent, block, allowed_dirs=None):
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(block.content)
-                _write_privileged(temp_path, path)
+                _write_privileged(temp_path, path, digest_before, parent_identity)
             finally:
                 os.unlink(temp_path)
         else:

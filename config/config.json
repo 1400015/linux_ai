@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Linux AI Assistant",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "width": 400,
     "height": 500,
     "x_position": 100,
@@ -59,9 +59,14 @@
       "local_llm": {
         "base_url": "http://localhost:11434/v1",
         "model": "llama3.2",
-        "timeout": 120
+        "timeout": 120,
+        "backend": "ollama",
+        "strict_local": true
       }
     }
+  },
+  "assistance": {
+    "mode": "auto"
   },
   "features": {
     "screen_capture": true,
@@ -77,11 +82,31 @@
   "permissions": {
     "require_sudo": true,
     "allowed_commands": [
-      "ls", "cat", "grep", "ps", "df", "du", "free", "uname", "neofetch",
-      "whoami", "pwd", "date", "cal", "echo", "man", "which", "whereis",
-      "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig", "nslookup"
+      "ls",
+      "cat",
+      "grep",
+      "ps",
+      "df",
+      "du",
+      "free",
+      "uname",
+      "whoami",
+      "pwd",
+      "date",
+      "cal",
+      "echo",
+      "which",
+      "whereis",
+      "ifconfig",
+      "ip",
+      "netstat",
+      "ss",
+      "ping",
+      "traceroute",
+      "dig",
+      "nslookup"
     ],
-    "allowed_edit_dirs": ["/etc", "/home", "/usr/local", "/opt"]
+    "allowed_edit_dirs": []
   },
   "ui": {
     "font_family": "Monospace",

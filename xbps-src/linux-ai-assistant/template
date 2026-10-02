@@ -1,8 +1,8 @@
 # Template file for 'linux-ai-assistant'
 pkgname=linux-ai-assistant
-version=1.0.0
-revision=2
-_commit=1f1eaaca9ccd81bf0b86e4958a2ef3c27990f487
+version=1.2.0
+revision=1
+_commit=fbaa4ad25c016ab20ab0f4294ba6913d71c3c228
 wrksrc="linux_ai-${_commit}"
 build_style=python3-module
 hostmakedepends="python3-setuptools"
@@ -15,7 +15,7 @@ maintainer="linux-ai-assistant@maintainer.example.com"
 license="MIT"
 homepage="https://github.com/1400015/linux_ai"
 distfiles="https://github.com/1400015/linux_ai/archive/${_commit}.tar.gz"
-checksum=dfdf0346f41db01e3566a7a6148b1662db043dae8ca24ddc73ef480e7fcd6751
+checksum=faa4267b086140a9ddd0c4fcb34fc183fb65a5066b439b5d91708952ead4dc1a
 checkdepends="${depends}"
 
 do_check() {

@@ -10,6 +10,7 @@ from typing import Any, Optional, Dict, List
 import logging
 import sys
 from dotenv import load_dotenv
+from .provider_modes import ASSISTANCE_MODES, validate_local_url, validate_model_name
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -112,9 +113,16 @@ class ConfigManager:
                 "local_llm": {
                     "base_url": "http://localhost:11434/v1",
                     "model": "llama3.2",
-                    "timeout": 120
+                    "timeout": 120,
+                    "backend": "ollama",
+                    "strict_local": True
                 }
             }
+        },
+        # auto preserves existing configurations: the selected provider is
+        # tried when configured, otherwise the built-in assistant is used.
+        "assistance": {
+            "mode": "auto"
         },
         "features": {
             "screen_capture": True,
@@ -142,7 +150,7 @@ class ConfigManager:
             # bloqueia adicionalmente argumentos com caminhos absolutos em
             # TODOS estes comandos e flags concretas (ex.: `dig -f`).
             "allowed_commands": [
-                "ls", "cat", "grep", "ps", "df", "du", "free", "uname", "neofetch",
+                "ls", "cat", "grep", "ps", "df", "du", "free", "uname",
                 "whoami", "pwd", "date", "cal", "echo", "which", "whereis",
                 "ifconfig", "ip", "netstat", "ss", "ping", "traceroute", "dig",
                 "nslookup"
@@ -183,6 +191,9 @@ class ConfigManager:
         "api": {
             "default_provider": str,
             "providers": dict
+        },
+        "assistance": {
+            "mode": str
         },
         "features": {
             "screen_capture": bool,
@@ -450,6 +461,10 @@ class ConfigManager:
                         logger.warning(f"Key {section}.{key} not found. Creating default.")
 
             # Load encryption key if needed
+            if self.config["assistance"]["mode"] not in ASSISTANCE_MODES:
+                # Invalid explicit choices must never enable cloud traffic.
+                self.config["assistance"]["mode"] = "offline"
+                changed = True
             if self.get("app.encryption_enabled", False):
                 self._load_encryption_key()
 
@@ -558,6 +573,74 @@ class ConfigManager:
         if "api_key" in key and isinstance(value, str):
             return self._decrypt_value(value)
         return value
+
+    def get_assistance_mode(self) -> str:
+        """Return the effective mode, including environment overrides."""
+        mode = self.get("assistance.mode", "auto")
+        return mode if mode in ASSISTANCE_MODES else "offline"
+
+    def set_assistance_mode(self, mode: str):
+        if mode not in ASSISTANCE_MODES:
+            raise ValueError("Assistance mode must be auto, offline, local or remote")
+        self.set("assistance.mode", mode)
+
+    def get_local_model_settings(self) -> Dict[str, Any]:
+        """Effective local settings, without returning unrelated API keys."""
+        prefix = "api.providers.local_llm."
+        return {
+            "base_url": self.get(prefix + "base_url", "http://localhost:11434/v1"),
+            "model": self.get(prefix + "model", "llama3.2"),
+            "timeout": self.get(prefix + "timeout", 120),
+            "backend": self.get(prefix + "backend", "ollama"),
+            "strict_local": self.get(prefix + "strict_local", True),
+        }
+
+    def set_local_model_settings(self, base_url: str, model: str,
+                                 strict_local: bool = True, backend: str = "ollama"):
+        """Validate all inputs before persisting a local configuration."""
+        normalized, selected = self._validate_assistance_settings(
+            self.get_assistance_mode(), base_url, model, strict_local, backend)
+        with self._lock:
+            self._set_local_model_settings(normalized, selected, strict_local, backend)
+
+    def _validate_assistance_settings(self, mode: str, base_url: str, model: str,
+                                      strict_local: bool, backend: str):
+        if mode not in ASSISTANCE_MODES:
+            raise ValueError("Assistance mode must be auto, offline, local or remote")
+        if backend not in {"ollama", "openai"} or not isinstance(strict_local, bool):
+            raise ValueError("Invalid local model settings")
+        effective_strict = strict_local or mode == "local"
+        normalized = validate_local_url(base_url, effective_strict)
+        if backend == "ollama" and not normalized.endswith("/v1"):
+            normalized += "/v1"
+        selected = validate_model_name(model, effective_strict)
+        return normalized, selected
+
+    def _set_local_model_settings(self, normalized: str, selected: str,
+                                  strict_local: bool, backend: str):
+        """Caller holds _lock and has already validated the complete draft."""
+        self.set("api.providers.local_llm.base_url", normalized)
+        self.set("api.providers.local_llm.model", selected)
+        self.set("api.providers.local_llm.strict_local", strict_local)
+        self.set("api.providers.local_llm.backend", backend)
+
+    def set_assistance_settings(self, mode: str, base_url: str, model: str,
+                                strict_local: bool = True, backend: str = "ollama"):
+        """Validate and update one complete draft without a partial mode change.
+
+        A saved mode can be shadowed by LINUX_AI_ASSISTANCE_MODE. Its effective
+        policy still applies, so saving a relaxed auto draft cannot enable an
+        external local server while an environment override requires local.
+        """
+        if mode not in ASSISTANCE_MODES:
+            raise ValueError("Assistance mode must be auto, offline, local or remote")
+        effective_mode = self.get_assistance_mode() if self._env_name("assistance.mode") in os.environ else mode
+        validation_mode = "local" if "local" in (mode, effective_mode) else mode
+        normalized, selected = self._validate_assistance_settings(
+            validation_mode, base_url, model, strict_local, backend)
+        with self._lock:
+            self._set_local_model_settings(normalized, selected, strict_local, backend)
+            self.set_assistance_mode(mode)
 
     def set(self, key: str, value: Any):
         """

@@ -1,135 +1,502 @@
-"""Histórico de conversas persistente — GTK-free e testável headless.
+"""Atomic, shared conversation history and explicit sessions, independent of GTK.
 
-Extrai o writer de history.json de main_window.py. Invariantes que antes
-viviam espalhados pela MainWindow (e produziram o duplo save):
-
-- UMA única fila FIFO e UMA thread de escrita: o main loop nunca bloqueia
-  numa reescrita completa do ficheiro por mensagem;
-- escrita atómica (temp + os.replace + fsync) com teto de 1000 mensagens;
-- drenagem garantida no fecho (sentinel na fila).
-
-O MainWindow apenas chama `append(role, content)` e `close()`.
+Legacy flat histories migrate into one conversation on the first session operation.
+Queued messages retain the session in which they were submitted. All writers and
+session operations use the same locked, atomic JSON transaction.
 """
 
+import atexit
+from datetime import datetime, timezone
 import json
-import os
+import logging
+import math
+from pathlib import Path
 import queue
 import threading
 import time
-from pathlib import Path
+import uuid
 
-# Mesmo teto do contexto em memória (main_window.MAX_HISTORY_MESSAGES).
+from .storage import update_json
+
 MAX_HISTORY_MESSAGES = 1000
+MAX_SESSIONS = 100
+MAX_IMPORT_BYTES = 2 * 1024 * 1024
+MAX_MESSAGE_CHARS = 128 * 1024
+MAX_SEARCH_RESULTS = 200
+HISTORY_VERSION = 1
+EXPORT_FORMAT = "linux-ai-conversation"
+LEGACY_SESSION_ID = "legacy"
+
+
+def _title(value):
+    if not isinstance(value, str) or not value.strip() or len(value) > 200:
+        raise ValueError("Conversation title must contain 1–200 characters")
+    return value.strip()
+
+
+def _timestamp(value, default=None):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if 0 <= value < 253402300800 and math.isfinite(value):
+            return value
+    return time.time() if default is None else default
+
+
+def _diagnostic_state(value):
+    """Only an article identity and bounded step; never instructions or commands."""
+    if not isinstance(value, dict) or set(value) != {"id", "step"}:
+        raise ValueError("Invalid diagnostic state")
+    identifier, step = value["id"], value["step"]
+    if not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 64:
+        raise ValueError("Invalid diagnostic identity")
+    if type(step) is not int or not 0 <= step <= 99:
+        raise ValueError("Invalid diagnostic step")
+    return {"id": identifier, "step": step}
+
+
+def _entries(items, session_id=None):
+    if not isinstance(items, list):
+        return []
+    result = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str) or not content or len(content) > MAX_MESSAGE_CHARS:
+            continue
+        if session_id is not None and item.get("session_id", LEGACY_SESSION_ID) != session_id:
+            continue
+        entry = {"role": item["role"], "content": content}
+        if "timestamp" in item:
+            entry["timestamp"] = _timestamp(item["timestamp"], 0)
+        result.append(entry)
+    return result
+
+
+def _new_session(title="New conversation", session_id=None, messages=None):
+    now = time.time()
+    return {
+        "id": session_id or uuid.uuid4().hex,
+        "title": _title(title),
+        "created_at": now,
+        "updated_at": now,
+        "archived": False,
+        "messages": messages or [],
+    }
+
+
+def _document(loaded):
+    if isinstance(loaded, dict) and type(loaded.get("version")) is int and loaded["version"] == HISTORY_VERSION:
+        sessions = loaded.get("sessions")
+        if not isinstance(sessions, list) or not sessions or len(sessions) > MAX_SESSIONS:
+            raise ValueError("Invalid conversation history")
+        identifiers = set()
+        for session in sessions:
+            if not isinstance(session, dict) or not isinstance(session.get("id"), str):
+                raise ValueError("Invalid conversation metadata")
+            identifier = session["id"]
+            if not identifier or len(identifier) > 64 or identifier in identifiers:
+                raise ValueError("Invalid conversation identity")
+            identifiers.add(identifier)
+            _title(session.get("title"))
+            if not isinstance(session.get("archived"), bool) or not isinstance(session.get("messages"), list):
+                raise ValueError("Invalid conversation metadata")
+            if any(_timestamp(session.get(key), -1) == -1 for key in ("created_at", "updated_at")):
+                raise ValueError("Invalid conversation timestamp")
+            if len(_entries(session["messages"])) != len(session["messages"]):
+                raise ValueError("Invalid conversation messages")
+            if "diagnostic" in session:
+                _diagnostic_state(session["diagnostic"])
+        if loaded.get("active_session_id") not in identifiers:
+            raise ValueError("Invalid active conversation")
+        return loaded
+    if isinstance(loaded, list):
+        messages = _entries(loaded)
+        title = "Previous conversations" if messages else "New conversation"
+        session = _new_session(title, LEGACY_SESSION_ID, messages)
+        dates = [entry["timestamp"] for entry in messages if entry.get("timestamp")]
+        if dates:
+            session["created_at"], session["updated_at"] = min(dates), max(dates)
+        return {"version": HISTORY_VERSION, "active_session_id": session["id"], "sessions": [session]}
+    raise ValueError("Unsupported conversation history format")
+
+
+def _find(document, session_id):
+    for session in document["sessions"]:
+        if session.get("id") == session_id:
+            return session
+    raise ValueError("Conversation does not exist")
+
+
+def _metadata(session):
+    result = {key: session[key] for key in ("id", "title", "created_at", "updated_at", "archived")}
+    result["message_count"] = len(session["messages"])
+    return result
+
+
+def _ensure_active(document):
+    active = document.get("active_session_id")
+    if any(session["id"] == active and not session["archived"] for session in document["sessions"]):
+        return
+    available = [session for session in document["sessions"] if not session["archived"]]
+    if available:
+        document["active_session_id"] = max(available, key=lambda session: session["updated_at"])["id"]
+    else:
+        if len(document["sessions"]) >= MAX_SESSIONS:
+            raise ValueError("Keep at least one conversation available")
+        session = _new_session()
+        document["sessions"].append(session)
+        document["active_session_id"] = session["id"]
 
 
 class HistoryStore:
-    """Fila FIFO + writer thread para history.json (um ficheiro partilhado
-    pela GUI e pela CLI; escritas são atómicas, leituras best-effort)."""
+    """FIFO history writer with synchronous, atomic session management."""
 
     def __init__(self, path=None, max_messages: int = MAX_HISTORY_MESSAGES):
-        self.path = Path(path) if path else (
-            Path.home() / ".config" / "linux_ai_assistant" / "history.json"
-        )
+        self.path = Path(path) if path else Path.home() / ".config" / "linux_ai_assistant" / "history.json"
+        if not isinstance(max_messages, int) or max_messages < 1:
+            raise ValueError("max_messages must be positive")
         self.max_messages = max_messages
-        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._queue = queue.SimpleQueue()
         self._closed = False
-        self._writer = threading.Thread(
-            target=self._loop, name="history-writer", daemon=True
-        )
+        self._state_lock = threading.Lock()
+        self.last_error = None
+        loaded = self._read()
+        self._session_id = loaded.get("active_session_id", LEGACY_SESSION_ID) if isinstance(loaded, dict) else LEGACY_SESSION_ID
+        self._writer = threading.Thread(target=self._loop, name="history-writer", daemon=True)
         self._writer.start()
+        atexit.register(self.close)
 
-    # ---- API ----
+    @property
+    def active_session_id(self):
+        return self._session_id
 
-    def load_messages(self):
-        """Histórico normalizado [{'role','content'}] para o contexto.
-
-        O on-disk inclui `timestamp`, que não é campo de mensagem: a
-        normalização no load evita enviá-lo ao provider.
-        """
+    def _read(self):
         try:
-            if self.path.exists():
-                with open(self.path, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, list):
-                    return [
-                        {"role": m.get("role", "user"), "content": m.get("content", "")}
-                        for m in loaded
-                        if isinstance(m, dict) and m.get("content")
-                    ]
-        except Exception as e:
-            # logger do módulo de origem é main_window; aqui usamos um próprio
-            import logging
-            logging.getLogger(__name__).error(f"Error loading history: {e}")
-        return []
+            with self.path.open(encoding="utf-8") as stream:
+                return json.load(stream)
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as error:
+            logging.getLogger(__name__).error("Error loading history: %s", error)
+            return []
 
-    def append(self, role: str, content: str, timestamp: float = None):
-        """Enfileira uma mensagem para o writer (não bloqueia)."""
-        if self._closed:
-            return
-        self._queue.put({
-            "timestamp": timestamp if timestamp is not None else time.time(),
-            "role": role,
-            "content": content,
-        })
-
-    def close(self, timeout: float = 1.0):
-        """Drena as escritas pendentes e termina a thread."""
-        if self._closed:
-            return
-        self._closed = True
+    def load_entries(self, session_id=None):
+        """Read only the selected conversation, preserving message timestamps."""
+        self.flush()
+        loaded = self._read()
+        selected = session_id or self._session_id
+        if isinstance(loaded, list):
+            return _entries(loaded, selected)[-self.max_messages:]
         try:
-            self._queue.put(None)
+            return _entries(_find(_document(loaded), selected)["messages"])[-self.max_messages:]
+        except ValueError:
+            return []
+
+    def load_messages(self, session_id=None):
+        """Normalized provider context: no timestamps or other conversations."""
+        return [{"role": entry["role"], "content": entry["content"]} for entry in self.load_entries(session_id)]
+
+    def append(self, role: str, content: str, timestamp: float = None, session_id=None):
+        if role not in ("user", "assistant") or not isinstance(content, str) or not content:
+            raise ValueError("Invalid conversation message")
+        if len(content) > MAX_MESSAGE_CHARS:
+            raise ValueError("Conversation message is too large")
+        with self._state_lock:
+            if self._closed:
+                return
+            self._queue.put({"timestamp": _timestamp(timestamp), "role": role, "content": content,
+                             "session_id": session_id or self._session_id})
+
+    def flush(self, timeout=None):
+        """Wait for all already queued messages; return False after a write failure."""
+        with self._state_lock:
+            if self._closed:
+                return self.last_error is None and not self._writer.is_alive()
+            barrier = threading.Event()
+            self._queue.put(barrier)
+        return barrier.wait(timeout) and self.last_error is None
+
+    def _transaction(self, action):
+        if not self.flush():
+            raise OSError("Pending conversation messages could not be saved") from self.last_error
+        result = []
+
+        def update(loaded):
+            document = _document(loaded)
+            result.append(action(document))
+            return document
+
+        update_json(self.path, update, [])
+        return result[0]
+
+    def _snapshot(self):
+        """Atomic replacement makes snapshots safe; only legacy migration writes."""
+        if not self.flush():
+            raise OSError("Pending conversation messages could not be saved") from self.last_error
+        loaded = self._read()
+        if isinstance(loaded, list):
+            return self._transaction(lambda document: document)
+        return _document(loaded)
+
+    def list_sessions(self, include_archived=False):
+        document = self._snapshot()
+        return [_metadata(session) for session in sorted(document["sessions"],
+                key=lambda session: session["updated_at"], reverse=True)
+                if include_archived or not session["archived"]]
+
+    def create_session(self, title="New conversation", select=True):
+        title = _title(title)
+
+        def create(document):
+            if len(document["sessions"]) >= MAX_SESSIONS:
+                raise ValueError("Conversation limit reached; export and delete an older conversation")
+            session = _new_session(title)
+            document["sessions"].append(session)
+            if select:
+                document["active_session_id"] = session["id"]
+            return _metadata(session)
+
+        session = self._transaction(create)
+        if select:
+            self._session_id = session["id"]
+        return session
+
+    def select_session(self, session_id):
+        def select(document):
+            session = _find(document, session_id)
+            if session["archived"]:
+                raise ValueError("Restore an archived conversation before selecting it")
+            document["active_session_id"] = session_id
+            return _metadata(session)
+        session = self._transaction(select)
+        self._session_id = session_id
+        return session
+
+    def rename_session(self, session_id, title):
+        title = _title(title)
+
+        def rename(document):
+            session = _find(document, session_id)
+            session["title"] = title
+            session["updated_at"] = time.time()
+            return _metadata(session)
+        return self._transaction(rename)
+
+    def archive_session(self, session_id, archived=True):
+        def archive(document):
+            session = _find(document, session_id)
+            session["archived"] = bool(archived)
+            session["updated_at"] = time.time()
+            _ensure_active(document)
+            return _metadata(session), document["active_session_id"]
+        metadata, active = self._transaction(archive)
+        if self._session_id == session_id and archived:
+            self._session_id = active
+        return metadata
+
+    def delete_session(self, session_id):
+        def delete(document):
+            _find(document, session_id)
+            document["sessions"] = [session for session in document["sessions"] if session["id"] != session_id]
+            _ensure_active(document)
+            return document["active_session_id"]
+        active = self._transaction(delete)
+        if self._session_id == session_id:
+            self._session_id = active
+
+    def clear_session(self, session_id=None):
+        """Clear messages only in the selected conversation, retaining its identity."""
+        selected = session_id or self._session_id
+
+        def clear(document):
+            session = _find(document, selected)
+            session["messages"] = []
+            session.pop("diagnostic", None)
+            session["updated_at"] = time.time()
+            return _metadata(session)
+        return self._transaction(clear)
+
+    def get_diagnostic_state(self, session_id=None):
+        """Restore only the selected conversation's guide position."""
+        selected = session_id or self._session_id
+        session = _find(self._snapshot(), selected)
+        state = session.get("diagnostic")
+        return _diagnostic_state(state) if state is not None else None
+
+    def set_diagnostic_state(self, state, session_id=None):
+        """Persist a guide position, or clear it with None."""
+        clean = _diagnostic_state(state) if state is not None else None
+        selected = session_id or self._session_id
+
+        def set_state(document):
+            session = _find(document, selected)
+            if clean is None:
+                session.pop("diagnostic", None)
+            else:
+                session["diagnostic"] = clean
+            session["updated_at"] = time.time()
+        self._transaction(set_state)
+
+    def search(self, query, include_archived=False):
+        if not isinstance(query, str) or len(query) > 500:
+            raise ValueError("Search must contain at most 500 characters")
+        query = query.strip().casefold()
+        if not query:
+            return []
+
+        def search_current(document):
+            matches = []
+            for session in document["sessions"]:
+                if session["archived"] and not include_archived:
+                    continue
+                if query in session["title"].casefold():
+                    matches.append({"session_id": session["id"], "title": session["title"],
+                                    "message_index": None, "preview": session["title"]})
+                    if len(matches) >= MAX_SEARCH_RESULTS:
+                        return matches
+                for index, entry in enumerate(session["messages"]):
+                    offset = entry["content"].casefold().find(query)
+                    if offset >= 0:
+                        start = max(0, offset - 60)
+                        matches.append({"session_id": session["id"], "title": session["title"],
+                                        "message_index": index, "role": entry["role"],
+                                        "preview": entry["content"][start:start + 240]})
+                        if len(matches) >= MAX_SEARCH_RESULTS:
+                            return matches
+            return matches
+        return search_current(self._snapshot())
+
+    def export_session(self, session_id=None, format="markdown"):
+        selected = session_id or self._session_id
+
+        session = _find(self._snapshot(), selected)
+        if format == "json":
+            return json.dumps({"format": EXPORT_FORMAT, "version": 1, "session": session},
+                              indent=2, ensure_ascii=False)
+        if format != "markdown":
+            raise ValueError("Export format must be markdown or json")
+        lines = ["# " + session["title"].replace("\n", " "), ""]
+        for entry in session["messages"]:
+            lines.extend(["## " + ("User" if entry["role"] == "user" else "Assistant"), ""])
+            if entry.get("timestamp"):
+                lines.extend([datetime.fromtimestamp(entry["timestamp"], timezone.utc).isoformat(), ""])
+            lines.extend([entry["content"], ""])
+        return "\n".join(lines)
+
+    def import_session(self, text, select=True):
+        if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_IMPORT_BYTES:
+            raise ValueError("Conversation import exceeds the 2 MiB limit")
+        try:
+            payload = json.loads(text)
+        except (ValueError, RecursionError) as error:
+            raise ValueError("Invalid conversation JSON") from error
+        if (not isinstance(payload, dict) or payload.get("format") != EXPORT_FORMAT
+                or type(payload.get("version")) is not int or payload["version"] != 1):
+            raise ValueError("Unsupported conversation export format")
+        source = payload.get("session")
+        if not isinstance(source, dict) or not isinstance(source.get("messages"), list):
+            raise ValueError("Invalid conversation export")
+        title = _title(source.get("title"))
+        messages = source["messages"]
+        if len(messages) > self.max_messages:
+            raise ValueError("Conversation import has too many messages")
+        clean = _entries(messages)
+        if len(clean) != len(messages):
+            raise ValueError("Conversation import contains invalid messages")
+        for entry in messages:
+            if "timestamp" in entry and _timestamp(entry["timestamp"], -1) == -1:
+                raise ValueError("Conversation import contains an invalid timestamp")
+
+        def import_current(document):
+            if len(document["sessions"]) >= MAX_SESSIONS:
+                raise ValueError("Conversation limit reached")
+            session = _new_session(title, messages=clean)
+            document["sessions"].append(session)
+            if select:
+                document["active_session_id"] = session["id"]
+            return _metadata(session)
+        metadata = self._transaction(import_current)
+        if select:
+            self._session_id = metadata["id"]
+        return metadata
+
+    def close(self, timeout=None):
+        with self._state_lock:
+            if not self._closed:
+                self._closed = True
+                self._queue.put(None)
+        try:
             self._writer.join(timeout)
         except RuntimeError:
             pass
+        return not self._writer.is_alive() and self.last_error is None
 
-    # ---- Writer ----
+    @staticmethod
+    def save_entries(path, entries, max_messages=MAX_HISTORY_MESSAGES, session_id=None):
+        """Merge legacy or scoped entries under the shared inter-process lock."""
+        incoming = list(entries)
+
+        def merge_messages(old, new):
+            seen, merged = set(), []
+            for item in _entries(old) + _entries(new):
+                key = json.dumps([item["role"], item["content"], item.get("timestamp")], sort_keys=True)
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(item)
+            return merged[-max_messages:]
+
+        def merge(loaded):
+            targets = {session_id or item.get("session_id", LEGACY_SESSION_ID)
+                       for item in incoming if isinstance(item, dict)}
+            if isinstance(loaded, list) and targets <= {LEGACY_SESSION_ID}:
+                return merge_messages(loaded, incoming)
+            document = _document(loaded)
+            for target in targets:
+                try:
+                    session = _find(document, target)
+                except ValueError:
+                    if session_id is not None:
+                        raise
+                    # A delayed command/stream can finish after another process
+                    # deletes its captured session. Do not recreate that session
+                    # or retain this batch forever and poison unrelated writes.
+                    logging.getLogger(__name__).warning(
+                        "Discarding queued messages for deleted conversation %r", target)
+                    continue
+                messages = [item for item in incoming if isinstance(item, dict)
+                            and (session_id or item.get("session_id", LEGACY_SESSION_ID)) == target]
+                session["messages"] = merge_messages(session["messages"], messages)
+                session["updated_at"] = time.time()
+            return document
+        return update_json(path, merge, [])
 
     def _loop(self):
-        """Single background writer (FIFO order, atomic)."""
+        pending = []
         while True:
-            entry = self._queue.get()
-            if entry is None:  # sentinel: drain requested at shutdown
-                return
-            temp_path = None
-            try:
-                # Drain everything already queued: rewriting the whole file
-                # once per message turned a burst of messages into a burst of
-                # full rewrites (O(n) I/O per turn, with an fsync each).
-                entries = [entry]
-                stop = False
-                while True:
-                    try:
-                        item = self._queue.get_nowait()
-                    except queue.Empty:
-                        break
-                    if item is None:  # sentinel arrived mid-drain
-                        stop = True
-                        break
-                    entries.append(item)
-
-                history = []
-                if self.path.exists():
-                    with open(self.path, "r", encoding="utf-8") as f:
-                        loaded = json.load(f)
-                    if isinstance(loaded, list):
-                        history = loaded
-                history.extend(entries)
-                history = history[-self.max_messages:]
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                temp_path = self.path.with_name(self.path.name + ".tmp")
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    json.dump(history, f, indent=2, ensure_ascii=False)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(temp_path, self.path)
+            item = self._queue.get()
+            barriers, stop = [], False
+            while True:
+                if item is None:
+                    stop = True
+                elif isinstance(item, threading.Event):
+                    barriers.append(item)
+                else:
+                    pending.append(item)
                 if stop:
-                    return
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error(f"Error saving history: {e}")
-                if temp_path is not None:
-                    try:
-                        os.unlink(temp_path)
-                    except OSError:
-                        pass
+                    break
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+            if pending:
+                try:
+                    self.save_entries(self.path, pending, self.max_messages)
+                    pending = []
+                    self.last_error = None
+                except Exception as error:
+                    self.last_error = error
+                    logging.getLogger(__name__).error("Error saving history: %s", error)
+            for barrier in barriers:
+                barrier.set()
+            if stop:
+                return

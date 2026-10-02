@@ -12,7 +12,6 @@ Uso:
 
 import sys
 import json
-import os
 import time
 import argparse
 import logging
@@ -23,7 +22,11 @@ from .config_manager import ConfigManager
 from .ai_client import AIClient, AIProviderError
 from .system_utils import SystemUtils
 from . import offline_assistant
-from .i18n import get_language
+from .i18n import get_language, set_language_from_config
+from .history_store import HistoryStore
+from .assistant_context import build_system_message
+from .conversation_io import read_conversation, write_conversation
+from .local_knowledge import PROCEDURE_BY_ID, search_procedures, render_procedure
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ class CLIApp:
 
     def __init__(self):
         self.config = ConfigManager()
+        set_language_from_config(self.config)
         self.ai_client = AIClient(self.config)
         self.system_utils = SystemUtils(self.config)
         # Local answers when there is no key or no connection.
@@ -41,6 +45,8 @@ class CLIApp:
         )
         # Load the shared history (written by the GUI too) so saving it back
         # never wipes entries from other sessions.
+        self.history_store = None
+        self._pending_exchanges = []
         self.conversation_history = self._load_history()
         self.expert_mode = False
 
@@ -66,7 +72,7 @@ Exemplos:
 
         # Command: chat
         chat_parser = subparsers.add_parser('chat', help='Chat with the AI')
-        chat_parser.add_argument('message', nargs='+', help='Message to send')
+        chat_parser.add_argument('message', nargs='*', help='Message to send')
         chat_parser.add_argument('--provider', '-p', default=None,
                                 help='AI provider (default: from configuration)')
         chat_parser.add_argument('--model', '-m', default=None,
@@ -89,11 +95,47 @@ Exemplos:
 
         # Command: expert
         expert_parser = subparsers.add_parser('expert', help='Expert mode')
-        expert_parser.add_argument('message', nargs='+', help='Question for the expert')
+        expert_parser.add_argument('message', nargs='*', help='Question for the expert')
         expert_parser.add_argument('--provider', '-p', default=None,
                                     help='AI provider')
         expert_parser.add_argument('--model', '-m', default=None,
                                     help='Model to use')
+
+        for message_parser in (chat_parser, expert_parser):
+            selection = message_parser.add_mutually_exclusive_group()
+            selection.add_argument('--session', help='Conversation identifier to resume')
+            selection.add_argument('--new-session', action='store_true', help='Start a new conversation')
+            source = message_parser.add_mutually_exclusive_group()
+            source.add_argument('--stdin', action='store_true', help='Read text from stdin (up to 64 KiB)')
+            source.add_argument('--input', type=Path, help='Read a UTF-8 text file (up to 64 KiB)')
+        expert_parser.add_argument('--no-history', action='store_true', help='Do not save the exchange')
+        expert_parser.add_argument('--stream', action='store_true', help='Stream the answer')
+
+        sessions = subparsers.add_parser('sessions', help='Manage independent conversations')
+        actions = sessions.add_subparsers(dest='session_action', required=True)
+        actions.add_parser('list', help='List conversations, including archived ones')
+        new = actions.add_parser('new', help='Create and select a conversation')
+        new.add_argument('title', nargs='?', default='New conversation')
+        for action in ('use', 'archive', 'restore', 'delete'):
+            action_parser = actions.add_parser(action)
+            action_parser.add_argument('id', help='Conversation identifier')
+        rename = actions.add_parser('rename')
+        rename.add_argument('id')
+        rename.add_argument('title')
+        search = actions.add_parser('search')
+        search.add_argument('query')
+        export = actions.add_parser('export')
+        export.add_argument('--session')
+        export.add_argument('--format', choices=('markdown', 'json'), default='markdown')
+        export.add_argument('--output', type=Path, help='New output file (existing files are never overwritten)')
+        imported = actions.add_parser('import', help='Import a versioned JSON conversation')
+        imported.add_argument('path', type=Path)
+        mode = subparsers.add_parser('mode', help='Show or select assistance mode')
+        mode.add_argument('value', nargs='?', choices=('auto', 'offline', 'local', 'remote'))
+        mode.add_argument('--check', action='store_true', help='Test the local model connection')
+        subparsers.add_parser('local-models', help='List models installed on the configured local server')
+        knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
+        knowledge.add_argument('query', nargs='+')
 
         # Command: system
         system_parser = subparsers.add_parser('system', help='System information')
@@ -155,6 +197,15 @@ Exemplos:
         return parser.parse_args()
 
     def run(self):
+        try:
+            return self._run_command()
+        finally:
+            if self.history_store is not None:
+                self.history_store.close()
+            self.config.flush()
+            self.ai_client.flush_usage()
+
+    def _run_command(self):
         """Run the CLI application.
 
         Devolve o exit code do comando (0 = sucesso): scripts que encadeiam
@@ -166,6 +217,28 @@ Exemplos:
         if not args.command:
             self.print_help()
             return 0
+
+        if args.command == 'sessions':
+            return self.handle_sessions(args)
+        if args.command == 'mode':
+            if args.value:
+                self.config.set_assistance_mode(args.value)
+                self.config.flush()
+            status = self.ai_client.provider_status(check_connection=args.check)
+            print(json.dumps(status.__dict__, ensure_ascii=False, indent=2))
+            return 1 if status.state in ('blocked', 'unreachable', 'model_missing', 'error') else 0
+        if args.command == 'local-models':
+            for model in self.ai_client.list_local_models():
+                print(model)
+            return 0
+        if args.command == 'knowledge':
+            query = ' '.join(args.query)
+            exact = PROCEDURE_BY_ID.get(query)
+            matches = ((exact,) if exact and exact.applies_to(self.offline.distro)
+                       else search_procedures(query, self.offline.distro, limit=5))
+            result = '\n\n'.join(render_procedure(item, get_language(), self.offline.distro) for item in matches)
+            print(result or ('Nenhum guia aplicável encontrado.' if get_language() == 'pt' else 'No applicable guide found.'))
+            return 0 if result else 1
 
         # Process command
         if args.command == 'chat':
@@ -201,6 +274,10 @@ Available commands:
   expert [message]          - Expert mode
   system [subcommand]       - System information
   history [options]         - View conversation history
+  sessions [subcommand]     - Manage, search and export conversations
+  knowledge [query]         - Search bundled local guides
+  mode [value]              - Show/select assistance mode
+  local-models              - List installed models on the local server
   stats [options]           - Usage statistics
   config [subcommand]       - Configuration
   providers                 - List the AI providers
@@ -218,46 +295,111 @@ Examples:
     def _history_file() -> Path:
         return Path.home() / ".config" / "linux_ai_assistant" / "history.json"
 
+    def _store(self):
+        if self.history_store is None:
+            self.history_store = HistoryStore(self._history_file())
+            self.history_store.list_sessions()
+        return self.history_store
+
     def _load_history(self):
-        """Load the shared conversation history (best effort)."""
-        try:
-            history_file = self._history_file()
-            if history_file.exists():
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    return data
-        except Exception as e:
-            logger.warning(f"Could not load history: {e}")
-        return []
+        self.offline.restore_diagnostic(self._store().get_diagnostic_state())
+        return self._store().load_entries()
+
+    def _prepare_conversation(self, args):
+        if getattr(args, 'session', None):
+            self._store().select_session(args.session)
+        elif getattr(args, 'new_session', False):
+            self._store().create_session()
+        else:
+            return
+        self.conversation_history = self._store().load_entries()
+        self._pending_exchanges = []
+        self.offline.restore_diagnostic(self._store().get_diagnostic_state())
+
+    @staticmethod
+    def _message_from_args(args):
+        message = ' '.join(args.message)
+        extra = ''
+        if getattr(args, 'input', None):
+            with args.input.open('rb') as stream:
+                data = stream.read(65537)
+            if len(data) > 65536:
+                raise ValueError('Input file exceeds 64 KiB')
+            extra = data.decode('utf-8')
+        elif getattr(args, 'stdin', False):
+            extra = sys.stdin.read(65537)
+        message = '\n\n'.join(part for part in (message, extra) if part).strip()
+        if len(message.encode('utf-8')) > 65536:
+            raise ValueError('Input exceeds 64 KiB')
+        if not message:
+            raise ValueError('Provide a message, --stdin or --input')
+        return message
+
+    def handle_sessions(self, args):
+        store = self._store()
+        action = args.session_action
+        if action == 'list':
+            for session in store.list_sessions(include_archived=True):
+                marker = '*' if session['id'] == store.active_session_id else ' '
+                archived = ' [archived]' if session['archived'] else ''
+                print('{} {}  {} ({} messages){}'.format(marker, session['id'], session['title'], session['message_count'], archived))
+        elif action == 'new':
+            print(store.create_session(args.title)['id'])
+        elif action == 'use':
+            print(store.select_session(args.id)['id'])
+        elif action == 'rename':
+            store.rename_session(args.id, args.title)
+        elif action in ('archive', 'restore'):
+            store.archive_session(args.id, action == 'archive')
+        elif action == 'delete':
+            store.delete_session(args.id)
+        elif action == 'search':
+            print(json.dumps(store.search(args.query, include_archived=True), ensure_ascii=False, indent=2))
+        elif action == 'export':
+            content = store.export_session(args.session, args.format)
+            if args.output:
+                write_conversation(args.output, content)
+                print(args.output)
+            else:
+                print(content)
+        elif action == 'import':
+            print(store.import_session(read_conversation(args.path))['id'])
+        return 0
 
     def _build_request_messages(self, message: str):
         """Assemble the request context: system prompt + capped history + message."""
-        context = self._get_context_message()
+        context = self._get_context_message(message)
         # Cap the context the same way the GUI does - never re-send the whole
         # conversation on every turn.
-        max_messages = self.config.get("context.max_messages", 40)
+        try:
+            max_messages = max(2, min(500, int(self.config.get("context.max_messages", 20))))
+        except (TypeError, ValueError):
+            max_messages = 20
         history = [
             {"role": m.get("role"), "content": m.get("content", "")}
             for m in self.conversation_history[-max_messages:]
             if isinstance(m, dict) and m.get("role") in ("user", "assistant")
         ]
+        try:
+            max_chars = max(1000, min(400000, int(self.config.get('context.max_chars', 12000))))
+        except (TypeError, ValueError):
+            max_chars = 12000
+        total = sum(len(item['content']) for item in history) + len(message)
+        while history and total > max_chars:
+            total -= len(history.pop(0)['content'])
         full_history = ([context] + history) if context else history
         full_history.append({"role": "user", "content": message})
         return full_history
 
     def _record_exchange(self, message: str, response_text: str):
         """Append a user/assistant exchange to the in-memory history."""
-        self.conversation_history.append({
-            "role": "user",
-            "content": message,
-            "timestamp": time.time(),
-        })
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": response_text,
-            "timestamp": time.time(),
-        })
+        exchange = [
+            {'role': 'user', 'content': message, 'timestamp': time.time()},
+            {'role': 'assistant', 'content': response_text, 'timestamp': time.time()},
+        ]
+        self.conversation_history.extend(exchange)
+        self._pending_exchanges.extend(exchange)
+        self.conversation_history = self.conversation_history[-1000:]
 
     def _run_offline(self, message: str) -> str:
         """Answer from local knowledge and print the suggested commands."""
@@ -272,7 +414,8 @@ Examples:
 
     def handle_chat(self, args):
         """Process the chat command. Devolve exit code (0 sucesso, 1 falha)."""
-        message = ' '.join(args.message)
+        self._prepare_conversation(args)
+        message = self._message_from_args(args)
 
         if args.expert:
             self.expert_mode = True
@@ -339,34 +482,13 @@ Examples:
         return 1
 
     def handle_expert(self, args):
-        """Process the expert command. Devolve exit code."""
-        self.expert_mode = True
-        message = ' '.join(args.message)
-
-        full_history = self._build_request_messages(message)
-
-        response_text = self.ai_client.chat(
-            full_history,
-            provider=args.provider,
-            model=args.model
-        )
-
-        if response_text:
-            print(f"\n[Expert]\n{response_text}\n")
-            # Persist like `chat` does: expert turns used to vanish on exit
-            self._record_exchange(message, response_text)
-            self._save_history()
-            return 0
-
-        # Uniformizar com `chat`: provider em baixo → resposta offline em
-        # vez de "[ERROR]" cru (o fallback offline não existia aqui).
-        if not self.ai_client.provider_ready(args.provider):
-            response_text = self._run_offline(message)
-            self._record_exchange(message, response_text)
-            self._save_history()
-            return 0
-        print("\n[ERROR] Could not get a response\n")
-        return 1
+        """Expert uses the same routing, sessions and fallback as ordinary chat."""
+        args.expert = True
+        if not hasattr(args, 'stream'):
+            args.stream = False
+        if not hasattr(args, 'no_history'):
+            args.no_history = False
+        return self.handle_chat(args)
 
     def handle_system(self, args):
         """Process the system command."""
@@ -463,53 +585,20 @@ Examples:
         print("=" * 50 + "\n")
 
     def handle_history(self, args):
-        """Process the history command."""
-        history_file = self._history_file()
-
+        """View or clear only the current conversation."""
+        store = self._store()
         if args.clear:
-            try:
-                if history_file.exists():
-                    history_file.unlink()
-                    print("✓ History cleared")
-                else:
-                    print("✓ No history to clear")
-            except Exception as e:
-                print(f"✗ Error clearing history: {e}")
-            return
-
-        try:
-            if history_file.exists():
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-
-                # Show the last N messages (limit 0/negative => nothing)
-                if args.limit <= 0:
-                    messages = []
-                else:
-                    limit = min(args.limit, len(history))
-                    messages = history[-limit:]
-
-                print(f"\nLast {len(messages)} history messages:\n")
-                for i, msg in enumerate(messages, 1):
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    timestamp = msg.get("timestamp")
-
-                    # Format the timestamp (entries without one: no date shown)
-                    if timestamp:
-                        timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
-                    else:
-                        timestamp_str = "—"
-
-                    # Truncate the content if it is too long
-                    if len(content) > 100:
-                        content = content[:100] + "..."
-
-                    print(f"{i:>3}. [{timestamp_str}] [{role}]\n   {content}\n")
-            else:
-                print("✓ No history available")
-        except Exception as e:
-            print(f"✗ Error loading history: {e}")
+            store.clear_session()
+            self.conversation_history = []
+            self._pending_exchanges = []
+            self.offline.reset_conversation()
+            print('Current conversation cleared')
+            return 0
+        messages = store.load_entries()
+        messages = messages[-args.limit:] if args.limit > 0 else []
+        for item in messages:
+            print('[{}]\n{}\n'.format(item['role'], item['content']))
+        return 0
 
     def _render_token_usage(self, title: str = "USAGE STATISTICS"):
         """Shared renderer for `stats` and `tokens usage`."""
@@ -631,82 +720,18 @@ Examples:
             self.ai_client.reset_token_usage()
             print("✓ Token count reset")
 
-    def _get_context_message(self) -> Optional[Dict[str, str]]:
-        """Get the context message based on the current mode."""
-        if self.expert_mode:
-            return {
-                "role": "system",
-                "content": """You are the Linux systems expert with extensive knowledge of:
-- Configuration of systems and services
-- Package management (apt, dnf, pacman, xbps, etc.)
-- Network and firewall configuration
-- Scripting in Bash and Python
-- Troubleshooting common problems
-- Performance optimization
-- System security
-
-You help the user solve problems, explain concepts and make changes to configuration files.
-Be precise and provide specific commands the user can run.
-If editing configuration files is needed, ask for explicit authorization before doing so.
-Respond in English."""
-            }
-        else:
-            return {
-                "role": "system",
-                "content": """You are a helpful AI assistant that answers questions about the Linux system and general topics.
-You can help with questions, explanations and suggestions.
-Respond clearly and concisely in English."""
-            }
+    def _get_context_message(self, query='') -> Optional[Dict[str, str]]:
+        return build_system_message(self.expert_mode, self.offline.distro, query, get_language())
 
     def _save_history(self):
-        """Save the conversation history (atomic; preserves other sessions').
+        store = self._store()
+        for item in self._pending_exchanges:
+            store.append(item['role'], item['content'], item['timestamp'])
+        if not store.flush():
+            raise OSError('Could not save conversation: {}'.format(store.last_error))
+        store.set_diagnostic_state(self.offline.diagnostic_state())
+        self._pending_exchanges = []
 
-        Fundir com o ficheiro em disco em vez de o reescrever: a GUI mantém
-        a própria fila de escrita, e um `last-writer-wins` apagava as
-        entradas gravadas pela GUI desde o arranque do CLI (o comentário
-        antigo prometia o contrário do que acontecia). Dedup por
-        (role, content, timestamp) e cap de 1000, como o writer da GUI.
-        """
-        history_file = self._history_file()
-        temp_path = None
-        try:
-            history_file.parent.mkdir(parents=True, exist_ok=True)
-            on_disk = []
-            if history_file.exists():
-                try:
-                    with open(history_file, 'r', encoding='utf-8') as f:
-                        loaded = json.load(f)
-                    if isinstance(loaded, list):
-                        on_disk = loaded
-                except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(f"Could not merge existing history: {e}")
-
-            seen = set()
-            merged = []
-            for entry in list(on_disk) + list(self.conversation_history):
-                if not isinstance(entry, dict):
-                    continue
-                key = (entry.get("role"), entry.get("content"),
-                       entry.get("timestamp"))
-                if key in seen:
-                    continue
-                seen.add(key)
-                merged.append(entry)
-            merged = merged[-1000:]
-
-            temp_path = history_file.with_name(history_file.name + ".tmp")
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(merged, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, history_file)
-        except Exception as e:
-            logger.error(f"Error saving history: {e}")
-            if temp_path is not None:
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
 
 
 def main():

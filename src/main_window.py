@@ -21,8 +21,11 @@ import logging
 from . import dock, file_actions, offline_assistant
 from .ai_client import AIProviderError
 from .chat_view import ChatView
-from .history_store import HistoryStore
+from .history_store import HistoryStore, MAX_HISTORY_MESSAGES
 from .i18n import _, get_language
+from .assistant_context import build_system_message
+from .conversation_dialog import show_conversations
+from .provider_settings import ProviderSettings, MODE_LABELS, STATUS_LABELS
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -35,9 +38,6 @@ _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 _.,'-]{1,64}$")
 # Context budget: by default 12000 characters (~3k tokens) and 20 messages.
 MAX_CONTEXT_CHARS = 12000
 MAX_CONTEXT_MESSAGES = 20
-
-# Teto de mensagens em memória e em history.json (o writer usa o mesmo).
-MAX_HISTORY_MESSAGES = 1000
 
 # Intervalo mínimo entre flushes de chunks streaming para a UI (segundos).
 # Coalesce os chunks recebidos entre flushes: sem isto, cada chunk agendava
@@ -162,9 +162,12 @@ class MainWindow(Gtk.Window):
         # by HistoryStore (GTK-free), so the GTK main loop never blocks on a
         # full file rewrite per message.
         self.history_store = HistoryStore()
+        self.history_store.list_sessions()
+        self._refreshing_sessions = False
 
         # Create interface
         self._create_ui()
+        self._setup_style()
 
         # Connect signals
         self.connect("delete-event", self.on_delete_event)
@@ -178,6 +181,8 @@ class MainWindow(Gtk.Window):
 
         # Load conversation history
         self._load_conversation_history()
+        self._refresh_session_controls()
+        self._refresh_mode_status()
 
         logger.info("Main window initialized")
 
@@ -223,9 +228,10 @@ class MainWindow(Gtk.Window):
         if hasattr(self, "expert_btn"):
             self.expert_btn.set_visible(self.config.get("features.expert_mode", True))
 
-    def close_history_writer(self, timeout: float = 1.0):
+    def close_history_writer(self, timeout=None):
         """Flush pending history writes and stop the writer thread."""
-        self.history_store.close(timeout)
+        if not self.history_store.close(timeout):
+            logger.error("History writer did not finish successfully: %s", self.history_store.last_error)
 
     def show_notification(self, title: str, message: str, icon: str = "dialog-information"):
         """Show system notification"""
@@ -322,6 +328,12 @@ class MainWindow(Gtk.Window):
         user_msg_color = safe_color(syntax_colors.get('user_message'), '#e0e0e0')
         ai_msg_color = safe_color(syntax_colors.get('ai_message'), '#a0d0a0')
         system_msg_color = safe_color(syntax_colors.get('system_message'), '#808080')
+        if hasattr(self, 'chat_view'):
+            self.chat_view.set_style(font_family, font_size, {
+                'user': user_msg_color, 'ai': ai_msg_color, 'system': system_msg_color,
+                'code': safe_color(syntax_colors.get('code'), text_color),
+                'code_background': secondary_color,
+            })
 
         css = f"""
         #main-box {{
@@ -360,24 +372,6 @@ class MainWindow(Gtk.Window):
             color: {text_color};
             border: none;
             padding: 5px;
-        }}
-
-        textview.user-message {{
-            color: {user_msg_color};
-            font-family: {font_family};
-            font-size: {font_size}pt;
-        }}
-
-        textview.ai-message {{
-            color: {ai_msg_color};
-            font-family: {font_family};
-            font-size: {font_size}pt;
-        }}
-
-        textview.system-message {{
-            color: {system_msg_color};
-            font-family: {font_family};
-            font-size: {font_size}pt;
         }}
 
         button {{
@@ -495,6 +489,20 @@ class MainWindow(Gtk.Window):
         minimize_btn.connect("clicked", lambda btn: self.iconify())
         minimize_btn.set_tooltip_text(_("Minimize"))
         header.pack_end(minimize_btn, False, False, 0)
+
+        conversations = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        main_box.pack_start(conversations, False, False, 0)
+        self.session_combo = Gtk.ComboBoxText()
+        self.session_combo.set_hexpand(True)
+        self.session_combo.set_tooltip_text(_("Conversations"))
+        self.session_combo.connect('changed', self._on_session_selected)
+        conversations.pack_start(self.session_combo, True, True, 0)
+        new_conversation = Gtk.Button.new_from_icon_name('document-new', Gtk.IconSize.MENU)
+        new_conversation.set_tooltip_text(_("New conversation"))
+        new_conversation.connect('clicked', self._new_conversation)
+        conversations.pack_start(new_conversation, False, False, 0)
+        self.mode_label = Gtk.Label(xalign=0, wrap=True)
+        main_box.pack_start(self.mode_label, False, False, 0)
 
         # Chat area
         chat_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -871,57 +879,7 @@ class MainWindow(Gtk.Window):
         dialog.destroy()
 
     def _show_history_dialog(self):
-        """Show history dialog"""
-        dialog = Gtk.Dialog(
-            title=_("Conversation History - Linux AI Assistant"),
-            parent=self,
-            flags=0,
-            buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
-        )
-        dialog.set_default_size(500, 400)
-
-        content = dialog.get_content_area()
-
-        # Create scrolled window
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        content.add(scrolled)
-
-        # Create text view
-        textview = Gtk.TextView()
-        textview.set_editable(False)
-        textview.set_cursor_visible(False)
-        textview.set_wrap_mode(Gtk.WrapMode.WORD)
-        scrolled.add(textview)
-
-        # Load history
-        history_file = Path.home() / ".config" / "linux_ai_assistant" / "history.json"
-        buffer = textview.get_buffer()
-        if history_file.exists():
-            try:
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-
-                lines = []
-                for msg in history:
-                    role = msg.get("role", "unknown")
-                    text = msg.get("content", "")
-                    timestamp = msg.get("timestamp", 0)
-                    timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S',
-                                                  time.localtime(timestamp))
-                    lines.append(f"[{timestamp_str}] [{role}]\n{text}\n")
-                # Uma única inserção: 1000 buffer.insert síncronos na main
-                # thread congelavam a UI antes de o diálogo abrir.
-                buffer.insert(buffer.get_end_iter(), "\n".join(lines))
-            except Exception as e:
-                logger.error(f"Error loading history: {e}")
-                buffer.insert(buffer.get_end_iter(), f"Error loading history: {e}")
-        else:
-            buffer.insert(buffer.get_end_iter(), "No history available.")
-
-        dialog.show_all()
-        dialog.run()
-        dialog.destroy()
+        show_conversations(self)
 
     def _show_config_dialog(self):
         """Show settings dialog"""
@@ -1051,6 +1009,8 @@ class MainWindow(Gtk.Window):
         _refresh_key_warning(current_provider)
 
         notebook.append_page(api_box, Gtk.Label(label=_("API")))
+        assistance_settings = ProviderSettings(self.config, self.ai_client)
+        notebook.append_page(assistance_settings, Gtk.Label(label=_("Assistance")))
 
         # Appearance section
         ui_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1186,8 +1146,26 @@ class MainWindow(Gtk.Window):
         # Show dialog
         dialog.show_all()
 
-        # Save settings on close
-        response = dialog.run()
+        # Validate the draft before saving; Cancel never persists probe settings.
+        while True:
+            response = dialog.run()
+            if response != Gtk.ResponseType.OK:
+                break
+            try:
+                if (assistance_settings.mode.get_active_id() != self.config.get_assistance_mode()
+                        or assistance_settings.draft() != {
+                            key: self.config.get_local_model_settings()[key]
+                            for key in assistance_settings.draft()
+                        }):
+                    self._cancel_for_session_change()
+                assistance_settings.save()
+                break
+            except ValueError as error:
+                warning = Gtk.MessageDialog(transient_for=dialog, modal=True,
+                                            message_type=Gtk.MessageType.ERROR,
+                                            buttons=Gtk.ButtonsType.OK, text=str(error))
+                warning.run()
+                warning.destroy()
         if response == Gtk.ResponseType.OK:
             # Save provider (get_active_id() is None when nothing matches)
             new_provider = provider_combo.get_active_id()
@@ -1247,6 +1225,7 @@ class MainWindow(Gtk.Window):
 
             # Save settings
             self.config.save()
+            self._refresh_mode_status()
 
             # Show notification
             self.show_notification("Linux AI Assistant", _("Settings saved successfully"))
@@ -1282,13 +1261,6 @@ class MainWindow(Gtk.Window):
     # A mecânica de inserção vive em src/chat_view.py; aqui ficam apenas as
     # DECISÕES (o que mostrar, quando persistir).
 
-    def _append_message(self, label: str, message: str, tag_name: str):
-        return self.chat_view.append_message(label, message, tag_name)
-
-    def _apply_code_tags(self, buffer, body_start: int, message: str):
-        # `buffer` mantido na assinatura por compatibilidade interna
-        self.chat_view.apply_code_tags(body_start, message)
-
     def _add_user_message(self, message: str):
         """Add a user message to the chat (apenas UI; persistência via _remember)"""
         if not message:
@@ -1304,13 +1276,6 @@ class MainWindow(Gtk.Window):
             return
 
         if streaming and self.streaming:
-            # Replace the placeholder with the real header on the first chunk,
-            # so the streaming response is formatted correctly.
-            if self.chat_view.has_loading():
-                self.chat_view.clear_loading()
-                _start, _end, body_start = self.chat_view.append_stream_header()
-                # Remembered so the finished response can get its code tags
-                self.chat_view.body_start = body_start
             self.chat_view.insert_stream_chunk(message)
             self.chat_view.scroll_to_bottom()
         else:
@@ -1344,9 +1309,76 @@ class MainWindow(Gtk.Window):
         self.chat_view.scroll_to_bottom()
 
     def _load_conversation_history(self):
-        """Load conversation history (via HistoryStore, já normalizado)."""
+        self.offline.restore_diagnostic(self.history_store.get_diagnostic_state())
         self.conversation_history = self.history_store.load_messages()
-        logger.info(f"History loaded with {len(self.conversation_history)} messages")
+        self.chat_view.abort_stream()
+        self.chat_view.buffer.set_text('')
+        if len(self.conversation_history) > 100:
+            self._add_system_message(_("Showing the latest 100 messages. Export to view the full conversation."))
+        for message in self.conversation_history[-100:]:
+            if message['role'] == 'user':
+                self._add_user_message(message['content'])
+            else:
+                self._add_ai_message(message['content'])
+
+    def _refresh_session_controls(self):
+        self._refreshing_sessions = True
+        try:
+            self.session_combo.remove_all()
+            for session in self.history_store.list_sessions():
+                self.session_combo.append(session['id'], session['title'])
+            self.session_combo.set_active_id(self.history_store.active_session_id)
+        finally:
+            self._refreshing_sessions = False
+
+    def _refresh_mode_status(self):
+        status = self.ai_client.provider_status()
+        label = _(MODE_LABELS.get(status.mode, status.mode))
+        detail = _(STATUS_LABELS.get(status.state, status.state))
+        self.mode_label.set_text('{} — {}'.format(label, detail))
+        self.status_icon.set_tooltip_text(detail)
+
+    def _cancel_for_session_change(self):
+        self._cancel_event.set()
+        self._request_seq += 1
+        self._active_request = self._request_seq
+        self.is_loading = self.streaming = False
+        self.cancel_btn.set_sensitive(False)
+        self.chat_view.abort_stream()
+        self.chat_view.clear_loading()
+        self.status_icon.set_from_icon_name('emblem-ok', Gtk.IconSize.MENU)
+        self._renew_offline_assistant()
+        self._refresh_mode_status()
+
+    def _renew_offline_assistant(self):
+        self.offline = offline_assistant.OfflineAssistant(self.system_utils, self.config)
+        self.offline.restore_diagnostic(self.history_store.get_diagnostic_state())
+
+    def _switch_session(self, identifier):
+        self._cancel_for_session_change()
+        self.history_store.select_session(identifier)
+        # A cancelled worker keeps its own assistant; it cannot alter the next session's diagnostic.
+        self._renew_offline_assistant()
+        self._load_conversation_history()
+        self._refresh_session_controls()
+        self._refresh_mode_status()
+
+    def _on_session_selected(self, combo):
+        identifier = combo.get_active_id()
+        if (not self._refreshing_sessions and identifier
+                and identifier != self.history_store.active_session_id):
+            try:
+                self._switch_session(identifier)
+            except (OSError, ValueError, KeyError) as error:
+                self._add_system_message(str(error))
+                self._refresh_session_controls()
+
+    def _new_conversation(self, button=None):
+        try:
+            session = self.history_store.create_session(_("New conversation"), select=False)
+            self._switch_session(session['id'])
+        except (OSError, ValueError) as error:
+            self._add_system_message(str(error))
 
     def _build_request_messages(self):
         """Build the message list for the API.
@@ -1402,34 +1434,9 @@ class MainWindow(Gtk.Window):
         self._save_message_to_history(role, content)
 
     def _get_context_message(self) -> Optional[Dict[str, str]]:
-        """Get context message based on the current mode"""
-        if self.expert_mode:
-            return {
-                "role": "system",
-                "content": """You are the Linux systems expert with extensive knowledge of:
-- Configuration of systems and services
-- Package management (apt, dnf, pacman, xbps, etc.)
-- Network and firewall configuration
-- Scripting in Bash and Python
-- Troubleshooting common problems
-- Performance optimization
-- System security
-
-You help the user solve problems, explain concepts and make changes to configuration files.
-Be precise and provide specific commands the user can run.
-If editing configuration files is needed, ask for explicit authorization before doing so.
-Respond in English.
-
-System information:
-""" + self._get_system_info_for_context()
-            }
-        else:
-            return {
-                "role": "system",
-                "content": """You are a helpful AI assistant that answers questions about the Linux system and general topics.
-You can help with questions, explanations and suggestions.
-Respond clearly and concisely in English."""
-            }
+        query = next((item['content'] for item in reversed(self.conversation_history)
+                      if item['role'] == 'user'), '')
+        return build_system_message(self.expert_mode, self.offline.distro, query, get_language())
 
     def _get_system_info_for_context(self) -> str:
         """Get system information for context."""
@@ -1474,6 +1481,11 @@ Respond clearly and concisely in English."""
         context = self._get_context_message()
         messages = self._build_request_messages()
         full_history = ([context] + messages) if context else messages
+        try:
+            provider = self.ai_client.active_provider()
+            route = {'provider': provider, 'ready': self.ai_client.provider_ready(provider)}
+        except AIProviderError:
+            route = {'provider': None, 'ready': False}
 
         # Per-request state: fresh id + cancel event. A worker that is
         # still draining after a cancel can no longer touch this request.
@@ -1482,7 +1494,7 @@ Respond clearly and concisely in English."""
         cancel_event = threading.Event()
         self._cancel_event = cancel_event
         self._active_request = request_id
-        self.chat_view.body_start = None
+        self.chat_view.abort_stream()
 
         # Update state
         self.is_loading = True
@@ -1494,18 +1506,21 @@ Respond clearly and concisely in English."""
         # Process in a separate thread so the UI is not blocked
         threading.Thread(
             target=self._process_message,
-            args=(text, full_history, request_id, cancel_event),
+            args=(text, full_history, request_id, cancel_event, self.offline, route),
             daemon=True,
         ).start()
 
     def _process_message(self, message: str, full_history: list,
-                         request_id: int, cancel_event: threading.Event):
+                         request_id: int, cancel_event: threading.Event, offline=None, route=None):
         """Process the message and get the AI response.
 
         All UI/history mutations are queued to the main loop with
         `request_id`, so output from a superseded or cancelled request is
         dropped instead of corrupting the next turn.
         """
+        if cancel_event.is_set() or request_id != self._active_request:
+            return
+        offline = offline if offline is not None else self.offline
         GLib.idle_add(self._add_loading_message, request_id, cancel_event)
         response_text = ""
         # Coalescing de chunks: acumula no worker e faz flush à UI no
@@ -1517,14 +1532,19 @@ Respond clearly and concisely in English."""
         try:
             offline_reply = None
 
-            if not self.ai_client.provider_ready():
+            ready = route['ready'] if route is not None else self.ai_client.provider_ready()
+            if not ready:
                 # No key for the selected provider: answer from local knowledge
                 # instead of failing with "API key not configured".
                 logger.info("No usable provider; using the offline assistant")
-                offline_reply = self.offline.handle(message, get_language())
+                offline_reply = offline.handle(message, get_language())
             else:
                 try:
-                    for chunk in self.ai_client.stream_chat(full_history):
+                    if cancel_event.is_set():
+                        return
+                    stream = (self.ai_client.stream_chat(full_history, provider=route['provider'])
+                              if route is not None else self.ai_client.stream_chat(full_history))
+                    for chunk in stream:
                         if cancel_event.is_set():
                             break
 
@@ -1547,21 +1567,21 @@ Respond clearly and concisely in English."""
                         "Provider unavailable (%s); using the offline assistant", e
                     )
                     if not cancel_event.is_set():
+                        pending_chunks.clear()
                         response_text = ""
-                        offline_reply = self.offline.handle(message, get_language())
+                        offline_reply = offline.handle(message, get_language())
 
-                if pending_chunks:
+                if offline_reply is None and not response_text and not cancel_event.is_set():
+                    offline_reply = offline.handle(message, get_language())
+                if pending_chunks and offline_reply is None and not cancel_event.is_set():
                     GLib.idle_add(self._update_ai_message, request_id,
                                   "".join(pending_chunks), True)
                     pending_chunks = []
 
             if offline_reply is not None:
-                GLib.idle_add(self._add_system_message_if_active, request_id,
-                              cancel_event,
-                              _("Offline mode: answering from local knowledge."))
+                pending_chunks.clear()
                 response_text = offline_reply.text
-                GLib.idle_add(self._update_ai_message, request_id,
-                              response_text, False)
+                GLib.idle_add(self._replace_ai_reply, request_id, cancel_event, response_text)
                 if offline_reply.commands and not cancel_event.is_set():
                     GLib.idle_add(self._offer_offline_commands,
                                   offline_reply.commands, request_id,
@@ -1572,11 +1592,23 @@ Respond clearly and concisely in English."""
 
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
+            GLib.idle_add(self._abort_ai_stream_if_active, request_id)
             GLib.idle_add(self._add_system_message_if_active, request_id,
                           cancel_event, _("Error: {error}").format(error=e))
-            # Finalize with whatever was streamed so far: it is already on
-            # screen, and the history must match what the user sees.
-            GLib.idle_add(self._finalize_response, request_id, response_text, False)
+            GLib.idle_add(self._finalize_response, request_id, "", cancel_event.is_set())
+
+    def _abort_ai_stream_if_active(self, request_id):
+        if request_id == self._active_request:
+            self.chat_view.abort_stream()
+        return False
+
+    def _replace_ai_reply(self, request_id, cancel_event, response_text):
+        if request_id != self._active_request or cancel_event.is_set():
+            return False
+        self.chat_view.abort_stream()
+        self._add_system_message(_("Offline mode: answering from local knowledge."))
+        self._add_ai_message(response_text, False)
+        return False
 
     def _add_system_message_if_active(self, request_id, cancel_event, text):
         """_add_system_message com guarda de pedido (para callbacks idle).
@@ -1638,6 +1670,8 @@ Respond clearly and concisely in English."""
 
     def _run_offline_commands(self, commands, request_id, cancel_event):
         """Run the confirmed commands via pkexec (worker thread)."""
+        store = getattr(self, 'history_store', None)
+        session_id = store.active_session_id if store is not None else None
         for command in commands:
             # Stop as soon as the request is cancelled or superseded:
             # pkexec prompts must not pop up for a stale turn.
@@ -1649,18 +1683,27 @@ Respond clearly and concisely in English."""
             )
             detail = output or (_("Done.") if ok else _("Failed."))
             result = f"$ {command.display()}\n{detail}"
-            GLib.idle_add(self._record_offline_result, request_id, result)
+            GLib.idle_add(self._record_offline_result, request_id, result, session_id)
+            if not ok:
+                logger.info("Stopping confirmed command sequence after failure")
+                break
         return False
 
-    def _record_offline_result(self, request_id, result):
+    def _record_offline_result(self, request_id, result, session_id=None):
         """Show a command result and keep it in the conversation context.
 
         Without the history append, follow-up questions had no idea what
         was executed (the text only reached the chat buffer).
         """
+        if request_id != self._active_request or self._cancel_event.is_set():
+            # A completed action belongs to its original conversation even after a switch.
+            if session_id is not None:
+                available = self.history_store.list_sessions(include_archived=True)
+                if any(session['id'] == session_id for session in available):
+                    self.history_store.append('assistant', result, session_id=session_id)
+            return False
         self._add_system_message(result)
-        if request_id == self._active_request:
-            self._remember("assistant", result)
+        self._remember("assistant", result)
         return False
 
     def _finalize_response(self, request_id: int, response_text: str,
@@ -1673,6 +1716,11 @@ Respond clearly and concisely in English."""
 
         self.streaming = False
 
+        # Cancellation can arrive after the worker queued this final callback.
+        cancelled = cancelled or self._cancel_event.is_set()
+        if cancelled:
+            self.chat_view.abort_stream()
+
         if response_text and not cancelled:
             # The streamed body was inserted chunk by chunk; now that it is
             # complete, tag its code spans and close with the "\n\n"
@@ -1681,6 +1729,13 @@ Respond clearly and concisely in English."""
 
             # Ponto único de persistência do turno (memória + history.json)
             self._remember("assistant", response_text)
+            store = getattr(self, 'history_store', None)
+            if store is not None:
+                try:
+                    store.set_diagnostic_state(self.offline.diagnostic_state())
+                except (OSError, ValueError) as error:
+                    logger.error("Could not persist diagnostic progress: %s", error)
+                    self._add_system_message(str(error))
 
             # Offer file writes in expert mode. We are already on the main
             # loop, so the dialogs can be created directly (GTK is not
@@ -1738,8 +1793,10 @@ Respond clearly and concisely in English."""
         self.status_icon.set_from_icon_name("dialog-error", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Cancelled"))
 
+        self.chat_view.abort_stream()
+        if getattr(self, 'history_store', None) is not None:
+            self._renew_offline_assistant()
         self._add_system_message(_("Streaming cancelled"))
-        self._remove_loading_message()
         logger.info("Streaming cancelled by the user")
 
     def on_capture_screen_clicked(self, button):
@@ -1829,8 +1886,7 @@ Respond clearly and concisely in English."""
             self._add_system_message(_("Expert Mode DISABLED"))
             self.show_notification("Linux AI Assistant", _("Expert Mode disabled"))
 
-        # Clear the history for the new context
-        self.conversation_history = []
+        # Expertise changes the prompt; conversation boundaries are explicit sessions.
         # Keep the tray menu checkbox in sync (it may have been the source,
         # or the window button may have been)
         tray = getattr(self.app, "tray_icon", None)
@@ -1875,7 +1931,5 @@ Respond clearly and concisely in English."""
         self.config.set("app.y_position", event.y)
         self.config.set("app.width", event.width)
         self.config.set("app.height", event.height)
-
-        return True
 
         return True

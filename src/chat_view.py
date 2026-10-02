@@ -46,6 +46,8 @@ class ChatView:
         self.loading_span = None
         # Offset onde o corpo da resposta streaming em curso começa
         self.body_start = None
+        self._stream_start = None
+        self._stream_end = None
         # Coalescing de scroll: um idle pendente no máximo
         self._scroll_pending = False
 
@@ -139,8 +141,23 @@ class ChatView:
         return start_offset, end_offset, end_offset
 
     def insert_stream_chunk(self, chunk: str):
-        """Insere um chunk streaming no fim do buffer (sem formatação)."""
-        self.buffer.insert(self.buffer.get_end_iter(), chunk)
+        """Own the complete stream span, even if a status message is appended."""
+        if self.body_start is None:
+            self.clear_loading()
+            self._stream_start, self._stream_end, self.body_start = self.append_stream_header()
+        start = self._stream_end
+        self.buffer.insert(self.buffer.get_iter_at_offset(start), chunk)
+        self._stream_end += len(chunk)
+        self._tag_region(self.buffer, 'ai-message', self.buffer.get_iter_at_offset(start),
+                         self.buffer.get_iter_at_offset(self._stream_end))
+
+    def abort_stream(self):
+        """Remove only this incomplete response, preserving other messages."""
+        if self._stream_start is not None:
+            self.buffer.delete(self.buffer.get_iter_at_offset(self._stream_start),
+                               self.buffer.get_iter_at_offset(self._stream_end))
+        self.body_start = self._stream_start = self._stream_end = None
+        self.clear_loading()
 
     def close_streamed_message(self, response_text: str):
         """Taggeia os code spans do corpo streaming e fecha com "\\n\\n".
@@ -150,11 +167,26 @@ class ChatView:
         fim da resposta.
         """
         body_start = self.body_start
-        self.body_start = None
         if body_start is None:
             return
         self.apply_code_tags(body_start, response_text)
-        self.buffer.insert(self.buffer.get_end_iter(), "\n\n")
+        self.buffer.insert(self.buffer.get_iter_at_offset(self._stream_end), "\n\n")
+        self.body_start = self._stream_start = self._stream_end = None
+
+    def set_style(self, family, size, colors):
+        """Update GtkTextTags themselves; CSS classes cannot style text tags."""
+        table = self.buffer.get_tag_table()
+        for name, color, font_size in (
+            ('user-message', colors['user'], size), ('ai-message', colors['ai'], size),
+            ('system-message', colors['system'], size - 1), ('loading', colors['system'], size),
+        ):
+            tag = table.lookup(name)
+            tag.set_property('foreground', color)
+            tag.set_property('font', self._font(family, font_size))
+        for name in ('code-block', 'inline-code'):
+            tag = table.lookup(name)
+            tag.set_property('foreground', colors['code'])
+            tag.set_property('background', colors['code_background'])
 
     def apply_code_tags(self, body_start: int, message: str):
         """Tag fenced blocks and inline code in an already-inserted region.
