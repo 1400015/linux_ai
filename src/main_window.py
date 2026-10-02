@@ -30,6 +30,7 @@ from .conversation_actions import ConversationActions
 from .change_journal import ChangeJournal
 from .change_dialog import show_file_changes
 from .diagnostic_dialog import show_diagnostic_report
+from .trial_dialog import show_trials
 from .provider_settings import ProviderSettings, MODE_LABELS, STATUS_LABELS
 
 # Set up logger
@@ -524,6 +525,10 @@ class MainWindow(Gtk.Window):
         actions_button.set_tooltip_text(_("Actions"))
         actions_button.connect('clicked', self._show_action_audit)
         conversations.pack_start(actions_button, False, False, 0)
+        self.trials_button = Gtk.Button.new_from_icon_name('applications-science-symbolic', Gtk.IconSize.MENU)
+        self.trials_button.set_tooltip_text(_("Trials / Debug"))
+        self.trials_button.connect('clicked', lambda button: show_trials(self))
+        conversations.pack_start(self.trials_button, False, False, 0)
         self.mode_label = Gtk.Label(xalign=0, wrap=True)
         main_box.pack_start(self.mode_label, False, False, 0)
 
@@ -622,6 +627,9 @@ class MainWindow(Gtk.Window):
         report_item = Gtk.MenuItem(label=_("Diagnostic report"))
         report_item.connect('activate', lambda item: show_diagnostic_report(self))
         menu.append(report_item)
+        trials_item = Gtk.MenuItem(label=_("Trials / Debug"))
+        trials_item.connect('activate', lambda item: show_trials(self))
+        menu.append(trials_item)
         changes_item = Gtk.MenuItem(label=_("File changes"))
         changes_item.connect('activate', lambda item: show_file_changes(self))
         menu.append(changes_item)

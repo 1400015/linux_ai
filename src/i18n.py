@@ -1124,3 +1124,77 @@ TRANSLATIONS["pt"].update({
     "No actions recorded.": "Ainda não há ações registadas.",
     "Cannot read the operation audit.": "Não foi possível ler o registo de ações.",
 })
+
+
+TRANSLATIONS["pt"].update({
+    "Trials / Debug": "Ensaios / Debug",
+    "Trials / Debug — open case {case}": "Ensaios / Debug — caso aberto {case}",
+    "Not specified": "Não especificado",
+    "Virtual machine": "Máquina virtual",
+    "Physical machine": "Máquina física",
+    "WSL smoke test": "Verificação básica em WSL",
+    "Simulated fixture": "Cenário simulado",
+    "Local collection only. Start a case, test in the main window, then record its result. Closing this panel keeps an open case.":
+        "Recolha apenas local. Inicia um caso, testa na janela principal e regista o resultado. Fechar este painel mantém o caso aberto.",
+    "Open selected trial": "Abrir ensaio selecionado",
+    "Refresh": "Atualizar",
+    "Trial title": "Título do ensaio",
+    "Environment ID": "ID do ambiente",
+    "Build revision": "Revisão da build",
+    "Test environment": "Ambiente de ensaio",
+    "Start new trial": "Iniciar novo ensaio",
+    "Finish trial": "Concluir ensaio",
+    "Case ID": "ID do caso",
+    "Case variant / attempt": "Variante / tentativa",
+    "Operation ID (optional)": "ID da operação (opcional)",
+    "Explicit notes only; conversations are not copied automatically.":
+        "Só as notas que escreveres são incluídas; as conversas não são copiadas automaticamente.",
+    "Begin case": "Iniciar caso",
+    "Record result": "Registar resultado",
+    "Include bounded app log excerpt (may include other conversations)":
+        "Incluir excerto limitado do registo da aplicação (pode conter outras conversas)",
+    "Log excerpts and automatic redaction are partial. They may contain sensitive data.":
+        "Os excertos do registo e a ocultação automática são parciais. Podem conter dados sensíveis.",
+    "Result": "Resultado",
+    "Conversation ID": "ID da conversa",
+    "Attachment": "Anexo",
+    "Type": "Tipo",
+    "Add local evidence": "Adicionar evidência local",
+    "View attachment": "Ver anexo",
+    "Exclude attachment": "Excluir anexo",
+    "Choose only relevant text or PNG/JPEG images. Images are not redacted automatically and are never sent to AI by this panel.":
+        "Escolhe apenas texto ou imagens PNG/JPEG relevantes. Este painel não oculta automaticamente dados nas imagens nem as envia à IA.",
+    "I reviewed the exported content and all attachments": "Revi o conteúdo a exportar e todos os anexos",
+    "Refresh export preview": "Atualizar pré-visualização da exportação",
+    "Export reviewed ZIP": "Exportar ZIP revisto",
+    "Opening local trials…": "A abrir os ensaios locais…",
+    "Open case": "Caso aberto",
+    "Case {case} is tied to conversation {session}; switching conversations does not change it.":
+        "O caso {case} está associado à conversa {session}; mudar de conversa não altera esta associação.",
+    "Trial {id} — {state}": "Ensaio {id} — {state}",
+    "Finished": "Concluído",
+    "Ready to begin a case": "Pronto para iniciar um caso",
+    "No trial selected. Start a new trial or open an existing one.":
+        "Nenhum ensaio selecionado. Inicia um novo ensaio ou abre um existente.",
+    "Review all exported texts below and view every image before confirming export. Nothing is uploaded.":
+        "Revê os textos a exportar abaixo e visualiza todas as imagens antes de confirmar a exportação. Os dados ficam locais.",
+    "Record the open case result to prepare an export preview.":
+        "Regista o resultado do caso aberto para preparar a pré-visualização da exportação.",
+    "Rendering export preview…": "A apresentar a pré-visualização da exportação…",
+    "Refreshing local preview…": "A atualizar a pré-visualização local…",
+    "Opening selected trial…": "A abrir o ensaio selecionado…",
+    "Starting local trial…": "A iniciar o ensaio local…",
+    "Beginning case…": "A iniciar o caso…",
+    "Recording result and local evidence…": "A registar o resultado e a evidência local…",
+    "Finishing trial…": "A concluir o ensaio…",
+    "Adding private local evidence…": "A adicionar evidência local privada…",
+    "Excluding attachment from export…": "A excluir o anexo da exportação…",
+    "Opening attachment preview…": "A abrir a pré-visualização do anexo…",
+    "Attachment preview": "Pré-visualização do anexo",
+    "Scaled image preview. Review the original pixels and image metadata before export; neither is redacted automatically.":
+        "Pré-visualização reduzida. Revê os píxeis e metadados da imagem original antes de exportar; estes dados não são ocultados automaticamente.",
+    "Exporting reviewed local package…": "A exportar o pacote local revisto…",
+    "Trial exported locally: {path}": "Ensaio exportado localmente: {path}",
+    "Open": "Abrir",
+    "Save": "Guardar",
+})

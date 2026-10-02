@@ -23,6 +23,7 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 - ✅ **Multilingual** - UI translated via `src/i18n.py`; English is used when a language is not available
 - ✅ **Offline guides** - Twenty searchable Portuguese/English procedures and guided local diagnostics without an AI service
 - ✅ **Assistance modes** - Choose bundled guides, a local model, a remote provider, or automatic fallback
+- ✅ **Local test recorder** - Record cases through Trials / Debug or the CLI, review scoped evidence and export a private ZIP
 
 ## Local guides, models and conversations
 
@@ -111,6 +112,25 @@ python -m src.cli chat 'apply option 2'
 The CLI requires an interactive terminal to execute changes; pipes and `--stdin`/`--input` produce proposals. `--no-history` does not retain choices for a later message. Choices belong to one session, expire after 15 minutes and are omitted from conversation import/export. Package/version and monitor mode are rechecked before changing the system. Commands come from the local action catalog, never from model-generated shell text.
 
 Package search uses existing indexes without refreshing them silently and returns at most 12 candidates. Monitor lists show up to 30 choices; request a specific resolution/frequency to filter longer lists. The rollback watchdog runs independently of GTK in the application process; recovery after a forced process termination requires future infrastructure. This phase does not add repositories, run Web installers, configure arbitrary applications, activate disabled monitors, change display layout/scale, or configure GNOME/KDE. Hardware and distribution coverage require local validation. See the [Portuguese roadmap](docs/roadmap-acoes-conversacionais.md) for the next capabilities and acceptance criteria.
+
+## Local test recording
+
+Open **Trials / Debug** beside the conversation selector or from the menu. Start a trial, begin a case, exercise the main program, verify the actual result, and record the outcome. The panel remains usable alongside the main window; closing it preserves an open case. The same local recorder is available without the GUI:
+
+```bash
+python -m src.cli trials start --title 'Offline smoke test' --environment ENV-01 --type vm
+python -m src.cli trials begin KNW-01
+# Exercise and independently verify the case before recording its result.
+python -m src.cli trials end --result PASS --notes 'Expected local guide verified'
+python -m src.cli trials finish
+python -m src.cli trials preview --output trial-preview-new.md
+# Read the complete preview and inspect attachments before confirming review.
+python -m src.cli trials export --output trial-reviewed-new.zip --reviewed
+```
+
+Collection reads observed context, new operation events for the case's conversation and file-change metadata. App log excerpts require an explicit opt-in and may include other conversations. Text redaction is partial; selected PNG/JPEG images retain their pixels and metadata. Collection works offline, does not execute system commands and does not copy whole conversations/configurations or upload data. Results remain operator reports requiring independent verification.
+
+Use `trials attach`, `exclude`, `status`, `list` and `use` to manage evidence and trials. Storage is private under `~/.local/share/linux_ai_assistant/trials/`; preview/export refuse existing destinations. Supply a verified build reference with `trials start --build` when needed; omission records `unknown`. See the [Portuguese recorder guide](docs/ferramenta-ensaios.md) for GUI steps, CLI options, limits and review rules, and the [real-world testing protocol](docs/protocolo-ensaios-reais.md) for environments, cases and bug reporting.
 
 ## Requirements
 
@@ -675,5 +695,6 @@ python -m unittest tests.test_regressions.TestCopyEffectiveKeyToConfig -v
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
 For structured actions, service control, private operation events, offline checksums and validated YAML knowledge, see [the infrastructure guide](docs/infraestrutura-acoes-conhecimento.md). Existing virtual environments need the updated `requirements.txt`.
 For local diagnostic reports, offline log interpretation and recovery of approved file writes, see [the second-phase guide](docs/segunda-fase-2026-10-02.md).
+For real-world test environments, scenarios, result and bug reports, see [the real-world testing protocol](docs/protocolo-ensaios-reais.md), with reusable report and CSV templates. The integrated Trials / Debug panel and CLI recorder are described in [the test recorder guide](docs/ferramenta-ensaios.md).
 The GUI must run inside a graphical user session; use
 `./scripts/autostart.sh enable` for session startup rather than a root runit service.
