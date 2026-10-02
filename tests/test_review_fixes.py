@@ -21,7 +21,7 @@ from src.command_policy import validate_arguments
 from src.config_manager import ConfigManager
 from src.file_actions import _make_backup, preview_diff, MAX_DIFF_BYTES
 from src.history_store import HistoryStore
-from src.offline_assistant import OfflineAssistant
+from src.offline_assistant import DistroInfo, OfflineAssistant
 from src.privileged_write import write_file
 from src.process_output import run_bounded
 from src.stream_events import iter_sse_json
@@ -446,10 +446,13 @@ class TestOfflineCorrections(unittest.TestCase):
     def test_cli_initializes_the_configured_language(self):
         with patch('src.cli.ConfigManager', return_value=Config({'app.language': 'pt'})), \
                 patch('src.cli.AIClient'), patch('src.cli.SystemUtils'), \
-                patch('src.cli.offline_assistant.OfflineAssistant'), \
+                patch('src.cli.offline_assistant.OfflineAssistant') as offline, \
                 patch.object(CLIApp, '_load_history', return_value=[]), \
                 patch('src.cli.set_language_from_config') as initialize:
+            offline.return_value.distro = DistroInfo()
             app = CLIApp()
+            self.addCleanup(app.actions.close)
+            self.addCleanup(app.history_store.close)
             initialize.assert_called_once_with(app.config)
 
 

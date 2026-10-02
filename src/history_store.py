@@ -17,6 +17,7 @@ import time
 import uuid
 
 from .storage import update_json
+from .task_state import validate_task_state
 
 MAX_HISTORY_MESSAGES = 1000
 MAX_SESSIONS = 100
@@ -106,6 +107,12 @@ def _document(loaded):
                 raise ValueError("Invalid conversation messages")
             if "diagnostic" in session:
                 _diagnostic_state(session["diagnostic"])
+            if "task" in session:
+                try:
+                    session["task"] = validate_task_state(session["task"])
+                except ValueError:
+                    # A corrupt choice must not hide the user's messages.
+                    session.pop("task", None)
         if loaded.get("active_session_id") not in identifiers:
             raise ValueError("Invalid active conversation")
         return loaded
@@ -312,6 +319,7 @@ class HistoryStore:
             session = _find(document, selected)
             session["messages"] = []
             session.pop("diagnostic", None)
+            session.pop("task", None)
             session["updated_at"] = time.time()
             return _metadata(session)
         return self._transaction(clear)
@@ -334,6 +342,25 @@ class HistoryStore:
                 session.pop("diagnostic", None)
             else:
                 session["diagnostic"] = clean
+            session["updated_at"] = time.time()
+        self._transaction(set_state)
+
+    def get_task_state(self, session_id=None):
+        """Get choices for this conversation only; imported chats have none."""
+        selected = session_id or self._session_id
+        state = _find(self._snapshot(), selected).get("task")
+        return validate_task_state(state) if state is not None else None
+
+    def set_task_state(self, state, session_id=None):
+        clean = validate_task_state(state) if state is not None else None
+        selected = session_id or self._session_id
+
+        def set_state(document):
+            session = _find(document, selected)
+            if clean is None:
+                session.pop("task", None)
+            else:
+                session["task"] = clean
             session["updated_at"] = time.time()
         self._transaction(set_state)
 
@@ -371,7 +398,8 @@ class HistoryStore:
 
         session = _find(self._snapshot(), selected)
         if format == "json":
-            return json.dumps({"format": EXPORT_FORMAT, "version": 1, "session": session},
+            exported = {key: value for key, value in session.items() if key != "task"}
+            return json.dumps({"format": EXPORT_FORMAT, "version": 1, "session": exported},
                               indent=2, ensure_ascii=False)
         if format != "markdown":
             raise ValueError("Export format must be markdown or json")

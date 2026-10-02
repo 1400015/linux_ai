@@ -1,0 +1,14 @@
+schema_version: '0.1'
+id: linux-core
+kind: linux
+requires: []
+match:
+  distro_ids: []
+  components: []
+facts: []
+procedures: []
+action_ids: []
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources: []

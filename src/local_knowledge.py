@@ -166,48 +166,12 @@ PROCEDURES = (
             _step("Consulta os processos com PID e utilização de recursos.", "Inspect processes with PID and resource usage.", "Uma amostra não prova consumo persistente. Compara várias observações e identifica a aplicação.", "One sample does not prove persistent consumption. Compare observations and identify the application.", "ps aux"),
             _step("Escolhe uma ação específica depois de guardar o trabalho.", "Choose a specific action after saving work.", "Reiniciar ou terminar um processo é uma alteração; não faz parte deste guia de leitura.", "Restarting or terminating a process is a change; it is not part of this read-only guide."),
         ), ("https://man7.org/linux/man-pages/man1/ps.1.html",)),
-    Procedure("service-systemd", ("Serviço systemd não arranca", "systemd service fails to start"),
-        ("Confirma a unidade e o motivo da falha antes de reiniciar.", "Confirm the unit and failure reason before restarting."),
-        ("servico", "serviço", "service", "systemd", "failed", "nao arranca", "not starting"), (
-            _step("Consulta o estado da unidade identificada.", "Inspect the identified unit status.", "Usa systemctl --no-pager status <unidade>. Distingue not-found, inactive e failed; substitui o marcador por um nome confirmado.", "Use systemctl --no-pager status <unit>. Distinguish not-found, inactive and failed; replace the placeholder with a confirmed name."),
-            _step("Consulta um trecho limitado dos registos da mesma unidade.", "Inspect a bounded excerpt of that unit's logs.", "Usa journalctl --no-pager -u <unidade> -n 50. Procura a primeira causa, como configuração inválida, porta ocupada ou permissões.", "Use journalctl --no-pager -u <unit> -n 50. Look for the first cause, such as invalid configuration, a busy port or permissions."),
-        ), (SYSTEMD,), component="systemd"),
-    Procedure("service-runit", ("Serviço runit não arranca", "runit service fails to start"),
-        ("Inspeciona o serviço supervisionado e a sua configuração.", "Inspect the supervised service and its configuration."),
-        ("runit", "sv", "servico", "serviço", "service", "nao arranca", "not starting"), (
-            _step("Confirma se o serviço está ligado em /var/service.", "Confirm whether the service is linked in /var/service.", "As definições ficam em /etc/sv. Um diretório de definição não prova que o serviço esteja ativado.", "Definitions live in /etc/sv. A definition directory does not prove the service is enabled."),
-            _step("Consulta sv status <serviço> e o registo específico.", "Inspect sv status <service> and its specific log.", "down pode ser intencional. Verifica o ficheiro down e a configuração com leitura autorizada antes de iniciar o serviço.", "down can be intentional. Check the down file and configuration with authorized reads before starting the service."),
-        ), (VOID_SVC,), component="runit"),
     Procedure("service-logs", ("Encontrar registos de um erro", "Find logs for an error"),
         ("Escolhe registos do componente e intervalo relevantes.", "Choose logs for the relevant component and time interval."),
         ("logs", "log", "registos", "journal", "erro", "error", "logging"), (
             _step("Identifica o serviço e o gestor que realmente o executa.", "Identify the service and manager actually running it.", "systemd usa o journal; runit pode encaminhar saída para um serviço de logging separado. A localização depende da instalação.", "systemd uses the journal; runit may forward output to a separate logging service. Location depends on the installation."),
             _step("Seleciona as linhas da falha e remove segredos antes de partilhar.", "Select failure lines and remove secrets before sharing.", "Inclui a mensagem inicial e o momento da falha. A última linha nem sempre contém a causa.", "Include the initial message and failure time. The final line does not always contain the cause."),
         ), ("https://docs.voidlinux.org/config/services/logging.html", "https://www.freedesktop.org/software/systemd/man/latest/journalctl.html")),
-    Procedure("apt-lock", ("APT bloqueado por outra operação", "APT locked by another operation"),
-        ("Verifica operações em curso antes de intervir.", "Check running operations before intervening."),
-        ("apt", "lock", "bloqueio", "dpkg", "another process", "outro processo"), (
-            _step("Confirma se existe outra operação de pacotes em curso.", "Check whether another package operation is running.", "Atualizações automáticas também podem usar APT. Aguarda uma operação legítima; não apagues ficheiros de lock como primeiro passo.", "Automatic updates can also use APT. Wait for a legitimate operation; do not delete lock files as a first step.", "ps aux"),
-            _step("Se uma operação terminou com erro, guarda a mensagem completa.", "If an operation ended with an error, preserve the full message.", "A recuperação depende da causa e pode alterar pacotes. Confirma o plano antes de reparar.", "Recovery depends on the cause and may modify packages. Confirm the plan before repairing."),
-        ), ("https://wiki.debian.org/Teams/Dpkg/FAQ",), families=("debian", "ubuntu", "mint"), component="apt"),
-    Procedure("apt-dependencies", ("Dependências APT inconsistentes", "Inconsistent APT dependencies"),
-        ("Recolhe a mensagem e verifica o estado antes de reparar.", "Collect the message and inspect state before repairing."),
-        ("apt", "dependencia", "dependência", "dependency", "dependencies", "broken", "unmet"), (
-            _step("Guarda os nomes e versões mencionados no erro.", "Preserve names and versions mentioned in the error.", "Verifica se há pacotes retidos ou repositórios de versões diferentes.", "Check for held packages or repositories from different releases.", "apt-mark showhold"),
-            _step("Avalia uma simulação de reparação antes de confirmar alterações.", "Evaluate a repair simulation before confirming changes.", "apt-get -s -f install mostra um plano. Revê remoções e não assumes que todas são desejadas.", "apt-get -s -f install shows a plan. Review removals and do not assume all are intended.", "apt-get -s -f install"),
-        ), (APT,), families=("debian", "ubuntu", "mint"), component="apt"),
-    Procedure("apt-repositories", ("Erro nos repositórios APT", "APT repository error"),
-        ("Distingue falha de rede, assinatura e versão de distribuição.", "Distinguish network, signature and distribution-release failures."),
-        ("apt", "repository", "repositories", "repositorio", "repositório", "sources.list", "404", "signature"), (
-            _step("Identifica a origem e a mensagem exata.", "Identify the source and exact message.", "A configuração pode estar em sources.list ou sources.list.d, incluindo ficheiros .sources. Confirma a versão em os-release.", "Configuration may be in sources.list or sources.list.d, including .sources files. Confirm the release in os-release."),
-            _step("Confirma a origem oficial antes de editar.", "Confirm the official source before editing.", "Não desatives verificação de assinaturas para contornar o erro. Guarda a configuração anterior e verifica o resultado.", "Do not disable signature verification to bypass the error. Save previous configuration and verify the result."),
-        ), ("https://manpages.debian.org/bookworm/apt/sources.list.5.en.html",), families=("debian", "ubuntu", "mint"), component="apt"),
-    Procedure("xbps-errors", ("Erro de pacotes XBPS", "XBPS package error"),
-        ("Recolhe o erro e confirma os repositórios da edição instalada.", "Collect the error and confirm repositories for the installed edition."),
-        ("xbps", "void", "package", "pacote", "repository", "repositorio", "error", "erro"), (
-            _step("Identifica a operação, o pacote e a mensagem de erro.", "Identify the operation, package and error message.", "Confirma glibc ou musl e a arquitetura antes de escolher repositórios ou pacotes.", "Confirm glibc or musl and the architecture before choosing repositories or packages."),
-            _step("Compara a configuração local com o Handbook.", "Compare local configuration with the Handbook.", "Os valores de /etc/xbps.d podem substituir os de /usr/share/xbps.d. Não removas a base de dados para resolver um erro desconhecido.", "Values in /etc/xbps.d may override /usr/share/xbps.d. Do not remove the database to resolve an unknown error."),
-        ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html", "https://docs.voidlinux.org/xbps/repositories/index.html"), families=("void",), component="xbps"),
 )
 
 PROCEDURES += (
@@ -223,25 +187,19 @@ PROCEDURES += (
             _step("Confirma a data e a hora locais.", "Confirm local date and time.", "Um relógio incorreto pode tornar um certificado ainda não válido ou expirado. Confirma uma fonte de confiança antes de alterar a hora.", "An incorrect clock can make a certificate not yet valid or expired. Confirm a trusted source before changing the time.", "date -Is"),
             _step("Confirma destino, cadeia de certificados e CA instalada.", "Confirm destination, certificate chain and installed CA.", "Um proxy pode apresentar outra cadeia. Não ignores certificados como solução permanente.", "A proxy may present another chain. Do not ignore certificates as a permanent solution."),
         ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html", "https://docs.openssl.org/master/man1/openssl-verification-options/")),
-    Procedure("service-executable", ("Falha de execução systemd (203/EXEC)", "systemd execution failure (203/EXEC)"),
-        ("Verifica o programa configurado na unidade antes de reiniciar.", "Check the program configured in the unit before restarting."),
-        ("203/exec", "execstart", "failed at step exec", "executavel", "executable"), (
-            _step("Consulta a unidade e o ExecStart efetivos.", "Inspect the effective unit and ExecStart.", "Confirma caminho, argumentos e alterações por drop-ins; não deduzas o executável a partir do nome do serviço.", "Confirm path, arguments and drop-in overrides; do not infer the executable from the service name.", "systemctl cat <unidade>"),
-            _step("Verifica executável, interpretador e acesso do utilizador do serviço.", "Check executable, interpreter and access by the service user.", "203/EXEC indica falha de execução. Caminho ausente, permissão e interpretador inválido são hipóteses a confirmar.", "203/EXEC indicates execution failure. A missing path, permission and invalid interpreter are hypotheses to confirm."),
-        ), ("https://manpages.debian.org/bookworm/systemd/systemd.exec.5.en.html",), component="systemd"),
-    Procedure("apt-interrupted", ("Configuração dpkg interrompida", "Interrupted dpkg configuration"),
-        ("Identifica pacotes incompletos e a primeira falha de configuração.", "Identify incomplete packages and the first configuration failure."),
-        ("dpkg was interrupted", "dpkg", "half-configured", "half-installed", "interrompido"), (
-            _step("Inspeciona o estado da base de pacotes.", "Inspect package database state.", "dpkg --audit identifica pacotes parcialmente instalados. Confirma que não existe outra transação ativa.", "dpkg --audit identifies partially installed packages. Confirm that no other transaction is active.", "dpkg --audit"),
-            _step("Lê a primeira falha e verifica espaço e dependências.", "Read the first failure and check space and dependencies.", "dpkg --configure -a altera o sistema e executa scripts; só o uses numa recuperação aprovada. Não elimines a base de dados ou locks.", "dpkg --configure -a modifies the system and runs scripts; use it only in an approved recovery. Do not delete the database or locks."),
-        ), ("https://manpages.debian.org/bookworm/dpkg/dpkg.1.en.html",), families=("debian", "ubuntu", "mint"), component="apt"),
-    Procedure("xbps-shlibs", ("Bibliotecas XBPS não resolvidas", "Unresolved XBPS shared libraries"),
-        ("Distingue pacotes antigos de repositórios em transição.", "Distinguish outdated packages from transitioning repositories."),
-        ("unresolvable shlib", "unresolved shlibs", "xbps", "bibliotecas", "shared libraries"), (
-            _step("Guarda a mensagem exata e os pacotes envolvidos.", "Save the exact message and involved packages.", "unresolvable shlib pode resultar de pacotes antigos ou repositórios removidos. Confirma a configuração e a versão instalada.", "unresolvable shlib can result from outdated packages or removed repositories. Confirm configuration and installed version."),
-            _step("Distingue Transaction aborted due to unresolved shlibs.", "Distinguish Transaction aborted due to unresolved shlibs.", "Pode indicar repositórios em staged state durante grandes builds. Espera e confirma o estado oficial antes de forçar atualizações ou remover pacotes.", "It can indicate repositories in staged state during large builds. Wait and confirm official state before forcing updates or removing packages."),
-        ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html",), families=("void",), component="xbps"),
 )
+
+from .knowledge_loader import bundled_modules, legacy_procedure
+PROCEDURES += tuple(Procedure(**legacy_procedure(record, DiagnosticStep))
+                    for module in bundled_modules() for record in module["procedures"])
+
+_PROCEDURE_ORDER = {identifier: index for index, identifier in enumerate((
+    'network-interface', 'network-address', 'network-route', 'network-dns', 'network-wifi', 'network-manager',
+    'disk-space', 'disk-inodes', 'disk-read-only', 'disk-mount', 'file-permissions', 'memory-pressure',
+    'process-resources', 'service-systemd', 'service-runit', 'service-logs', 'apt-lock', 'apt-dependencies',
+    'apt-repositories', 'xbps-errors', 'service-port', 'tls-clock', 'service-executable', 'apt-interrupted', 'xbps-shlibs',
+))}
+PROCEDURES = tuple(sorted(PROCEDURES, key=lambda item: _PROCEDURE_ORDER.get(item.id, len(_PROCEDURE_ORDER))))
 
 PROCEDURE_BY_ID = {item.id: item for item in PROCEDURES}
 _STOPWORDS = {"a", "o", "as", "os", "de", "do", "da", "e", "em", "no", "na", "the", "a", "an", "and", "is", "for", "to", "how", "como", "sobre", "about", "guide", "guia", "local", "offline", "knowledge", "conhecimento", "base", "search", "pesquisar", "procurar", "documentacao", "documentation"}

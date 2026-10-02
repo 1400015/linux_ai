@@ -26,6 +26,7 @@ from .history_store import HistoryStore, MAX_HISTORY_MESSAGES
 from .i18n import _, get_language
 from .assistant_context import build_system_message
 from .conversation_dialog import show_conversations
+from .conversation_actions import ConversationActions
 from .change_journal import ChangeJournal
 from .change_dialog import show_file_changes
 from .diagnostic_dialog import show_diagnostic_report
@@ -168,6 +169,10 @@ class MainWindow(Gtk.Window):
         # full file rewrite per message.
         self.history_store = HistoryStore()
         self.history_store.list_sessions()
+        from .system_context import detect_system_context
+        self.system_context = detect_system_context(self.offline.distro)
+        self.offline.set_system_context(self.system_context)
+        self.actions = ConversationActions(self.history_store, self.offline.distro.pkg_manager, context=self.system_context)
         self._refreshing_sessions = False
 
         # Create interface
@@ -229,12 +234,21 @@ class MainWindow(Gtk.Window):
     def _apply_feature_toggles(self):
         """Show/hide the feature buttons according to features.* settings."""
         if hasattr(self, "capture_btn"):
+            self.capture_btn.set_no_show_all(True)
             self.capture_btn.set_visible(self.config.get("features.screen_capture", True))
         if hasattr(self, "expert_btn"):
+            self.expert_btn.set_no_show_all(True)
             self.expert_btn.set_visible(self.config.get("features.expert_mode", True))
 
     def close_history_writer(self, timeout=None):
         """Flush pending history writes and stop the writer thread."""
+        event = getattr(self, '_cancel_event', None)
+        self._audit_closed = True
+        if event is not None:
+            event.set()
+        actions = getattr(self, 'actions', None)
+        if actions is not None:
+            actions.close()
         if not self.history_store.close(timeout):
             logger.error("History writer did not finish successfully: %s", self.history_store.last_error)
 
@@ -506,6 +520,10 @@ class MainWindow(Gtk.Window):
         new_conversation.set_tooltip_text(_("New conversation"))
         new_conversation.connect('clicked', self._new_conversation)
         conversations.pack_start(new_conversation, False, False, 0)
+        actions_button = Gtk.Button.new_from_icon_name('view-list-symbolic', Gtk.IconSize.MENU)
+        actions_button.set_tooltip_text(_("Actions"))
+        actions_button.connect('clicked', self._show_action_audit)
+        conversations.pack_start(actions_button, False, False, 0)
         self.mode_label = Gtk.Label(xalign=0, wrap=True)
         main_box.pack_start(self.mode_label, False, False, 0)
 
@@ -1448,7 +1466,7 @@ class MainWindow(Gtk.Window):
     def _get_context_message(self) -> Optional[Dict[str, str]]:
         query = next((item['content'] for item in reversed(self.conversation_history)
                       if item['role'] == 'user'), '')
-        return build_system_message(self.expert_mode, self.offline.distro, query, get_language())
+        return build_system_message(self.expert_mode, self.offline.distro, query, get_language(), getattr(self, 'system_context', None))
 
     def _get_system_info_for_context(self) -> str:
         """Get system information for context."""
@@ -1518,12 +1536,14 @@ class MainWindow(Gtk.Window):
         # Process in a separate thread so the UI is not blocked
         threading.Thread(
             target=self._process_message,
-            args=(text, full_history, request_id, cancel_event, self.offline, route),
+            args=(text, full_history, request_id, cancel_event, self.offline, route,
+                  self.history_store.active_session_id),
             daemon=True,
         ).start()
 
     def _process_message(self, message: str, full_history: list,
-                         request_id: int, cancel_event: threading.Event, offline=None, route=None):
+                         request_id: int, cancel_event: threading.Event, offline=None, route=None,
+                         session_id=None):
         """Process the message and get the AI response.
 
         All UI/history mutations are queued to the main loop with
@@ -1542,6 +1562,15 @@ class MainWindow(Gtk.Window):
         last_flush = 0.0
 
         try:
+            actions = getattr(self, 'actions', None)
+            if actions is not None and session_id is not None:
+                reply = actions.handle(
+                    message, session_id, get_language(),
+                    is_current=lambda: request_id == self._active_request and not cancel_event.is_set(),
+                )
+                if reply is not None:
+                    GLib.idle_add(self._complete_action_reply, request_id, cancel_event, reply, session_id)
+                    return
             offline_reply = None
 
             ready = route['ready'] if route is not None else self.ai_client.provider_ready()
@@ -1619,6 +1648,105 @@ class MainWindow(Gtk.Window):
             GLib.idle_add(self._add_system_message_if_active, request_id,
                           cancel_event, _("Error: {error}").format(error=e))
             GLib.idle_add(self._finalize_response, request_id, "", cancel_event.is_set())
+
+    def _complete_action_reply(self, request_id, cancel_event, reply, session_id):
+        """Record a local task without interpreting its output as model code."""
+        if request_id != self._active_request or cancel_event.is_set():
+            if reply.executed:
+                self._record_offline_result(request_id, reply.text, session_id)
+            if reply.change is not None:
+                self._finish_display_change(reply.change, False, request_id, session_id)
+            return False
+        self.streaming = False
+        self.chat_view.abort_stream()
+        self._add_ai_message(reply.text, False)
+        self._remember('assistant', reply.text)
+        self._on_message_processed(request_id)
+        if reply.change is not None:
+            self._confirm_display_change(reply.change, request_id, cancel_event, session_id)
+        return False
+
+    def _show_action_audit(self, button=None):
+        session_id = self.history_store.active_session_id
+
+        def show(events, error):
+            if getattr(self, '_audit_closed', False):
+                return False
+            dialog = Gtk.Dialog(title=_("Actions"), transient_for=self, modal=True)
+            dialog.add_button(_("Close"), Gtk.ResponseType.CLOSE)
+            dialog.set_default_size(720, 400)
+            tree = Gtk.TreeStore(str, str, str, str)
+            parents = {}
+            for event in events:
+                identifier = event['operation_id']
+                if identifier not in parents:
+                    parents[identifier] = tree.append(None, [event['action_id'], event['resource'], event['phase'], identifier])
+                tree.set_value(parents[identifier], 2, event['phase'])
+                tree.append(parents[identifier], [event['phase'], event['detail'], '', ''])
+            view = Gtk.TreeView(model=tree)
+            for column, title in enumerate((_("Actions"), _("Details"), _("Status"), 'ID')):
+                view.append_column(Gtk.TreeViewColumn(title, Gtk.CellRendererText(), text=column))
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scrolled.add(view)
+            dialog.get_content_area().pack_start(scrolled, True, True, 0)
+            if error or not events:
+                dialog.get_content_area().pack_start(Gtk.Label(label=error or _("No actions recorded.")), False, False, 8)
+            dialog.show_all()
+            dialog.run()
+            dialog.destroy()
+            return False
+
+        def load():
+            try:
+                events, error = self.actions.audit.events(session_id), ''
+            except (OSError, ValueError):
+                events, error = [], _("Cannot read the operation audit.")
+            GLib.idle_add(show, events, error)
+        threading.Thread(target=load, daemon=True).start()
+
+    def _finish_display_change(self, change, keep, request_id, session_id):
+        def finish():
+            ok, detail = change.confirm() if keep else change.revert()
+            GLib.idle_add(self._record_offline_result, request_id, detail, session_id)
+        threading.Thread(target=finish, daemon=False).start()
+
+    def _confirm_display_change(self, change, request_id, cancel_event, session_id):
+        dialog = Gtk.Dialog(title=_("Keep display configuration?"), transient_for=self, modal=True)
+        dialog.add_button(_("Revert"), Gtk.ResponseType.CANCEL)
+        dialog.add_button(_("Keep"), Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        label = Gtk.Label()
+        label.set_margin_top(16)
+        label.set_margin_bottom(16)
+        label.set_margin_start(16)
+        label.set_margin_end(16)
+        dialog.get_content_area().add(label)
+        timer_active = [True]
+
+        def tick():
+            if (change.status != 'pending' or request_id != self._active_request
+                    or cancel_event.is_set() or change.remaining_seconds <= 0):
+                timer_active[0] = False
+                dialog.response(Gtk.ResponseType.CANCEL)
+                return False
+            label.set_text(_("Reverting in {seconds} seconds unless you keep this configuration.").format(
+                seconds=max(1, int(change.remaining_seconds + 0.999)),
+            ))
+            return True
+
+        if tick():
+            timer = GLib.timeout_add(200, tick)
+            dialog.show_all()
+            response = dialog.run()
+            if timer_active[0]:
+                GLib.source_remove(timer)
+        else:
+            response = Gtk.ResponseType.CANCEL
+        dialog.destroy()
+        keep = (response == Gtk.ResponseType.OK and request_id == self._active_request
+                and not cancel_event.is_set())
+        self._finish_display_change(change, keep, request_id, session_id)
 
     def _abort_ai_stream_if_active(self, request_id):
         if request_id == self._active_request:

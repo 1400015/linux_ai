@@ -1011,6 +1011,12 @@ def offline_service_action(lang, action):
 
 
 TRANSLATIONS["pt"].update({
+    "Keep this display change? [y/N] ": "Manter esta alteração do monitor? [s/N] ",
+    "Keep display configuration?": "Manter configuração do monitor?",
+    "Revert": "Reverter",
+    "Keep": "Manter",
+    "Reverting in {seconds} seconds unless you keep this configuration.":
+        "A configuração será revertida dentro de {seconds} segundos se não a mantiveres.",
     "Conversations": "Conversas",
     "New conversation": "Nova conversa",
     "Previous conversations": "Histórico anterior",
@@ -1112,4 +1118,9 @@ TRANSLATIONS["pt"].update({
     "applied": "aplicada",
     "restored": "reposta",
     "failed": "falhou",
+    "Actions": "Ações",
+    "Details": "Detalhes",
+    "Status": "Estado",
+    "No actions recorded.": "Ainda não há ações registadas.",
+    "Cannot read the operation audit.": "Não foi possível ler o registo de ações.",
 })

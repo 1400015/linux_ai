@@ -69,6 +69,49 @@ python -m src.cli local-models
 
 Text-file/stdin input is limited to 64 KiB. `--no-history` avoids saving the new exchange; `history --clear` clears only the selected conversation. Relevant bundled guides and detected distribution facts also inform model responses, with the response language following the application language.
 
+Explicit Wi-Fi, printer and scanner setup requests can open a device chooser or offer missing support packages, both offline and after a model answer. Hypothetical questions and refusals do not start setup. Printer confirmation shows the command for the edited queue name; changing Wi-Fi networks clears the password. Scanner support installs the package providing `scanimage` explicitly, alongside the AirScan backend when the tool is missing.
+
+Legacy CLI action offers require an interactive terminal and confirmation. Pipes show proposals without device discovery or execution. The chat command returns exit code `1` when an attempted action fails; success, cancellation and proposals without execution return `0`. The action result remains part of the conversation unless `--no-history` is used.
+
+The Wayland chat dock requires layer-shell protocol version 4 or newer for keyboard focus on demand. Older compositors or libraries use an ordinary window so the chat remains usable without taking exclusive keyboard focus. The helper button can still use layer-shell because it does not need keyboard input.
+
+## Conversational software and monitor actions
+
+Local task handling works in GTK and the CLI, with or without an AI provider. Software search and installation use APT/XBPS repositories already configured on the machine. Monitor mode changes support active outputs through `xrandr` on X11 and native Sway on Wayland. An explicit installation or mode-change request authorizes that bounded task; search or listing alone only presents choices. Administrator authentication still uses the system's `pkexec` prompt.
+
+Portuguese examples, as successive messages in the same conversation:
+
+```text
+procura o programa VLC
+instala a opção 2
+lista as resoluções dos monitores
+aplica a opção 2
+```
+
+English equivalents:
+
+```text
+search the program VLC
+install option 2
+show monitor resolutions
+apply option 2
+```
+
+Use an option number from the actual results. `instala VLC` / `install VLC` can install a unique exact package match directly; otherwise the assistant asks for a choice. A listed resolution can also be selected with `coloca em 1920 por 1080 a 60 Hz` / `set 1920 by 1080 at 60 Hz` when it identifies one monitor mode. Confirm a temporary display change within 15 seconds to keep it; otherwise the program attempts to restore the previous configuration. Failure to prepare a complete previous configuration blocks the change.
+
+CLI conversations keep choices between invocations for up to 15 minutes:
+
+```bash
+python -m src.cli chat 'search the program VLC'
+python -m src.cli chat 'install option 2'
+python -m src.cli chat 'show monitor resolutions'
+python -m src.cli chat 'apply option 2'
+```
+
+The CLI requires an interactive terminal to execute changes; pipes and `--stdin`/`--input` produce proposals. `--no-history` does not retain choices for a later message. Choices belong to one session, expire after 15 minutes and are omitted from conversation import/export. Package/version and monitor mode are rechecked before changing the system. Commands come from the local action catalog, never from model-generated shell text.
+
+Package search uses existing indexes without refreshing them silently and returns at most 12 candidates. Monitor lists show up to 30 choices; request a specific resolution/frequency to filter longer lists. The rollback watchdog runs independently of GTK in the application process; recovery after a forced process termination requires future infrastructure. This phase does not add repositories, run Web installers, configure arbitrary applications, activate disabled monitors, change display layout/scale, or configure GNOME/KDE. Hardware and distribution coverage require local validation. See the [Portuguese roadmap](docs/roadmap-acoes-conversacionais.md) for the next capabilities and acceptance criteria.
+
 ## Requirements
 
 ### System
@@ -630,6 +673,7 @@ python -m unittest tests.test_regressions.TestCopyEffectiveKeyToConfig -v
 ```
 
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
+For structured actions, service control, private operation events, offline checksums and validated YAML knowledge, see [the infrastructure guide](docs/infraestrutura-acoes-conhecimento.md). Existing virtual environments need the updated `requirements.txt`.
 For local diagnostic reports, offline log interpretation and recovery of approved file writes, see [the second-phase guide](docs/segunda-fase-2026-10-02.md).
 The GUI must run inside a graphical user session; use
 `./scripts/autostart.sh enable` for session startup rather than a root runit service.

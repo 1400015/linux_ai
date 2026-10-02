@@ -1,0 +1,394 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+    },
+    "kind": {
+      "enum": [
+        "linux",
+        "distro",
+        "package_manager",
+        "service_manager"
+      ]
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+      },
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "distro_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+          },
+          "maxItems": 32
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+          },
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "distro_ids",
+        "components"
+      ],
+      "additionalProperties": false
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "wiki_name": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "wiki_url": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "wiki_search_url": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "docs_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 128
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "repositories": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "network": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "logs": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "hostname": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "locale": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "firewall_tool": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "firewall_status": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "maxItems": 128
+            },
+            "maxItems": 16
+          },
+          "firewall_allow": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "services_note": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "distinct": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 128
+          }
+        },
+        "required": [
+          "family",
+          "display_name",
+          "wiki_name",
+          "wiki_url",
+          "wiki_search_url",
+          "docs_urls",
+          "summary",
+          "repositories",
+          "network",
+          "logs",
+          "hostname",
+          "locale",
+          "firewall_tool",
+          "firewall_status",
+          "firewall_allow",
+          "services_note",
+          "distinct"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 16
+    },
+    "procedures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+          },
+          "title": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "summary": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 128
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "instruction": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "maxItems": 2,
+                  "minItems": 2
+                },
+                "interpretation": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "maxItems": 2,
+                  "minItems": 2
+                },
+                "command": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "probe_key": {
+                  "type": "string",
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "instruction",
+                "interpretation",
+                "command",
+                "probe_key"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 32
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https://"
+            },
+            "maxItems": 32
+          },
+          "families": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 128
+          },
+          "component": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 128
+          },
+          "reviewed_at": {
+            "type": "string",
+            "maxLength": 10,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "verification": {
+            "enum": [
+              "documentation_review",
+              "tested"
+            ]
+          },
+          "tested_versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 128
+          },
+          "version_scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "effects": {
+            "const": "read_only_guidance"
+          },
+          "recovery": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "keywords",
+          "steps",
+          "sources",
+          "families",
+          "component",
+          "versions",
+          "reviewed_at",
+          "verification",
+          "tested_versions",
+          "version_scope",
+          "effects",
+          "recovery"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 64
+    },
+    "action_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+      },
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "verification": {
+          "enum": [
+            "migrated_existing_data",
+            "documentation_review"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 2048,
+            "pattern": "^https://"
+          },
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "origin",
+        "verification",
+        "sources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "kind",
+    "requires",
+    "match",
+    "facts",
+    "procedures",
+    "action_ids",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

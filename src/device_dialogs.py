@@ -21,7 +21,7 @@ from .device_actions import (
     wifi_needs_password,
 )
 from .i18n import _
-from .offline_assistant import OfflineAssistant
+from .offline_assistant import OfflineAssistant, PKG_MANAGERS
 
 logger = logging.getLogger(__name__)
 
@@ -124,17 +124,24 @@ def _present_wifi(parent, networks, error, report, still_current):
     password.set_visibility(False)
     password.set_placeholder_text(_("Password"))
     area.pack_start(password, False, False, 0)
+    selected_ssid = None
 
     def refresh(*_args):
+        nonlocal selected_ssid
         network = _selected(listbox)
-        password.set_sensitive(bool(network and wifi_needs_password(network)))
+        ssid = network.ssid if network else None
+        needs_password = bool(network and wifi_needs_password(network))
+        if ssid != selected_ssid or not needs_password:
+            password.set_text("")
+        selected_ssid = ssid
+        password.set_sensitive(needs_password)
 
     listbox.connect("row-selected", refresh)
     refresh()
     dialog.show_all()
     response = dialog.run()
     network = _selected(listbox)
-    secret = password.get_text()
+    secret = password.get_text() if network and wifi_needs_password(network) else ""
     password.set_text("")
     dialog.destroy()
     if response != Gtk.ResponseType.OK or network is None or not still_current():
@@ -185,34 +192,46 @@ def _present_printers(parent, devices, error, commands, report, still_current):
     preview = Gtk.Label(label="", selectable=True, halign=Gtk.Align.START)
     preview.set_line_wrap(True)
     area.pack_start(preview, False, False, 0)
+    preview_argv = None
 
-    def refresh(*_args):
+    def refresh_preview(*_args):
+        nonlocal preview_argv
+        preview_argv = None
         device = _selected(listbox)
         if device is None:
+            preview.set_text("")
+            dialog.set_response_sensitive(Gtk.ResponseType.OK, False)
             return
-        queue.set_text(queue_name_for(device.uri))
         try:
             argv = printer_add_argv(queue.get_text().strip(), device.uri)
             preview.set_text("$ " + shlex.join(argv))
-        except ValueError:
-            preview.set_text(_(
+            preview_argv = argv
+        except ValueError as exc:
+            message = _(
                 "This device needs a driver. I will not add it automatically."
-            ))
+            ) if not device.driverless else str(exc)
+            preview.set_text(message)
+        dialog.set_response_sensitive(Gtk.ResponseType.OK, preview_argv is not None)
 
-    listbox.connect("row-selected", refresh)
-    refresh()
+    def refresh_selection(*_args):
+        device = _selected(listbox)
+        if device is not None:
+            queue.set_text(queue_name_for(device.uri))
+        refresh_preview()
+
+    queue.connect("changed", refresh_preview)
+    listbox.connect("row-selected", refresh_selection)
+    refresh_selection()
     dialog.show_all()
     response = dialog.run()
     device = _selected(listbox)
-    name = queue.get_text().strip()
+    # Execute the validated argv shown when the user approved the dialog.
+    argv = list(preview_argv) if preview_argv is not None else None
     dialog.destroy()
-    if response != Gtk.ResponseType.OK or device is None or not still_current():
+    if (response != Gtk.ResponseType.OK or device is None or argv is None
+            or not still_current()):
         return
-    try:
-        argv = printer_add_argv(name, device.uri)
-    except ValueError as exc:
-        report(str(exc))
-        return
+    name = argv[2]
 
     def work():
         from .offline_assistant import Command
@@ -246,7 +265,15 @@ def _confirm_install(parent, commands, report, still_current):
     """Reuse the visible argv as the confirmation for a support package."""
     if not still_current():
         return
-    package = commands[0].argv[-1]
+
+    def package_names(command):
+        for manager in PKG_MANAGERS.values():
+            prefix = manager["install"][:-1]
+            if command.argv[:len(prefix)] == prefix:
+                return ", ".join(command.argv[len(prefix):])
+        return command.argv[-1]
+
+    package = ", ".join(package_names(command) for command in commands)
     title = _("Install {pkg}").format(pkg=package)
     dialog, area = _dialog(parent, title, title)
     for command in commands:
@@ -269,7 +296,7 @@ def _confirm_install(parent, commands, report, still_current):
             elif ok:
                 detail = _("Done.")
             else:
-                detail = _("Could not install {pkg}.").format(pkg=command.argv[-1])
+                detail = _("Could not install {pkg}.").format(pkg=package_names(command))
             chunks.append(detail)
             if not ok:
                 break

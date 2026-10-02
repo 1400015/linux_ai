@@ -22,6 +22,8 @@ dependencies = [
     "psutil>=5.9.5",
     "tenacity>=8.2.3",
     "notify2>=0.3.1",
+    "PyYAML>=6.0.3,<7",
+    "jsonschema>=4.18,<5",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +41,9 @@ linux-ai-assistant = "src.app:main"
 
 [tool.setuptools]
 packages = ["src", "plugins"]
+
+[tool.setuptools.package-data]
+src = ["knowledge_data/*.yaml", "knowledge_data/schema/*.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "src._version.__version__" }

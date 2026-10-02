@@ -1,0 +1,73 @@
+schema_version: '0.1'
+id: services-runit
+kind: service_manager
+requires:
+- linux-core
+match:
+  distro_ids: []
+  components:
+  - runit
+facts: []
+procedures:
+- id: service-runit
+  title:
+  - Serviço runit não arranca
+  - runit service fails to start
+  summary:
+  - Inspeciona o serviço supervisionado e a sua configuração.
+  - Inspect the supervised service and its configuration.
+  keywords:
+  - runit
+  - sv
+  - servico
+  - serviço
+  - service
+  - nao arranca
+  - not starting
+  steps:
+  - instruction:
+    - Confirma se o serviço está ligado em /var/service.
+    - Confirm whether the service is linked in /var/service.
+    interpretation:
+    - As definições ficam em /etc/sv. Um diretório de definição não prova que o serviço
+      esteja ativado.
+    - Definitions live in /etc/sv. A definition directory does not prove the service
+      is enabled.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Consulta sv status <serviço> e o registo específico.
+    - Inspect sv status <service> and its specific log.
+    interpretation:
+    - down pode ser intencional. Verifica o ficheiro down e a configuração com leitura
+      autorizada antes de iniciar o serviço.
+    - down can be intentional. Check the down file and configuration with authorized
+      reads before starting the service.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://docs.voidlinux.org/config/services/index.html
+  families: []
+  component: runit
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+action_ids:
+- services.list
+- services.status
+- services.control
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources:
+  - https://docs.voidlinux.org/config/services/index.html
