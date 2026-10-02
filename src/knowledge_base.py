@@ -54,73 +54,6 @@ def _k(**kwargs) -> DistroKnowledge:
 # ---------------------------------------------------------------------------
 
 KNOWLEDGE_BASE: Dict[str, DistroKnowledge] = {
-    "void": _k(
-        family="void",
-        display_name="Void Linux",
-        wiki_name="Void Handbook",
-        wiki_url="https://docs.voidlinux.org/",
-        wiki_search_url="https://docs.voidlinux.org/?search={query}",
-        docs_urls=("https://docs.voidlinux.org/config/",),
-        summary=("Void Linux is an independent, rolling-release distribution "
-                 "built from scratch, available in glibc and musl variants."),
-        repositories=("/usr/share/xbps.d/ holds the defaults; copy a repo file "
-                      "to /etc/xbps.d/ to override it. See the Handbook's "
-                      "'Repositories' section."),
-        network=("dhcpcd runs by default on wired links (/etc/dhcpcd.conf); "
-                 "wpa_supplicant for Wi-Fi; NetworkManager is optional on "
-                 "desktops."),
-        logs=("runit has no journal: install socklog (void-repo-nonfree not "
-              "required) and read /var/log/socklog/ with svlogd, or use "
-              "dmesg for kernel messages."),
-        hostname="/etc/hostname (read at boot by runit's core-services).",
-        locale="/etc/locale.conf (see the Handbook's locale section).",
-        firewall_tool="none preinstalled (iptables/nftables available)",
-        firewall_status=(("iptables", "-S"), ("nft", "list", "ruleset")),
-        firewall_allow="iptables -A INPUT -p tcp --dport 80 -j ACCEPT",
-        services_note=("runit: service definitions live in /etc/sv/<name>/, "
-                       "enabled by symlinking into /var/service/. There are "
-                       "no systemd units on Void."),
-        distinct=(
-            "runit init instead of systemd: services are directories in "
-            "/etc/sv, enabled with a symlink into /var/service.",
-            "xbps package manager: xbps-install/-remove/-query.",
-            "Rolling release with a conservative packaging policy.",
-            "glibc and musl editions; musl images are smaller and "
-            "reproducibility-focused.",
-        ),
-    ),
-    "debian": _k(
-        family="debian",
-        display_name="Debian GNU/Linux",
-        wiki_name="Debian Wiki",
-        wiki_url="https://wiki.debian.org/",
-        wiki_search_url="https://wiki.debian.org/Special:Search?search={query}",
-        docs_urls=("https://www.debian.org/doc/", "https://manpages.debian.org/",
-                   "https://debian-handbook.info/"),
-        summary=("Debian is a community distribution famous for stability, "
-                 "with three branches: stable, testing and unstable (sid)."),
-        repositories=("/etc/apt/sources.list and /etc/apt/sources.list.d/ "
-                      "(newer releases also use deb822 '.sources' files). "
-                      "Edit, then run 'apt-get update'."),
-        network=("ifupdown with /etc/network/interfaces on servers; "
-                 "NetworkManager on desktop installs. DNS in /etc/resolv.conf "
-                 "(systemd-resolved optional)."),
-        logs=("/var/log/syslog (rsyslog) plus the systemd journal: "
-              "'journalctl -xe'. Kernel: dmesg. Package: /var/log/dpkg.log."),
-        hostname="/etc/hostname, /etc/hosts; 'hostnamectl set-hostname NAME'.",
-        locale=("'dpkg-reconfigure locales' after editing /etc/locale.gen; "
-                "system-wide defaults in /etc/default/locale."),
-        firewall_tool="nftables (ufw optional)",
-        firewall_status=(("nft", "list", "ruleset"), ("ufw", "status", "verbose")),
-        firewall_allow="ufw allow 22/tcp   (or: nft add rule ... tcp dport 22 accept)",
-        services_note=("systemd units live in /lib/systemd/system (packaged) "
-                       "and /etc/systemd/system (local overrides)."),
-        distinct=(
-            "Three branches (stable/testing/unstable) - pick per machine.",
-            "apt: apt-get / apt-cache; packages from packages.debian.org.",
-            "Frozen-release model: huge, well-tested repository.",
-        ),
-    ),
     "ubuntu": _k(
         family="ubuntu",
         display_name="Ubuntu",
@@ -405,6 +338,11 @@ KNOWLEDGE_BASE: Dict[str, DistroKnowledge] = {
         ),
     ),
 }
+
+from .knowledge_loader import bundled_modules, legacy_facts
+for _module in bundled_modules():
+    for _facts in _module["facts"]:
+        KNOWLEDGE_BASE[_facts["family"]] = DistroKnowledge(**legacy_facts(_facts))
 
 # os-release ID -> knowledge family (most specific wins)
 _FAMILY_BY_ID: Dict[str, str] = {

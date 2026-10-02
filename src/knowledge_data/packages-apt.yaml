@@ -1,0 +1,242 @@
+schema_version: '0.1'
+id: packages-apt
+kind: package_manager
+requires:
+- linux-core
+match:
+  distro_ids: []
+  components:
+  - apt
+facts: []
+procedures:
+- id: apt-lock
+  title:
+  - APT bloqueado por outra operação
+  - APT locked by another operation
+  summary:
+  - Verifica operações em curso antes de intervir.
+  - Check running operations before intervening.
+  keywords:
+  - apt
+  - lock
+  - bloqueio
+  - dpkg
+  - another process
+  - outro processo
+  steps:
+  - instruction:
+    - Confirma se existe outra operação de pacotes em curso.
+    - Check whether another package operation is running.
+    interpretation:
+    - Atualizações automáticas também podem usar APT. Aguarda uma operação legítima;
+      não apagues ficheiros de lock como primeiro passo.
+    - Automatic updates can also use APT. Wait for a legitimate operation; do not
+      delete lock files as a first step.
+    command: ps aux
+    probe_key: ''
+  - instruction:
+    - Se uma operação terminou com erro, guarda a mensagem completa.
+    - If an operation ended with an error, preserve the full message.
+    interpretation:
+    - A recuperação depende da causa e pode alterar pacotes. Confirma o plano antes
+      de reparar.
+    - Recovery depends on the cause and may modify packages. Confirm the plan before
+      repairing.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://wiki.debian.org/Teams/Dpkg/FAQ
+  families:
+  - debian
+  - ubuntu
+  - mint
+  component: apt
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+- id: apt-dependencies
+  title:
+  - Dependências APT inconsistentes
+  - Inconsistent APT dependencies
+  summary:
+  - Recolhe a mensagem e verifica o estado antes de reparar.
+  - Collect the message and inspect state before repairing.
+  keywords:
+  - apt
+  - dependencia
+  - dependência
+  - dependency
+  - dependencies
+  - broken
+  - unmet
+  steps:
+  - instruction:
+    - Guarda os nomes e versões mencionados no erro.
+    - Preserve names and versions mentioned in the error.
+    interpretation:
+    - Verifica se há pacotes retidos ou repositórios de versões diferentes.
+    - Check for held packages or repositories from different releases.
+    command: apt-mark showhold
+    probe_key: ''
+  - instruction:
+    - Avalia uma simulação de reparação antes de confirmar alterações.
+    - Evaluate a repair simulation before confirming changes.
+    interpretation:
+    - apt-get -s -f install mostra um plano. Revê remoções e não assumes que todas
+      são desejadas.
+    - apt-get -s -f install shows a plan. Review removals and do not assume all are
+      intended.
+    command: apt-get -s -f install
+    probe_key: ''
+  sources:
+  - https://manpages.debian.org/bookworm/apt/apt-get.8.en.html
+  families:
+  - debian
+  - ubuntu
+  - mint
+  component: apt
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+- id: apt-repositories
+  title:
+  - Erro nos repositórios APT
+  - APT repository error
+  summary:
+  - Distingue falha de rede, assinatura e versão de distribuição.
+  - Distinguish network, signature and distribution-release failures.
+  keywords:
+  - apt
+  - repository
+  - repositories
+  - repositorio
+  - repositório
+  - sources.list
+  - '404'
+  - signature
+  steps:
+  - instruction:
+    - Identifica a origem e a mensagem exata.
+    - Identify the source and exact message.
+    interpretation:
+    - A configuração pode estar em sources.list ou sources.list.d, incluindo ficheiros
+      .sources. Confirma a versão em os-release.
+    - Configuration may be in sources.list or sources.list.d, including .sources files.
+      Confirm the release in os-release.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Confirma a origem oficial antes de editar.
+    - Confirm the official source before editing.
+    interpretation:
+    - Não desatives verificação de assinaturas para contornar o erro. Guarda a configuração
+      anterior e verifica o resultado.
+    - Do not disable signature verification to bypass the error. Save previous configuration
+      and verify the result.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://manpages.debian.org/bookworm/apt/sources.list.5.en.html
+  families:
+  - debian
+  - ubuntu
+  - mint
+  component: apt
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+- id: apt-interrupted
+  title:
+  - Configuração dpkg interrompida
+  - Interrupted dpkg configuration
+  summary:
+  - Identifica pacotes incompletos e a primeira falha de configuração.
+  - Identify incomplete packages and the first configuration failure.
+  keywords:
+  - dpkg was interrupted
+  - dpkg
+  - half-configured
+  - half-installed
+  - interrompido
+  steps:
+  - instruction:
+    - Inspeciona o estado da base de pacotes.
+    - Inspect package database state.
+    interpretation:
+    - dpkg --audit identifica pacotes parcialmente instalados. Confirma que não existe
+      outra transação ativa.
+    - dpkg --audit identifies partially installed packages. Confirm that no other
+      transaction is active.
+    command: dpkg --audit
+    probe_key: ''
+  - instruction:
+    - Lê a primeira falha e verifica espaço e dependências.
+    - Read the first failure and check space and dependencies.
+    interpretation:
+    - dpkg --configure -a altera o sistema e executa scripts; só o uses numa recuperação
+      aprovada. Não elimines a base de dados ou locks.
+    - dpkg --configure -a modifies the system and runs scripts; use it only in an
+      approved recovery. Do not delete the database or locks.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://manpages.debian.org/bookworm/dpkg/dpkg.1.en.html
+  families:
+  - debian
+  - ubuntu
+  - mint
+  component: apt
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+action_ids:
+- packages.search
+- packages.install
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources:
+  - https://manpages.debian.org/bookworm/apt/apt-get.8.en.html
+  - https://manpages.debian.org/bookworm/apt/sources.list.5.en.html
+  - https://manpages.debian.org/bookworm/dpkg/dpkg.1.en.html
+  - https://wiki.debian.org/Teams/Dpkg/FAQ

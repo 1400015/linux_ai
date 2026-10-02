@@ -70,12 +70,40 @@ SUPPORT_PACKAGES = {
     },
 }
 
+# The AirScan backend does not provide the scanimage discovery frontend.
+# Package owners checked against the distributions' official package lists:
+# apt: https://packages.debian.org/trixie/amd64/sane-utils/filelist
+# xbps: https://github.com/void-linux/void-packages/blob/master/srcpkgs/sane/template
+# dnf: https://packages.fedoraproject.org/pkgs/sane-backends/sane-backends/
+# pacman: https://archlinux.org/packages/extra/x86_64/sane/files/
+# zypper: https://manpages.opensuse.org/Tumbleweed/sane-backends/scanimage.1.en.html
+# apk: https://pkgs.alpinelinux.org/package/v3.24/community/x86/sane-utils
+SCANIMAGE_PACKAGES = {
+    "apt": "sane-utils",
+    "xbps": "sane",
+    "dnf": "sane-backends",
+    "pacman": "sane",
+    "zypper": "sane-backends",
+    "apk": "sane-utils",
+}
+
 _YES = {"y", "yes", "s", "sim"}
 
 
 def support_package(kind: str, pkg_manager: str) -> Optional[str]:
     """Return the distro package that provides this device tool, if known."""
     return SUPPORT_PACKAGES.get(kind, {}).get(pkg_manager)
+
+
+def scanner_support_packages(pkg_manager: str, needs_scanimage: bool = True) -> Tuple[str, ...]:
+    """Fixed packages for discovery and AirScan; never rely on recommendations."""
+    backend = support_package("scanner", pkg_manager)
+    frontend = SCANIMAGE_PACKAGES.get(pkg_manager)
+    if backend is None or (needs_scanimage and frontend is None):
+        return ()
+    if needs_scanimage:
+        return frontend, backend
+    return (backend,)
 
 
 def valid_ssid(ssid: str) -> bool:

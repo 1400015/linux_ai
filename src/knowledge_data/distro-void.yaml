@@ -1,0 +1,52 @@
+schema_version: '0.1'
+id: distro-void
+kind: distro
+requires:
+- linux-core
+- packages-xbps
+- services-runit
+match:
+  distro_ids:
+  - void
+  components: []
+facts:
+- family: void
+  display_name: Void Linux
+  wiki_name: Void Handbook
+  wiki_url: https://docs.voidlinux.org/
+  wiki_search_url: https://docs.voidlinux.org/?search={query}
+  docs_urls:
+  - https://docs.voidlinux.org/config/
+  summary: Void Linux is an independent, rolling-release distribution built from scratch,
+    available in glibc and musl variants.
+  repositories: /usr/share/xbps.d/ holds the defaults; copy a repo file to /etc/xbps.d/
+    to override it. See the Handbook's 'Repositories' section.
+  network: dhcpcd runs by default on wired links (/etc/dhcpcd.conf); wpa_supplicant
+    for Wi-Fi; NetworkManager is optional on desktops.
+  logs: 'runit has no journal: install socklog (void-repo-nonfree not required) and
+    read /var/log/socklog/ with svlogd, or use dmesg for kernel messages.'
+  hostname: /etc/hostname (read at boot by runit's core-services).
+  locale: /etc/locale.conf (see the Handbook's locale section).
+  firewall_tool: none preinstalled (iptables/nftables available)
+  firewall_status:
+  - - iptables
+    - -S
+  - - nft
+    - list
+    - ruleset
+  firewall_allow: iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+  services_note: 'runit: service definitions live in /etc/sv/<name>/, enabled by symlinking
+    into /var/service/. There are no systemd units on Void.'
+  distinct:
+  - 'runit init instead of systemd: services are directories in /etc/sv, enabled with
+    a symlink into /var/service.'
+  - 'xbps package manager: xbps-install/-remove/-query.'
+  - Rolling release with a conservative packaging policy.
+  - glibc and musl editions; musl images are smaller and reproducibility-focused.
+procedures: []
+action_ids: []
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources:
+  - https://docs.voidlinux.org/

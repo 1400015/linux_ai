@@ -62,6 +62,21 @@ def _apply_x11_struts(gdk_window, edge, size):
     return True
 
 
+def _layer_keyboard_mode():
+    """Return a focusable mode that does not take exclusive keyboard focus."""
+    modes = getattr(GtkLayerShell, "KeyboardMode", None)
+    on_demand = getattr(modes, "ON_DEMAND", None)
+    protocol_version = getattr(GtkLayerShell, "get_protocol_version", None)
+    # Older protocols/libraries offer only NONE or exclusive keyboard focus.
+    # A layer window cannot be made an ordinary toplevel again on undock, so
+    # use the ordinary-window fallback before initializing such a surface.
+    if (on_demand is not None
+            and callable(getattr(GtkLayerShell, "set_keyboard_mode", None))
+            and callable(protocol_version) and protocol_version() >= 4):
+        return on_demand
+    return None
+
+
 def apply_dock(window, edge, width):
     """Try to pin the window to the screen and reserve space.
 
@@ -70,22 +85,24 @@ def apply_dock(window, edge, width):
     """
     if is_wayland(window) and HAS_LAYER_SHELL:
         try:
-            # init_for_window() is safe to call more than once (it is a no-op
-            # after the first call), so re-docking does not stack anchors.
-            GtkLayerShell.init_for_window(window)
-            GtkLayerShell.set_layer(window, GtkLayerShell.Layer.TOP)
-            edges = {"left": GtkLayerShell.Edge.LEFT,
-                     "right": GtkLayerShell.Edge.RIGHT,
-                     "top": GtkLayerShell.Edge.TOP,
-                     "bottom": GtkLayerShell.Edge.BOTTOM}
-            for name, e in edges.items():
-                GtkLayerShell.set_anchor(window, e, name == edge)
-            # Confirmar que o init teve efeito: sem isto o método reportava
-            # "layer-shell" mesmo quando a janela não era uma layer window
-            # (ex.: chamado após realize) e o dock falhava em silêncio.
-            if GtkLayerShell.is_layer_window(window):
-                return "layer-shell"
-            logger.warning("Layer-shell init had no effect; falling back")
+            keyboard_mode = _layer_keyboard_mode()
+            if keyboard_mode is not None:
+                # Reapplying does not initialize a second layer surface.
+                GtkLayerShell.init_for_window(window)
+                GtkLayerShell.set_layer(window, GtkLayerShell.Layer.TOP)
+                edges = {"left": GtkLayerShell.Edge.LEFT,
+                         "right": GtkLayerShell.Edge.RIGHT,
+                         "top": GtkLayerShell.Edge.TOP,
+                         "bottom": GtkLayerShell.Edge.BOTTOM}
+                for name, e in edges.items():
+                    GtkLayerShell.set_anchor(window, e, name == edge)
+                # Initialization after realize may leave an ordinary window.
+                if GtkLayerShell.is_layer_window(window):
+                    GtkLayerShell.set_keyboard_mode(window, keyboard_mode)
+                    return "layer-shell"
+                logger.warning("Layer-shell init had no effect; falling back")
+            else:
+                logger.info("Layer-shell lacks on-demand keyboard focus; using an ordinary window")
         except Exception as e:
             # Log instead of a bare `pass`: silently swallowing this made
             # Wayland dock failures invisible.
@@ -195,4 +212,3 @@ def apply_float(window, always_on_top: bool = True):
                                 Gdk.PropMode.REPLACE, data, 12)
         except Exception as e:
             logger.warning(f"Could not release X11 strut: {e}")
-

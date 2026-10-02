@@ -1,0 +1,126 @@
+schema_version: '0.1'
+id: packages-xbps
+kind: package_manager
+requires:
+- linux-core
+match:
+  distro_ids: []
+  components:
+  - xbps
+facts: []
+procedures:
+- id: xbps-errors
+  title:
+  - Erro de pacotes XBPS
+  - XBPS package error
+  summary:
+  - Recolhe o erro e confirma os repositórios da edição instalada.
+  - Collect the error and confirm repositories for the installed edition.
+  keywords:
+  - xbps
+  - void
+  - package
+  - pacote
+  - repository
+  - repositorio
+  - error
+  - erro
+  steps:
+  - instruction:
+    - Identifica a operação, o pacote e a mensagem de erro.
+    - Identify the operation, package and error message.
+    interpretation:
+    - Confirma glibc ou musl e a arquitetura antes de escolher repositórios ou pacotes.
+    - Confirm glibc or musl and the architecture before choosing repositories or packages.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Compara a configuração local com o Handbook.
+    - Compare local configuration with the Handbook.
+    interpretation:
+    - Os valores de /etc/xbps.d podem substituir os de /usr/share/xbps.d. Não removas
+      a base de dados para resolver um erro desconhecido.
+    - Values in /etc/xbps.d may override /usr/share/xbps.d. Do not remove the database
+      to resolve an unknown error.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html
+  - https://docs.voidlinux.org/xbps/repositories/index.html
+  families:
+  - void
+  component: xbps
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+- id: xbps-shlibs
+  title:
+  - Bibliotecas XBPS não resolvidas
+  - Unresolved XBPS shared libraries
+  summary:
+  - Distingue pacotes antigos de repositórios em transição.
+  - Distinguish outdated packages from transitioning repositories.
+  keywords:
+  - unresolvable shlib
+  - unresolved shlibs
+  - xbps
+  - bibliotecas
+  - shared libraries
+  steps:
+  - instruction:
+    - Guarda a mensagem exata e os pacotes envolvidos.
+    - Save the exact message and involved packages.
+    interpretation:
+    - unresolvable shlib pode resultar de pacotes antigos ou repositórios removidos.
+      Confirma a configuração e a versão instalada.
+    - unresolvable shlib can result from outdated packages or removed repositories.
+      Confirm configuration and installed version.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Distingue Transaction aborted due to unresolved shlibs.
+    - Distinguish Transaction aborted due to unresolved shlibs.
+    interpretation:
+    - Pode indicar repositórios em staged state durante grandes builds. Espera e confirma
+      o estado oficial antes de forçar atualizações ou remover pacotes.
+    - It can indicate repositories in staged state during large builds. Wait and confirm
+      official state before forcing updates or removing packages.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html
+  families:
+  - void
+  component: xbps
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+action_ids:
+- packages.search
+- packages.install
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources:
+  - https://docs.voidlinux.org/xbps/repositories/index.html
+  - https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html

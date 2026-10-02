@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "action_id": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+    },
+    "session_id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "parameters": {
+      "type": "object",
+      "maxProperties": 16
+    }
+  },
+  "required": [
+    "schema_version",
+    "action_id",
+    "session_id",
+    "parameters"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

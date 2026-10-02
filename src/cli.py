@@ -16,6 +16,7 @@ import time
 import argparse
 import getpass
 import logging
+import select
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -35,8 +36,27 @@ from .conversation_io import read_conversation, write_conversation
 from .local_knowledge import PROCEDURE_BY_ID, search_procedures, render_procedure
 from .diagnostics import PROBES, build_report, export_report
 from .change_journal import ChangeJournal
+from .conversation_actions import ConversationActions
 
 logger = logging.getLogger(__name__)
+
+
+class _ActionResult(str):
+    """Keep action text compatible with callers while carrying its outcome.
+
+    No action (including a non-interactive proposal) and user cancellation
+    are not execution failures. Only an attempted operation that fails gives
+    the chat command a nonzero exit code.
+    """
+
+    def __new__(cls, text="", status="none"):
+        result = super().__new__(cls, text)
+        result.status = status
+        return result
+
+    @property
+    def exit_code(self):
+        return 1 if self.status == "failed" else 0
 
 
 class CLIApp:
@@ -57,6 +77,10 @@ class CLIApp:
         self._pending_exchanges = []
         self.conversation_history = self._load_history()
         self.expert_mode = False
+        from .system_context import detect_system_context
+        self.system_context = detect_system_context(self.offline.distro)
+        self.offline.set_system_context(self.system_context)
+        self.actions = ConversationActions(self._store(), self.offline.distro.pkg_manager, context=self.system_context)
 
     def parse_args(self):
         """Parse the command-line arguments."""
@@ -144,6 +168,11 @@ Exemplos:
         subparsers.add_parser('local-models', help='List models installed on the configured local server')
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
+        subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
+        audit_parser = subparsers.add_parser('actions', help='Review operations in the current conversation')
+        audit_actions = audit_parser.add_subparsers(dest='audit_action', required=True)
+        audit_actions.add_parser('list')
+        audit_actions.add_parser('show').add_argument('id')
 
         diagnose = subparsers.add_parser('diagnose', help='Prepare a local, redacted diagnostic report without AI')
         diagnose.add_argument('symptom', nargs='*')
@@ -169,6 +198,7 @@ Exemplos:
 
         # system info
         system_subparsers.add_parser('info', help='Full system information')
+        system_subparsers.add_parser('context', help='Observed system components and evidence (JSON)')
 
         # system commands
         system_subparsers.add_parser('commands', help='List of allowed commands')
@@ -261,6 +291,18 @@ Exemplos:
             for model in self.ai_client.list_local_models():
                 print(model)
             return 0
+        if args.command == 'knowledge-verify':
+            from .knowledge_loader import bundled_modules
+            print(json.dumps({'schema': '0.1', 'modules': [item['id'] for item in bundled_modules()],
+                              'validation': 'structure_and_references_only'}, indent=2))
+            return 0
+        if args.command == 'actions':
+            try:
+                print(self.actions.audit.render(self._store().active_session_id, args.id if args.audit_action == 'show' else None))
+                return 0
+            except (OSError, ValueError):
+                print('Cannot read the operation audit.')
+                return 1
         if args.command == 'knowledge':
             query = ' '.join(args.query)
             exact = PROCEDURE_BY_ID.get(query)
@@ -480,22 +522,22 @@ Examples:
         print(f"\n[OFFLINE]\n{reply.text}\n")
         extra = self._offer_action(reply)
         if extra:
-            return reply.text + "\n\n" + extra
-        return reply.text
+            return _ActionResult(reply.text + "\n\n" + extra, extra.status)
+        return _ActionResult(reply.text, extra.status)
 
     def _offer_model_action(self, message: str) -> str:
         """Offer a catalog action for the user's sentence, not for model text."""
         propose = getattr(self.offline, "propose", None)
         if not callable(propose):
-            return ""
+            return _ActionResult()
         try:
             reply = propose(message, get_language())
         except Exception as exc:
             logger.error("Could not prepare a confirmed action: %s", exc, exc_info=True)
-            return ""
+            return _ActionResult()
         interaction, commands = split_offer(reply)
         if not interaction and not commands:
-            return ""
+            return _ActionResult()
         if getattr(reply, "text", ""):
             print(f"\n{reply.text}\n")
         return self._offer_action(reply)
@@ -511,20 +553,20 @@ Examples:
             if not sys.stdin.isatty():
                 self._print_commands(commands)
                 print(_("This step needs an interactive terminal."))
-                return ""
+                return _ActionResult()
             if interaction == "wifi":
                 return self._choose_wifi()
             if interaction == "printer":
                 return self._choose_printer(commands)
             if interaction == "scanner":
                 return self._choose_scanner(commands)
-            return ""
+            return _ActionResult()
         if not commands:
-            return ""
+            return _ActionResult()
         self._print_commands(commands)
         if not sys.stdin.isatty():
             print(_("This step needs an interactive terminal."))
-            return ""
+            return _ActionResult()
         return self._confirm_and_run(commands)
 
     def _print_commands(self, commands):
@@ -544,10 +586,13 @@ Examples:
             return ""
 
     def _confirm_and_run(self, commands) -> str:
+        if not commands:
+            return _ActionResult()
         if not confirmed(self._ask(_("Run these commands? [y/N] "))):
             print(_("Cancelled"))
-            return ""
+            return _ActionResult(status="cancelled")
         chunks = []
+        status = "success"
         for command in commands:
             ok, output = offline_assistant.OfflineAssistant.run_command(command)
             line = f"$ {command.display()}"
@@ -557,15 +602,16 @@ Examples:
             chunks.append(line)
             chunks.append(detail)
             if not ok:
+                status = "failed"
                 break
-        return "\n".join(chunks)
+        return _ActionResult("\n".join(chunks), status)
 
     def _choose_wifi(self) -> str:
         networks, error = collect_wifi()
         if not networks:
             text = error or _("No Wi-Fi networks found.")
             print(text)
-            return text
+            return _ActionResult(text, "failed" if error else "none")
         index = choose_numbered(
             networks, self._ask, sys.stdout.write,
             lambda network: (
@@ -575,7 +621,7 @@ Examples:
         )
         if index is None:
             print(_("Cancelled"))
-            return ""
+            return _ActionResult(status="cancelled")
         network = networks[index]
         secret = ""
         if wifi_needs_password(network):
@@ -585,7 +631,7 @@ Examples:
                 secret = ""
             if not secret:
                 print(_("Cancelled"))
-                return ""
+                return _ActionResult(status="cancelled")
         ok, output = connect_wifi(network.ssid, secret or None)
         secret = ""
         if ok:
@@ -595,7 +641,7 @@ Examples:
             if output:
                 text = text + "\n" + output
         print(text)
-        return text
+        return _ActionResult(text, "success" if ok else "failed")
 
     def _choose_printer(self, commands) -> str:
         devices, error = collect_printers()
@@ -605,7 +651,7 @@ Examples:
                 return self._confirm_and_run(commands)
             text = error or _("No printers found.")
             print(text)
-            return text
+            return _ActionResult(text, "failed" if error else "none")
         index = choose_numbered(
             devices, self._ask, sys.stdout.write,
             lambda device: device.uri + ("" if device.driverless else " (driver)"),
@@ -613,7 +659,7 @@ Examples:
         )
         if index is None:
             print(_("Cancelled"))
-            return ""
+            return _ActionResult(status="cancelled")
         device = devices[index]
         default = queue_name_for(device.uri)
         typed = self._ask(_("Queue name [{name}]: ").format(name=default)).strip()
@@ -621,7 +667,7 @@ Examples:
             argv = printer_add_argv(typed or default, device.uri)
         except ValueError as exc:
             print(exc)
-            return str(exc)
+            return _ActionResult(str(exc), "failed")
         command = offline_assistant.Command(
             argv=argv, privileged=True, description=f"Add printer {argv[2]}",
         )
@@ -634,13 +680,43 @@ Examples:
             lines = [f"{item.device} — {item.description}" for item in devices]
             text = "\n".join(lines)
             print(text)
-            return text
+            return _ActionResult(text, "success")
         if commands:
             self._print_commands(commands)
             return self._confirm_and_run(commands)
         text = error or _("No scanners found.")
         print(text)
-        return text
+        return _ActionResult(text, "failed" if error else "none")
+
+    def _run_conversational_action(self, message, args):
+        engine = getattr(self, 'actions', None)
+        if engine is None:
+            return None
+        reply = engine.handle(
+            message, self._store().active_session_id, get_language(),
+            can_execute=bool(sys.stdin.isatty() and not getattr(args, 'stdin', False)
+                             and not getattr(args, 'input', None)),
+            persist_choices=not args.no_history,
+        )
+        if reply is None:
+            return None
+        print("\n" + reply.text + "\n")
+        if reply.change is not None:
+            change = reply.change
+            try:
+                print(_("Keep this display change? [y/N] "), end='', flush=True)
+                readable, writable, exceptional = select.select([sys.stdin], [], [], max(0, change.remaining_seconds))
+                keep = bool(readable and confirmed(sys.stdin.readline()))
+                ok, detail = change.confirm() if keep else change.revert()
+            except (OSError, ValueError, KeyboardInterrupt):
+                ok, detail = change.revert()
+            print(detail)
+            reply.text += "\n\n" + detail
+            reply.status = "done" if ok else "failed"
+        if not args.no_history:
+            self._record_exchange(message, reply.text)
+            self._save_history()
+        return reply.exit_code
 
     def handle_chat(self, args):
         """Process the chat command. Devolve exit code (0 sucesso, 1 falha)."""
@@ -650,12 +726,18 @@ Examples:
         if args.expert:
             self.expert_mode = True
 
+        action_code = self._run_conversational_action(message, args)
+        if action_code is not None:
+            return action_code
+
         full_history = self._build_request_messages(message)
 
         # Get the response (or answer offline when the provider is unusable)
         answered_offline = False
+        action_result = _ActionResult()
         if not self.ai_client.provider_ready(args.provider):
             response_text = self._run_offline(message)
+            action_result = response_text
             answered_offline = True
         elif args.stream:
             print("\n[AI] ", end="", flush=True)
@@ -674,6 +756,7 @@ Examples:
                 # modelo — não persistir como resposta, cair para offline.
                 print(f"\n[!] {e}\n")
                 response_text = self._run_offline(message)
+                action_result = response_text
                 answered_offline = True
         else:
             response_text = self.ai_client.chat(
@@ -685,10 +768,12 @@ Examples:
                 print(f"\n[AI]\n{response_text}\n")
             else:
                 response_text = self._run_offline(message)
+                action_result = response_text
                 answered_offline = True
 
         if response_text and not answered_offline:
             extra = self._offer_model_action(message)
+            action_result = extra
             if extra:
                 response_text = response_text + "\n\n" + extra
 
@@ -696,7 +781,7 @@ Examples:
         if not args.no_history:
             self._record_exchange(message, response_text)
             self._save_history()
-        return 0
+        return getattr(action_result, "exit_code", 0)
 
     def handle_capture(self, args):
         """Process the capture command. Devolve exit code."""
@@ -740,6 +825,9 @@ Examples:
         if args.system_command == 'info':
             info = self.system_utils.get_system_info()
             self._print_system_info(info)
+        elif args.system_command == 'context':
+            from .system_context import detect_system_context
+            print(json.dumps(detect_system_context(self.offline.distro).to_dict(), indent=2, ensure_ascii=False))
         elif args.system_command == 'commands':
             commands = self.config.get("permissions.allowed_commands", [])
             print("Allowed commands:")
@@ -960,7 +1048,7 @@ Examples:
             print("✓ Token count reset")
 
     def _get_context_message(self, query='') -> Optional[Dict[str, str]]:
-        return build_system_message(self.expert_mode, self.offline.distro, query, get_language())
+        return build_system_message(self.expert_mode, self.offline.distro, query, get_language(), getattr(self, 'system_context', None))
 
     def _save_history(self):
         store = self._store()
@@ -982,6 +1070,7 @@ def main():
     # File logging só no arranque real (não no import do pacote)
     from . import setup_file_logging
     setup_file_logging()
+    app = None
     try:
         app = CLIApp()
         code = app.run()
@@ -992,6 +1081,9 @@ def main():
     except Exception as e:
         print(f"\n✗ Error: {e}")
         sys.exit(1)
+    finally:
+        if app is not None and getattr(app, 'actions', None) is not None:
+            app.actions.close()
 
 
 if __name__ == "__main__":

@@ -131,7 +131,15 @@ class TestFeatureInterfaces(unittest.TestCase):
         self.assertIn('Portuguese', message['content'])
         self.assertIn('24.04', message['content'])
         self.assertIn('network-', message['content'])
-        self.assertEqual(message, build_system_message(False, self.app.offline.distro, 'DNS rede', 'pt'))
+        self.assertEqual(message, build_system_message(False, self.app.offline.distro, 'DNS rede', 'pt', self.app.system_context))
+
+    def test_schema_context_and_action_review_commands_work_without_network(self):
+        for arguments in (['knowledge-verify'], ['system', 'context'], ['actions', 'list']):
+            with self.subTest(arguments=arguments), patch('sys.argv', ['linux-ai'] + arguments), \
+                    patch('requests.Session.request', side_effect=AssertionError('Unexpected network')), \
+                    patch('sys.stdout', io.StringIO()) as output:
+                self.assertIn(self.app._run_command(), (None, 0))
+                self.assertTrue(output.getvalue())
 
 
 class TestConversationFiles(unittest.TestCase):

@@ -8,7 +8,7 @@ LANGUAGE_NAMES = {
 }
 
 
-def build_system_message(expert=False, distro=None, query="", lang="en"):
+def build_system_message(expert=False, distro=None, query="", lang="en", context=None):
     language = LANGUAGE_NAMES.get(lang, "English")
     instructions = [
         "You are a helpful Linux assistant. Explain clearly and concisely.",
@@ -23,9 +23,15 @@ def build_system_message(expert=False, distro=None, query="", lang="en"):
         instructions.append(
             "Detected system: {}; version: {}; package manager: {}; service manager: {}.".format(
                 distro.pretty_name, getattr(distro, "version_id", "") or "unknown",
-                distro.pkg_manager or "unknown", distro.service_manager or "unknown",
+                (context.package_manager.identifier if context else distro.pkg_manager) or "unknown",
+                (context.service_manager.identifier if context else distro.service_manager) or "unknown",
             )
         )
+    if context is not None:
+        from .knowledge_loader import compose_modules
+        instructions.append('Observed component snapshot: ' + context.summary())
+        instructions.append('Installed clients and inferred desktop names do not prove that a daemon is active.')
+        instructions.append('Applicable bundled knowledge modules: ' + ', '.join(module['id'] for module in compose_modules(context)))
     reference = knowledge_context(query, distro=distro, lang=lang, max_chars=3500) if query else ""
     if reference:
         instructions.extend([

@@ -1,0 +1,54 @@
+schema_version: '0.1'
+id: distro-debian
+kind: distro
+requires:
+- linux-core
+- packages-apt
+- services-systemd
+match:
+  distro_ids:
+  - debian
+  components: []
+facts:
+- family: debian
+  display_name: Debian GNU/Linux
+  wiki_name: Debian Wiki
+  wiki_url: https://wiki.debian.org/
+  wiki_search_url: https://wiki.debian.org/Special:Search?search={query}
+  docs_urls:
+  - https://www.debian.org/doc/
+  - https://manpages.debian.org/
+  - https://debian-handbook.info/
+  summary: 'Debian is a community distribution famous for stability, with three branches:
+    stable, testing and unstable (sid).'
+  repositories: /etc/apt/sources.list and /etc/apt/sources.list.d/ (newer releases
+    also use deb822 '.sources' files). Edit, then run 'apt-get update'.
+  network: ifupdown with /etc/network/interfaces on servers; NetworkManager on desktop
+    installs. DNS in /etc/resolv.conf (systemd-resolved optional).
+  logs: '/var/log/syslog (rsyslog) plus the systemd journal: ''journalctl -xe''. Kernel:
+    dmesg. Package: /var/log/dpkg.log.'
+  hostname: /etc/hostname, /etc/hosts; 'hostnamectl set-hostname NAME'.
+  locale: '''dpkg-reconfigure locales'' after editing /etc/locale.gen; system-wide
+    defaults in /etc/default/locale.'
+  firewall_tool: nftables (ufw optional)
+  firewall_status:
+  - - nft
+    - list
+    - ruleset
+  - - ufw
+    - status
+    - verbose
+  firewall_allow: 'ufw allow 22/tcp   (or: nft add rule ... tcp dport 22 accept)'
+  services_note: systemd units live in /lib/systemd/system (packaged) and /etc/systemd/system
+    (local overrides).
+  distinct:
+  - Three branches (stable/testing/unstable) - pick per machine.
+  - 'apt: apt-get / apt-cache; packages from packages.debian.org.'
+  - 'Frozen-release model: huge, well-tested repository.'
+procedures: []
+action_ids: []
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources:
+  - https://wiki.debian.org/

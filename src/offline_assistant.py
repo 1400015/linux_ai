@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .knowledge_base import knowledge_content, knowledge_for, package_manager_for
 from .local_knowledge import (PROCEDURE_BY_ID, PROCEDURES, localized, normalize,
                               render_procedure, search_procedures)
-from .device_actions import support_package
+from .device_actions import scanner_support_packages, support_package
 from .diagnostics import analyze, render_findings
 
 
@@ -441,6 +441,10 @@ _PROBLEM_RE = re.compile(
     r"nao funciona|não funciona|not working|nao arranca|não arranca|sem rede|sem internet)\b",
     re.IGNORECASE,
 )
+_HYPOTHETICAL_RE = re.compile(
+    r"\b(?:if i|se eu|what happens|o que acontece|whether|talvez|maybe)\b",
+    re.IGNORECASE,
+)
 
 
 def _is_refusal(text: str) -> bool:
@@ -557,12 +561,14 @@ class OfflineAssistant:
             return Reply(self._help(distro, lang))
 
         mutating = bool(_MUTATION_RE.search(text) or _SVC_RE.search(text))
-        if mutating and _NEGATION_RE.search(text):
+        if mutating and _is_refusal(text):
             return Reply(_t(lang, "negated_action"))
         if _INSTALL_RE.search(text) and _REMOVE_RE.search(text):
             return Reply(_t(lang, "ambiguous_action"))
-        if mutating and re.search(
-                r"\b(?:if i|se eu|what happens|o que acontece|whether|talvez|maybe)\b", low):
+        mentions_device = bool(
+            _WIFI_RE.search(text) or _PRINTER_RE.search(text) or _SCANNER_RE.search(text)
+        )
+        if (mutating or mentions_device) and _HYPOTHETICAL_RE.search(text):
             return Reply(_t(lang, "ambiguous_action"))
         if mutating and re.search(r"\b(?:erro|error|failed|falha|problema|problem|unable|cannot)\b", low):
             matches = search_procedures(text, distro, limit=1)
@@ -631,8 +637,7 @@ class OfflineAssistant:
             return Reply("")
         if _INSTALL_RE.search(text) and _REMOVE_RE.search(text):
             return Reply("")
-        if mutating and re.search(
-                r"\b(?:if i|se eu|what happens|o que acontece|whether|talvez|maybe)\b", low):
+        if mutating and _HYPOTHETICAL_RE.search(text):
             return Reply("")
         if _PROBLEM_RE.search(low):
             return Reply("")
@@ -680,10 +685,19 @@ class OfflineAssistant:
         return self._which(name) is not None
 
     def _install_named(self, package: str, description: str) -> Optional[Command]:
+        return self._install_packages((package,), description)
+
+    def _install_packages(self, packages: Tuple[str, ...], description: str) -> Optional[Command]:
+        """One confirmed package-manager transaction for fixed support packages."""
         template = self._distro.pkg.get("install")
-        if not template or not _valid(package):
+        if not template or not packages or not all(_valid(package) for package in packages):
             return None
-        argv = [package if part == "{pkg}" else part for part in template]
+        argv = []
+        for part in template:
+            if part == "{pkg}":
+                argv.extend(packages)
+            else:
+                argv.append(part)
         return Command(argv=argv, privileged=True, description=description)
 
     def _wifi_reply(self, distro: DistroInfo, lang: str) -> Reply:
@@ -707,16 +721,18 @@ class OfflineAssistant:
         )
 
     def _scanner_reply(self, distro: DistroInfo, lang: str) -> Reply:
-        package = support_package("scanner", distro.pkg_manager)
-        command = self._install_named(package, f"Install {package}") if package else None
-        if self._has_tool("scanimage"):
+        has_scanimage = self._has_tool("scanimage")
+        packages = scanner_support_packages(distro.pkg_manager, needs_scanimage=not has_scanimage)
+        package_names = " ".join(packages)
+        command = self._install_packages(packages, f"Install {package_names}") if packages else None
+        if has_scanimage:
             return Reply(
                 _t(lang, "scanner_offer"),
                 [command] if command else [],
                 interaction="scanner",
             )
         return Reply(
-            _t(lang, "scanner_unavailable", pkg=package or "sane-airscan"),
+            _t(lang, "scanner_unavailable", pkg=package_names or "SANE (scanimage)"),
             [command] if command else [],
         )
 
@@ -1020,6 +1036,11 @@ class OfflineAssistant:
         return Reply(_t(lang, "search_generic", pretty=distro.pretty_name,
                           cmd=shlex.join(template)))
 
+    def set_system_context(self, context):
+        from .system_context import compatible_distro
+        self.system_context = context
+        self._distro = compatible_distro(self.distro, context)
+
     def _services_reply(self, distro: DistroInfo, lang: str, text: str) -> Reply:
         svc = distro.svc
         if not svc:
@@ -1037,6 +1058,11 @@ class OfflineAssistant:
                 action = key
                 break
         if name and action:
+            if getattr(self, 'system_context', None) is not None:
+                # GUI/CLI service mutations now go through registered adapters.
+                # Legacy language templates remain reference material only.
+                return Reply('Usa «{} serviço {}» para consultar e confirmar o alvo.'.format(action, name)
+                             if lang == 'pt' else 'Use "{} service {}" to inspect and confirm the target.'.format(action, name))
             remainder = text[match.end():].strip().rstrip(".!?")
             if remainder and remainder.lower() not in {"please", "por favor"}:
                 return Reply(_t(lang, "ambiguous_action"))

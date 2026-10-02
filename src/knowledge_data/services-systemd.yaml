@@ -1,0 +1,125 @@
+schema_version: '0.1'
+id: services-systemd
+kind: service_manager
+requires:
+- linux-core
+match:
+  distro_ids: []
+  components:
+  - systemd
+facts: []
+procedures:
+- id: service-systemd
+  title:
+  - Serviço systemd não arranca
+  - systemd service fails to start
+  summary:
+  - Confirma a unidade e o motivo da falha antes de reiniciar.
+  - Confirm the unit and failure reason before restarting.
+  keywords:
+  - servico
+  - serviço
+  - service
+  - systemd
+  - failed
+  - nao arranca
+  - not starting
+  steps:
+  - instruction:
+    - Consulta o estado da unidade identificada.
+    - Inspect the identified unit status.
+    interpretation:
+    - Usa systemctl --no-pager status <unidade>. Distingue not-found, inactive e failed;
+      substitui o marcador por um nome confirmado.
+    - Use systemctl --no-pager status <unit>. Distinguish not-found, inactive and
+      failed; replace the placeholder with a confirmed name.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Consulta um trecho limitado dos registos da mesma unidade.
+    - Inspect a bounded excerpt of that unit's logs.
+    interpretation:
+    - Usa journalctl --no-pager -u <unidade> -n 50. Procura a primeira causa, como
+      configuração inválida, porta ocupada ou permissões.
+    - Use journalctl --no-pager -u <unit> -n 50. Look for the first cause, such as
+      invalid configuration, a busy port or permissions.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://www.freedesktop.org/software/systemd/man/latest/systemctl.html
+  families: []
+  component: systemd
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+- id: service-executable
+  title:
+  - Falha de execução systemd (203/EXEC)
+  - systemd execution failure (203/EXEC)
+  summary:
+  - Verifica o programa configurado na unidade antes de reiniciar.
+  - Check the program configured in the unit before restarting.
+  keywords:
+  - 203/exec
+  - execstart
+  - failed at step exec
+  - executavel
+  - executable
+  steps:
+  - instruction:
+    - Consulta a unidade e o ExecStart efetivos.
+    - Inspect the effective unit and ExecStart.
+    interpretation:
+    - Confirma caminho, argumentos e alterações por drop-ins; não deduzas o executável
+      a partir do nome do serviço.
+    - Confirm path, arguments and drop-in overrides; do not infer the executable from
+      the service name.
+    command: systemctl cat <unidade>
+    probe_key: ''
+  - instruction:
+    - Verifica executável, interpretador e acesso do utilizador do serviço.
+    - Check executable, interpreter and access by the service user.
+    interpretation:
+    - 203/EXEC indica falha de execução. Caminho ausente, permissão e interpretador
+      inválido são hipóteses a confirmar.
+    - 203/EXEC indicates execution failure. A missing path, permission and invalid
+      interpreter are hypotheses to confirm.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://manpages.debian.org/bookworm/systemd/systemd.exec.5.en.html
+  families: []
+  component: systemd
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - Orientação por componente; confirma diferenças da versão instalada antes de corrigir.
+  - Component-based guidance; confirm installed-release differences before fixing.
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, guarda a configuração e
+    define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, save the configuration
+    and define how to revert the change.
+action_ids:
+- services.list
+- services.status
+- services.control
+provenance:
+  origin: src/knowledge_base.py and src/local_knowledge.py before migration
+  verification: migrated_existing_data
+  sources:
+  - https://manpages.debian.org/bookworm/systemd/systemd.exec.5.en.html
+  - https://www.freedesktop.org/software/systemd/man/latest/systemctl.html
