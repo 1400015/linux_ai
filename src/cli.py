@@ -174,6 +174,46 @@ Exemplos:
         audit_actions.add_parser('list')
         audit_actions.add_parser('show').add_argument('id')
 
+        trials = subparsers.add_parser(
+            'trials', help='Record local test cases and review evidence without AI',
+        )
+        trial_actions = trials.add_subparsers(dest='trial_action', required=True)
+        trial_start = trial_actions.add_parser('start', help='Start a local test run')
+        trial_start.add_argument('--title', required=True, help='Name of the test run')
+        trial_start.add_argument('--environment', required=True, help='Test environment identifier')
+        trial_start.add_argument('--build', default='', help='Commit or package build under test')
+        trial_start.add_argument('--type', dest='test_type',
+                                 choices=('physical', 'vm', 'wsl', 'fixture', 'unknown'),
+                                 default='unknown', help='Kind of environment under test')
+        trial_actions.add_parser('status', help='Show the selected test run')
+        trial_actions.add_parser('list', help='List locally recorded test runs')
+        trial_use = trial_actions.add_parser('use', help='Select a locally recorded test run')
+        trial_use.add_argument('id', help='Test run identifier')
+        trial_begin = trial_actions.add_parser('begin', help='Begin a case in the selected run')
+        trial_begin.add_argument('case_id', help='Case identifier from the test protocol')
+        trial_begin.add_argument('--session', help='Conversation to associate; defaults to the active conversation')
+        trial_begin.add_argument('--variant', default='', help='Case variant or repetition')
+        trial_begin.add_argument('--notes', default='', help='Initial observations')
+        trial_end = trial_actions.add_parser('end', help='Record a result and collect case evidence')
+        trial_end.add_argument('--result', required=True,
+                               choices=('PASS', 'FAIL', 'BLOCKED', 'NOT_RUN', 'N/A'))
+        trial_end.add_argument('--notes', default='', help='Expected and observed behavior')
+        trial_end.add_argument('--operation', help='Restrict action evidence to one operation')
+        trial_end.add_argument('--logs', action='store_true',
+                               help='Also collect a bounded application log excerpt; review before sharing')
+        trial_actions.add_parser('finish', help='Finish the run after closing the current case')
+        trial_preview = trial_actions.add_parser('preview', help='Review all content eligible for export')
+        trial_preview.add_argument('--output', type=Path,
+                                   help='New private preview file; existing files are never replaced')
+        trial_attach = trial_actions.add_parser('attach', help='Add one explicitly selected evidence file')
+        trial_attach.add_argument('path', type=Path)
+        trial_exclude = trial_actions.add_parser('exclude', help='Exclude an attachment from export')
+        trial_exclude.add_argument('id', help='Attachment identifier')
+        trial_export = trial_actions.add_parser('export', help='Export a reviewed run as a new local ZIP')
+        trial_export.add_argument('--output', type=Path, required=True, help='New ZIP destination')
+        trial_export.add_argument('--reviewed', action='store_true',
+                                  help='Confirm that trials preview content and attachments have been reviewed')
+
         diagnose = subparsers.add_parser('diagnose', help='Prepare a local, redacted diagnostic report without AI')
         diagnose.add_argument('symptom', nargs='*')
         diagnostic_input = diagnose.add_mutually_exclusive_group()
@@ -280,6 +320,8 @@ Exemplos:
             return self.handle_diagnose(args)
         if args.command == 'changes':
             return self.handle_changes(args)
+        if args.command == 'trials':
+            return self.handle_trials(args)
         if args.command == 'mode':
             if args.value:
                 self.config.set_assistance_mode(args.value)
@@ -350,6 +392,7 @@ Available commands:
   knowledge [query]         - Search bundled local guides
   diagnose [symptom]        - Prepare a local diagnostic report
   changes [subcommand]     - Review or recover approved file writes
+  trials [subcommand]      - Record test cases and export reviewed local evidence
   mode [value]              - Show/select assistance mode
   local-models              - List installed models on the local server
   stats [options]           - Usage statistics
@@ -430,6 +473,61 @@ Examples:
         else:
             print(content)
         return 0
+
+    def _trial_recorder(self):
+        from .trial_recorder import make_recorder
+        return make_recorder(self._store(), self.config, self.offline.distro)
+
+    def handle_trials(self, args):
+        """Explicit local collection, with logs and sharing review opt-in."""
+        try:
+            recorder = self._trial_recorder()
+            action = args.trial_action
+            if action == 'start':
+                run = recorder.start(args.title, args.environment,
+                                     build_ref=args.build, test_type=args.test_type)
+                print(run['id'])
+            elif action == 'status':
+                print(json.dumps(recorder.current(), ensure_ascii=False, indent=2))
+            elif action == 'list':
+                print(json.dumps(recorder.list_runs(), ensure_ascii=False, indent=2))
+            elif action == 'use':
+                print(json.dumps(recorder.select(args.id), ensure_ascii=False, indent=2))
+            elif action == 'begin':
+                session_id = args.session or self._store().active_session_id
+                print(json.dumps(recorder.begin_case(
+                    args.case_id, session_id, variant=args.variant,
+                    interface='cli', notes=args.notes,
+                ), ensure_ascii=False, indent=2))
+            elif action == 'end':
+                print(json.dumps(recorder.end_case(
+                    args.result, notes=args.notes, operation_id=args.operation,
+                    collect_logs=args.logs,
+                ), ensure_ascii=False, indent=2))
+            elif action == 'finish':
+                print(json.dumps(recorder.finish(), ensure_ascii=False, indent=2))
+            elif action == 'preview':
+                content = recorder.preview()
+                if args.output:
+                    write_conversation(args.output, content)
+                    print(str(args.output))
+                else:
+                    print(content)
+            elif action == 'attach':
+                print(json.dumps(recorder.attach(args.path), ensure_ascii=False, indent=2))
+            elif action == 'exclude':
+                recorder.exclude_attachment(args.id)
+                print(args.id)
+            elif action == 'export':
+                if not args.reviewed:
+                    print('Review trials preview and selected attachments first; '
+                          '--reviewed is required to export.', file=sys.stderr)
+                    return 1
+                print(str(recorder.export(args.output, reviewed=True)))
+            return 0
+        except (OSError, ValueError, KeyError) as exc:
+            print('Cannot record or export the test run: {}'.format(exc), file=sys.stderr)
+            return 1
 
     def handle_changes(self, args):
         journal = ChangeJournal()
