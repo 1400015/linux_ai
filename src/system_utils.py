@@ -470,6 +470,32 @@ class SystemUtils:
             logger.warning(f"Could not get focused window geometry: {e}")
             return None
 
+    def _wayland_selected_geometry(self) -> Optional[str]:
+        """Geometry "x,y WxH" picked interactively with slurp, if available.
+
+        Fallback for compositors that do not expose the focused window
+        (e.g. dwl-based ones): the user drags over the area to capture.
+        """
+        slurp = self._which("slurp")
+        if slurp is None:
+            return None
+        try:
+            result = subprocess.run(
+                [slurp], capture_output=True, text=True, timeout=60,
+            )
+            # slurp exits non-zero when the selection is cancelled (Esc).
+            if result.returncode != 0:
+                logger.warning(
+                    f"slurp exited with {result.returncode}: "
+                    f"{result.stderr.strip()!r}"
+                )
+                return None
+            geometry = result.stdout.strip()
+            return geometry or None
+        except Exception as e:
+            logger.warning(f"Could not get selection from slurp: {e}")
+            return None
+
     def capture_screen(self, output_path: str = None) -> Tuple[bool, str]:
         """
         Capture the screen with support for Wayland and X11.
@@ -564,7 +590,10 @@ class SystemUtils:
                 # havia PNG. Obter a geometria da janela focada e usar
                 # `grim -g`.
                 grim = self._which("grim")
-                geometry = self._wayland_focused_geometry()
+                geometry = None
+                if grim:
+                    geometry = (self._wayland_focused_geometry()
+                                or self._wayland_selected_geometry())
                 if grim and geometry:
                     result = subprocess.run(
                         [grim, "-g", geometry, output_path],
@@ -577,12 +606,13 @@ class SystemUtils:
                         return True, output_path
                     logger.warning(f"grim -g failed: {result.stderr!r}")
                 logger.error(
-                    "Active-window capture on Wayland needs grim + swaymsg "
-                    "(or a compositor with a screenshot portal)"
+                    "Active-window capture on Wayland needs grim plus "
+                    "swaymsg or slurp (selection may have been cancelled)"
                 )
                 return False, (
                     "Active window capture unavailable on Wayland "
-                    "(install grim and swaymsg-compatible compositor)"
+                    "(install grim and slurp, or use a swaymsg-compatible "
+                    "compositor; selection may have been cancelled)"
                 )
 
             scrot = self._which("scrot")
