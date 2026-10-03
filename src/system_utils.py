@@ -15,7 +15,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .command_policy import validate_arguments
-from .process_output import run_bounded
+from .process_output import CLEANUP_UNCERTAINTY, run_bounded
 from .log_privacy import redact_command
 
 # Maximum bytes retained from a diagnostic process.
@@ -336,12 +336,18 @@ class SystemUtils:
                 return True, stdout
             return False, stderr or stdout
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as error:
             logger.error(f"Timeout running command: {cmd_base}")
-            return False, f"Timeout running command: {cmd_base}"
+            message = f"Timeout running command: {cmd_base}"
+            if getattr(error, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
         except Exception as e:
             logger.error("Error running command (%s)", type(e).__name__)
-            return False, f"Error running command: {type(e).__name__}"
+            message = f"Error running command: {type(e).__name__}"
+            if getattr(e, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
 
     def read_file(self, filepath: str, max_lines: int = 100) -> Tuple[bool, str]:
         """

@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Tuple
 
-from .process_output import run_bounded
+from .process_output import CLEANUP_UNCERTAINTY, run_bounded
 
 
 @dataclass(frozen=True)
@@ -271,12 +271,21 @@ def run_argv(argv: Sequence[str], timeout: int = 20, secret: str = "") -> Tuple[
         code, stdout, stderr = run_bounded(list(argv), timeout, 1_000_000)
     except FileNotFoundError:
         return False, f"{argv[0]} is not installed."
-    except subprocess.TimeoutExpired:
-        return False, "The command timed out. Check the target state before repeating it."
+    except subprocess.TimeoutExpired as error:
+        message = "The command timed out. Check the target state before repeating it."
+        if getattr(error, 'cleanup_uncertainty', None):
+            message += ' ' + CLEANUP_UNCERTAINTY
+        return False, message
     except OSError as exc:
-        return False, str(exc)
+        message = str(exc)
+        if getattr(exc, 'cleanup_uncertainty', None):
+            message += ' ' + CLEANUP_UNCERTAINTY
+        return False, message
     if code and '... (output truncated at ' in stdout:
-        return False, 'Command output exceeded its limit. Check the target state before repeating it.'
+        message = 'Command output exceeded its limit. Check the target state before repeating it.'
+        if CLEANUP_UNCERTAINTY in stderr:
+            message += ' ' + CLEANUP_UNCERTAINTY
+        return False, message
     output = (stdout + stderr).strip()
     return code == 0, redact(output, secret)
 
