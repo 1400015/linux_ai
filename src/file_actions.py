@@ -65,6 +65,7 @@ def is_allowed_path(path, allowed_dirs=None):
 
 
 MAX_DIFF_BYTES = 1024 * 1024
+PKEXEC_TIMEOUT = 120
 
 _DIFF_TRUNCATION_NOTE = _(
     "WARNING: preview truncated at 1 MB; the file is bigger and this diff "
@@ -148,7 +149,7 @@ def _write_privileged(temp_path, dest_path, expected_digest=None, parent_identit
         ['pkexec', os.path.realpath(sys.executable), helper, temp_path, dest_path,
          expected_digest if expected_digest is not None else '-',
          str(parent_identity[0]), str(parent_identity[1])] + ([source_digest] if source_digest else []),
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=PKEXEC_TIMEOUT,
     )
     if result.returncode != 0:
         raise PermissionError(
@@ -162,7 +163,7 @@ def _remove_privileged(path, expected_digest, parent_identity):
     result = subprocess.run(
         ['pkexec', os.path.realpath(sys.executable), helper, '--remove', path,
          expected_digest, str(parent_identity[0]), str(parent_identity[1])],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=PKEXEC_TIMEOUT,
     )
     if result.returncode:
         raise PermissionError(result.stderr.strip() or 'Recovery denied')
@@ -174,7 +175,7 @@ def _inspect_privileged(path, expected_digest, parent_identity, backup=None, bac
     result = subprocess.run(
         ['pkexec', os.path.realpath(sys.executable), helper, '--inspect', path, expected_digest,
          str(parent_identity[0]), str(parent_identity[1]), backup or '-', backup_digest or '-'],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=PKEXEC_TIMEOUT,
     )
     if result.returncode:
         raise PermissionError(result.stderr.strip() or 'Recovery preview denied')

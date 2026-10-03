@@ -35,6 +35,13 @@ def redact(text):
     text = re.sub(r"(?im)^(.*?\b(?:authorization|proxy-authorization)\s*[:=]\s*).*$", r"\1[redacted]", text)
     text = re.sub(r"(?i)(\b(?:password|passwd|pwd|token|api[_-]?key|secret|access[_-]?key)\b[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
                   r"\1[redacted]", text)
+    # Flag form (`--password correct horse battery staple`): quoted values or
+    # bare words, stopping at the next flag. A single-word stop would leave the
+    # rest of a multi-word secret readable in the report.
+    text = re.sub(
+        r"(?i)(?:(?<=\s)|^)(-{1,2}(?:password|passwd)\s+)"
+        r"(?:\"[^\"]*\"|'[^']*'|(?!-)[^\s,;=]+(?: (?!-)[^\s,;=]+)*)",
+        r"\1[redacted]", text)
     text = re.sub(r"(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]+)\b", "[token]", text)
     text = re.sub(r"(https?://)[^\s/@]+:[^\s/@]+@", r"\1[credentials]@", text)
     text = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[email]", text)

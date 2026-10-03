@@ -150,7 +150,7 @@ class SystemUtils:
             info["is_void"] = False
             info["is_d77void"] = False
             try:
-                with open('/etc/os-release', 'r') as f:
+                with open('/etc/os-release', 'r', encoding='utf-8-sig') as f:
                     for line in f:
                         if line.startswith('ID='):
                             info["distro_id"] = line.split('=')[1].strip().strip('"')
@@ -172,14 +172,17 @@ class SystemUtils:
             except ImportError:
                 # Fallback without psutil
                 try:
-                    with open('/proc/meminfo', 'r') as f:
+                    with open('/proc/meminfo', 'r', encoding='utf-8') as f:
                         for line in f:
                             if line.startswith('MemTotal:'):
                                 total_kb = int(line.split()[1])
                                 info["memory_total"] = f"{total_kb / (1024**2):.2f} GB"
-                            elif line.startswith('MemFree:'):
-                                free_kb = int(line.split()[1])
-                                info["memory_available"] = f"{free_kb / (1024**2):.2f} GB"
+                            elif line.startswith('MemAvailable:'):
+                                # MemAvailable estimates memory for new
+                                # applications; MemFree ignores reclaimable
+                                # caches and understates what is usable.
+                                avail_kb = int(line.split()[1])
+                                info["memory_available"] = f"{avail_kb / (1024**2):.2f} GB"
                 except Exception as e:
                     logger.warning(f"Could not get memory info: {e}")
 
@@ -195,7 +198,7 @@ class SystemUtils:
                 info["cpu_freq"] = f"{_freq.current:.2f} MHz" if _freq is not None and hasattr(_freq, 'current') else "N/A"
             except ImportError:
                 try:
-                    with open('/proc/cpuinfo', 'r') as f:
+                    with open('/proc/cpuinfo', 'r', encoding='utf-8') as f:
                         cores = 0
                         for line in f:
                             if line.startswith('processor'):
@@ -226,7 +229,7 @@ class SystemUtils:
                 uptime_seconds = int(time.time() - psutil.boot_time())
             except ImportError:
                 try:
-                    with open('/proc/uptime', 'r') as f:
+                    with open('/proc/uptime', 'r', encoding='utf-8') as f:
                         uptime_seconds = int(float(f.readline().split()[0]))
                 except Exception as e:
                     logger.warning(f"Could not get uptime: {e}")
@@ -259,7 +262,7 @@ class SystemUtils:
 
             # Linux distribution
             try:
-                with open('/etc/os-release', 'r') as f:
+                with open('/etc/os-release', 'r', encoding='utf-8-sig') as f:
                     for line in f:
                         if line.startswith('PRETTY_NAME='):
                             info["distro"] = line.split('=')[1].strip().strip('"')
@@ -619,7 +622,7 @@ class SystemUtils:
         try:
             if self.is_wayland:
                 # Try using swaymsg for Wayland (Sway)
-                if subprocess.run(['which', 'swaymsg'], capture_output=True).returncode == 0:
+                if self._which('swaymsg') is not None:
                     result = subprocess.run(['swaymsg', '-t', 'get_tree'],
                                           capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
@@ -637,14 +640,14 @@ class SystemUtils:
                             logger.warning(f"Error parsing swaymsg: {e}")
 
                 # Try using wl-focus for Wayland
-                if subprocess.run(['which', 'wl-focus'], capture_output=True).returncode == 0:
+                if self._which('wl-focus') is not None:
                     result = subprocess.run(['wl-focus', '--get'],
                                           capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
                         info['window_id'] = result.stdout.strip()
             else:
                 # Use xdotool for X11
-                if subprocess.run(['which', 'xdotool'], capture_output=True).returncode == 0:
+                if self._which('xdotool') is not None:
                     result = subprocess.run(
                         ['xdotool', 'getactivewindow', 'getwindowname'],
                         capture_output=True, text=True, timeout=5
@@ -667,7 +670,7 @@ class SystemUtils:
                         info["geometry"] = result.stdout.strip()
 
                 # Use xprop to get more info
-                if subprocess.run(['which', 'xprop'], capture_output=True).returncode == 0:
+                if self._which('xprop') is not None:
                     result = subprocess.run(
                         ['xprop', '-root', '_NET_ACTIVE_WINDOW'],
                         capture_output=True, text=True, timeout=5

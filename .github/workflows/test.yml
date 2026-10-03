@@ -51,9 +51,15 @@ jobs:
       - name: Install GTK test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq python3-gi gir1.2-gtk-3.0 python3-requests python3-dotenv python3-tenacity xvfb
+          sudo apt-get install -y -qq python3-gi gir1.2-gtk-3.0 python3-requests python3-dotenv python3-tenacity python3-psutil xvfb
       - name: Test real GTK buffers, streaming, sessions and provider settings
         run: |
           xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_gui_stream.py' -v
           xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_feature_interfaces.py' -v
           xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_phase_two.py' -v
+      - name: Test GTK trial, device, Wayland and conversational dialogs
+        run: |
+          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_trial_dialog.py' -v
+          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_device_dialog_regressions.py' -v
+          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_wayland_feature_fixes.py' -v
+          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_conversational_interfaces.py' -v

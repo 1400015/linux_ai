@@ -1137,5 +1137,42 @@ class TestWaylandRegionCapture(unittest.TestCase):
         self.assertEqual(calls, [["/usr/bin/slurp"]])
 
 
+class TestPkexecTimeouts(unittest.TestCase):
+    """Regression: every pkexec call in file_actions must declare a timeout."""
+
+    def test_privileged_helpers_have_timeout(self):
+        from unittest.mock import patch, Mock
+        import src.file_actions as fa
+        with patch.object(fa.subprocess, "run") as run:
+            run.return_value = Mock(returncode=0, stdout="{}", stderr="")
+            fa._write_privileged("/tmp/src", "/tmp/dst")
+            fa._remove_privileged("/tmp/dst", "digest" * 8, (1, 2))
+            fa._inspect_privileged("/tmp/dst", "digest" * 8, (1, 2))
+        for call in run.call_args_list:
+            self.assertIsNotNone(call.kwargs.get("timeout"),
+                                 "pkexec subprocess.run without timeout")
+
+
+class TestMeminfoFallback(unittest.TestCase):
+    """Regression: the psutil-less fallback must use MemAvailable, not MemFree."""
+
+    def test_fallback_uses_mem_available(self):
+        import builtins
+        from src.system_utils import SystemUtils
+        meminfo = ("MemTotal:       16000000 kB\n"
+                   "MemFree:          100000 kB\n"
+                   "MemAvailable:   8000000 kB\n")
+        real_open = builtins.open
+        def fake_open(path, *args, **kwargs):
+            if str(path) == "/proc/meminfo":
+                import io
+                return io.StringIO(meminfo)
+            return real_open(path, *args, **kwargs)
+        with patch("builtins.open", side_effect=fake_open), \
+                patch.dict("sys.modules", {"psutil": None}):
+            info = SystemUtils(FakeConfig()).get_system_info()
+        self.assertEqual(info["memory_available"], "7.63 GB")
+
+
 if __name__ == "__main__":
     unittest.main()
