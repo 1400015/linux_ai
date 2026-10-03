@@ -167,8 +167,9 @@ def _cleanup_process(process):
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except PermissionError:
-            exited = (status is not None and status.si_code in
-                      (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED))
+            # _observe_child uses WEXITED: a returned status is always an
+            # exited child. Python 3.8 does not expose all CLD_* constants.
+            exited = status is not None
             if not exited or not _proc_session_empty(process.pid):
                 warning = CLEANUP_UNCERTAINTY
     except ProcessLookupError:

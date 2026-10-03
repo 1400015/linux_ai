@@ -153,6 +153,18 @@ class TestProcessOutputCleanup(unittest.TestCase):
                 [sys.executable, '-c', 'print("completed")'], 3, 4096)
         self.assertEqual((code, output, errors), (0, 'completed\n', ''))
 
+    def test_exited_cleanup_supports_python_without_optional_child_status_constants(self):
+        # Python 3.8 supplies waitid/WEXITED but not CLD_KILLED/CLD_DUMPED.
+        compatibility_os = SimpleNamespace(**{name: getattr(os, name) for name in (
+            'read', 'waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT', 'CLD_EXITED')})
+        def deny_signal(*args):
+            raise PermissionError('denied')
+        compatibility_os.killpg = deny_signal
+        with patch('src.process_output.os', compatibility_os), \
+                patch('src.process_output._proc_session_empty', return_value=True):
+            result = run_bounded([sys.executable, '-c', 'print("completed")'], 3, 4096)
+        self.assertEqual(result, (0, 'completed\n', ''))
+
     def test_denial_with_an_exited_leader_and_live_session_member_stays_uncertain(self):
         original_observe = process_output._proc_session_empty
 
