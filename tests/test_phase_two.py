@@ -634,5 +634,27 @@ class TestPhaseTwoGTK(unittest.TestCase):
         self.assertFalse(dialog.restore_button.get_sensitive())
 
 
+class RedactionMultiWordSecretsTest(unittest.TestCase):
+    """Regression: a multi-word flag value must be redacted entirely."""
+
+    def test_password_flag_with_spaces_is_fully_redacted(self):
+        self.assertEqual(redact('cmd --password correct horse battery staple'),
+                         'cmd --password [redacted]')
+
+    def test_unquoted_password_hides_the_ambiguous_line_tail(self):
+        output = redact('--password correct horse -battery staple --verbose')
+        for fragment in ('correct', 'horse', '-battery', 'staple', '--verbose'):
+            self.assertNotIn(fragment, output)
+
+    def test_quoted_flag_value_is_redacted(self):
+        self.assertEqual(redact('x --password "quoted secret" -v'),
+                         'x --password "[redacted]" -v')
+
+    def test_key_value_forms_still_redacted(self):
+        output = redact('password="two words" token=abc api_key=xyz')
+        for secret in ('two words', 'abc', 'xyz'):
+            self.assertNotIn(secret, output)
+
+
 if __name__ == '__main__':
     unittest.main()
