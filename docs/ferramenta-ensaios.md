@@ -8,7 +8,7 @@ Este guia descreve a ferramenta implementada. O [protocolo de ensaios reais](pro
 
 ## 1. Fluxo recomendado na interface gráfica
 
-1. Abrir **Ensaios / Debug**. Indicar título da campanha, identificador do ambiente, revisão da build e tipo de ensaio: máquina física, VM, WSL ou fixture simulado. Escolher **Iniciar novo ensaio** (`Start new trial`). A revisão é fornecida pelo operador: não é obtida automaticamente do checkout. Se ficar vazia, será registada como `unknown`.
+1. Abrir **Ensaios / Debug**. Indicar título da campanha, identificador do ambiente, revisão da build e tipo de ensaio: máquina física, VM, WSL ou fixture simulado. Escolher **Iniciar novo ensaio** (`Start new trial`). Uma referência explícita do operador é conservada. Se ficar vazia, o coletor observa o commit do checkout que contém o módulo executado, distinguindo árvore limpa, alterada e estado desconhecido; não usa um repositório arbitrário do diretório atual. Sem checkout identificável, conserva `unknown`.
 2. Selecionar a conversa de teste na janela principal. No painel, indicar o ID real do caso do protocolo, por exemplo `PKG-01`, a variante/tentativa e as notas de preparação. Escolher **Iniciar caso** (`Begin case`). O caso fica associado à conversa ativa nesse momento.
 3. Testar na janela principal ou observar a funcionalidade no sistema. O painel de ensaios não é modal: pode permanecer aberto enquanto se usa o programa. Escrever os pedidos, as escolhas, o resultado esperado e as verificações relevantes nas notas, usando dados sintéticos.
 4. Consultar o estado real do alvo e preencher as observações. Selecionar `PASS`, `FAIL`, `BLOCKED`, `NOT_RUN` ou `N/A`, de acordo com o protocolo, e escolher **Registar resultado** (`Record result`). Se houver uma operação específica, indicar o respetivo ID para restringir os eventos dessa conversa. A inclusão do excerto do log da aplicação é opcional e começa desativada.
@@ -42,7 +42,9 @@ python -m src.cli trials preview --output ensaio-preview-novo.md
 python -m src.cli trials export --output ensaio-revisto-novo.zip --reviewed
 ```
 
-`--type` aceita `physical`, `vm`, `wsl`, `fixture` ou `unknown`. A CLI não presume que o ambiente seja uma máquina física. `--build` é opcional; a sua ausência produz a referência `unknown`, além da versão do programa e de Python.
+`--type` aceita `physical`, `vm`, `wsl`, `fixture` ou `unknown`. A CLI não presume que o ambiente seja uma máquina física. `--build` é opcional: a sua ausência permite observar o SHA completo do checkout do código executado. A referência automática recebe `-dirty` quando existem alterações locais e `-worktree-unknown` quando não foi possível verificar esse estado. O relatório guarda a origem da referência, o commit e o estado da árvore, além das versões do programa e de Python. Sem checkout, a referência fica `unknown`. Um SHA não identifica o conteúdo de alterações locais nem substitui o hash de um wheel/pacote.
+
+Se o checkout definir filtros Git, usar um clone parcial ou contiver submódulos, a observação conserva o commit e regista o estado da árvore como desconhecido, com aviso. Não executa esses filtros, não descarrega objetos em falta nem percorre os submódulos para tentar certificar uma árvore limpa.
 
 ### Comandos disponíveis
 
@@ -74,8 +76,8 @@ O stdout da CLI pode incluir mensagens de log da aplicação. Para guardar a pr�
 
 | Fonte | Recolha e interpretação |
 | --- | --- |
-| Metadados da campanha/caso | Título, ambiente, referência explícita da build, versão do programa/Python, tipo de ensaio, IDs, interface, variantes, tempos UTC e resultados declarados pelo operador. Modo/fornecedor/modelo são registados antes e depois de cada caso; uma mudança gera aviso. São seleções de configuração, sem provar que houve inferência ou qual fornecedor respondeu. |
-| `SystemContext` | Contexto observado no início da campanha e antes/depois do caso, com disponibilidade e evidência dos componentes. A recolha não executa subprocessos. Estes snapshots descrevem o ambiente; não verificam automaticamente a instalação de um pacote, o estado de um serviço ou a imagem física de um monitor. |
+| Metadados da campanha/caso | Título, ambiente, referência da build e sua origem, commit/estado do checkout quando observado, versão do programa/Python, tipo de ensaio, IDs, interface, variantes, tempos UTC e resultados declarados pelo operador. Modo/fornecedor/modelo são registados antes e depois de cada caso; uma mudança gera aviso. São seleções de configuração, sem provar que houve inferência ou qual fornecedor respondeu. |
+| `SystemContext` | Contexto observado no início da campanha e antes/depois do caso, com disponibilidade e evidência dos componentes, sem subprocessos. Estes snapshots descrevem o ambiente; não verificam automaticamente a instalação de um pacote, o estado de um serviço ou a imagem física de um monitor. |
 | Auditoria de ações | Eventos novos da conversa associada, comparados com a base existente no início do caso. O filtro opcional de operação restringe estes eventos. Não inclui tokens de autorização, stdout/stderr nem todas as ações antigas do programa. |
 | Journal de ficheiros | Metadados novos/alterados de escritas aprovadas nessa conversa, como IDs, estados e hashes. Não copia conteúdos dos ficheiros nem backups; o filtro de operação não restringe o journal. |
 | Log da aplicação | Apenas com inclusão explícita. Recolhe um excerto acrescentado desde o início do caso, até 64 KiB, com tratamento limitado de rotação e avisos. O log é global e pode conter informação de outras conversas. |
@@ -83,9 +85,15 @@ O stdout da CLI pode incluir mensagens de log da aplicação. Para guardar a pr�
 
 As fontes têm limites e podem sofrer rotação, truncagem ou estar indisponíveis. A ferramenta regista avisos, mas não pode reconstruir informação já perdida. Fechar cada caso logo após a verificação ajuda a conservar a evidência relevante. Notas e anexos continuam a ser necessários para saídas específicas que não constem da auditoria.
 
+A identificação automática da build é a única exceção de leitura por subprocessos: apenas ao iniciar uma campanha sem referência explícita, consulta Git com argumentos fixos, prazo e saída limitada. Não executa ações, hooks ou modelos, nem usa a rede. A recolha de casos, os anexos e a exportação continuam sem lançar comandos; o material recolhido não ganha autoridade para executar.
+
 Os novos logs do executor conservam os argumentos como vetor JSON e ocultam credenciais reconhecidas antes de escrever o comando. Num log antigo que perdeu as fronteiras entre argumentos, um segredo sem aspas pode obrigar a ocultar todo o resto da linha. Isso evita conservar parte de uma palavra-passe com espaços, mas pode remover também informação de diagnóstico.
 
 Os executores têm prazo e limite de saída capturada. Um timeout numa ação elevada não prova cancelamento nem reposição: o processo pode já ter alterado o alvo, e o utilizador normal pode não conseguir terminá-lo depois da elevação. Verificar o estado real e o journal antes de repetir a operação. Estes limites não impõem um limite de RAM ao processo externo.
+
+Nos helpers privilegiados de ficheiros, os 120 segundos incluem a autenticação polkit e a execução, também na inspeção e recuperação. Uma autenticação demorada não é prova de defeito no ficheiro. A recusa de terminar o grupo de processos é comunicada igualmente após saída truncada ou conclusão do comando; nesses casos não é apresentado sucesso sem ressalva sobre o estado incerto.
+
+Uma operação concluída conserva o resultado e a referência do backup quando a recusa de sinalizar envolve apenas processos já terminados e se consegue verificar a ausência de processos ativos nessa sessão. Se essa verificação for incompleta ou existirem descendentes ativos, o aviso de estado incerto mantém-se; não repetir a escrita sem consultar o alvo e o journal.
 
 O resultado é uma declaração do operador. Escrever nas observações como foi verificado: consulta independente, estado antes/depois, observação visual ou outro método do protocolo. `PASS` não é uma certificação automática. Uma variante não executada fica `NOT_RUN`; casos previstos mas nunca registados devem continuar na matriz de planeamento externa. Repetições aumentam o número de tentativas, não a cobertura.
 

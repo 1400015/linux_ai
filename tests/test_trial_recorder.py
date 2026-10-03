@@ -98,8 +98,9 @@ class TrialRecorderTests(unittest.TestCase):
         self.assertNotIn('HISTORY-MUST-NOT-BE-COLLECTED', self.text_contents(self.export()))
         self.assertIn('HISTORY-MUST-NOT-BE-COLLECTED', self.history.read_text())
 
-    def test_collection_does_not_execute_commands_or_open_network(self):
+    def test_explicit_build_collection_does_not_execute_commands_or_open_network(self):
         with patch('subprocess.run', side_effect=AssertionError('Unexpected command')), \
+                patch('subprocess.Popen', side_effect=AssertionError('Unexpected command')), \
                 patch('urllib.request.urlopen', side_effect=AssertionError('Unexpected network')):
             self.complete()
             self.export()

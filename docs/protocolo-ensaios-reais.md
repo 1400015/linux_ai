@@ -1,8 +1,8 @@
 # Protocolo de ensaios reais do Linux AI Assistant
 
-Versão do documento: 1.1 · 2 de outubro de 2026.
+Versão do documento: 1.2 · 3 de outubro de 2026.
 
-Referência do núcleo de ações: `66441afccfa0a79987b31ceb6c53b7bf705f1ea6`, versão declarada `1.3.1`. O coletor descrito nesta revisão foi acrescentado posteriormente na árvore de trabalho. Em cada ensaio, registar a build realmente instalada, incluindo alterações locais/hash do artefacto: o número da versão, por si só, não distingue builds diferentes.
+O núcleo de ações e o coletor já estão integrados na base `00f6bdc4b896edd3e3255350321fca2128e11242`. Esta revisão documenta os ajustes da versão `1.3.2`; não exige repor um stash nem aplicar um rascunho local do coletor. Em cada ensaio, registar a build realmente instalada, incluindo alterações locais/hash do artefacto: o número da versão, por si só, não distingue builds diferentes. Sem referência explícita do operador, o coletor observa o commit do checkout que contém o código executado e distingue árvore limpa, alterada e estado desconhecido; uma instalação sem checkout conserva `unknown`.
 
 Este protocolo define uma campanha a executar. Não certifica os ambientes indicados nem apresenta resultados novos. Os testes automatizados existentes e os relatórios anteriores são evidência complementar; os fluxos completos de pacotes, monitores, serviços e autenticação precisam de ensaios nos sistemas correspondentes.
 
@@ -91,6 +91,8 @@ Registar no modelo:
 - Estado inicial do pacote/serviço/ficheiro/monitor, recursos de laboratório e forma de reposição.
 
 Executar a GUI como utilizador normal dentro da sessão gráfica. Os passos que exigem privilégios devem passar pela autenticação prevista; arrancar toda a aplicação como root não valida esse percurso.
+
+Nas operações privilegiadas de ficheiros, o prazo de 120 segundos inclui a autenticação polkit e a execução do helper, também na pré-visualização e recuperação. Ensaiar autenticação concluída dentro do prazo, cancelamento e espera superior ao prazo. Um atraso de autenticação não demonstra defeito no ficheiro; registar a fase efetivamente observada. Um prazo esgotado ou aviso de terminação incerta também não prova que o alvo ficou intacto: verificar o estado real e o journal de recuperação antes de repetir. Se faltar um agente de autenticação funcional, registar o impedimento como pré-condição em vez de atribuir a falha ao conteúdo do ficheiro.
 
 ### Recuperação e isolação
 
@@ -187,7 +189,7 @@ Cada linha é um caso. Quando tiver várias variantes, criar uma linha de result
 | --- | --- | --- |
 | FIL-01 | SHA-256 de ficheiro sintético permitido | Igual ao `sha256sum` independente; sem escrita no ficheiro. |
 | FIL-02 | Ficheiro ausente, caminho não permitido, symlink para destino não permitido, alvo substituído, mudança durante leitura e cancelamento; symlink estável para destino permitido como variante positiva | Recusa/erro nas variantes inválidas; hash correto no destino permitido. Não seguir alvo substituído depois da preparação. Corridas usam laboratório/fixtures. |
-| FIL-03 | Rever/aprovar edição e criação de ficheiro sintético | Bytes/permissões previstos, backup quando houver conteúdo anterior e registo associado; sem escrita antes de aprovar. |
+| FIL-03 | Rever/aprovar edição e criação de ficheiro sintético; autenticação polkit dentro do prazo, cancelada e demorada como variantes | Bytes/permissões previstos, backup quando houver conteúdo anterior e registo associado; sem escrita antes de aprovar. O prazo de 120 segundos inclui autenticação e execução; distinguir atraso de autenticação de falha do ficheiro e verificar alvo/journal antes de repetir. |
 | FIL-04 | Rever/recuperar edição ou criação; alterar original/backup como variante | Edição repõe bytes; criação remove o ficheiro criado após revalidação. Hashes verificados; original/backup divergente bloqueia reposição. |
 | STO-01 | Inventário de discos com descendentes montados e hotplug | Topologia/montagens coerentes com consulta independente; não declara um disco seguro para escrita. |
 | STO-02 | Pedir gravação de ISO | Informa indisponibilidade; nenhum dispositivo escrito. |

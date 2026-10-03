@@ -1,5 +1,11 @@
 # Registo de Alterações — linux_ai
 
+## v1.3.2 — Identificação de ensaios e limpeza de processos (2026-10-03)
+
+- Campanhas sem referência explícita observam o commit do checkout que contém o código executado, registam a origem da referência e distinguem alterações locais/estado desconhecido. Instalações sem checkout mantêm `unknown`; referências do operador são preservadas. Relatórios existentes continuam legíveis.
+- O líder do processo permanece por recolher até à limpeza do grupo, evitando sinalizar um identificador já libertado e mantendo a terminação dos descendentes após conclusão do líder. Limpeza não verificada e perda da identidade do filho comunicam estado incerto, incluindo saída truncada e erros de captura. Uma recusa de sinalizar apenas processos já terminados conserva a conclusão do helper elevado quando uma observação local limitada encontra a sessão sem membros ativos.
+- O protocolo passa a identificar o coletor como integrado e explica o prazo de 120 segundos que inclui autenticação polkit e execução dos helpers de ficheiros, sem confundir atraso de autenticação com defeito do ficheiro.
+
 ## Correções de robustez, privacidade e CI (2026-10-03, pós-v1.3.1)
 
 - Leituras textuais de informação do sistema com encoding explícito; /etc/os-release aceita BOM. O fallback sem psutil usa MemAvailable, conservando MemFree apenas quando o kernel não fornece aquele campo.

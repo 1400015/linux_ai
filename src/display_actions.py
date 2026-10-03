@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional, Tuple
 
 from .action_audit import _sink, record_command
-from .process_output import run_bounded
+from .process_output import CLEANUP_UNCERTAINTY, run_bounded
 
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -394,10 +394,16 @@ class DisplayService:
         env = dict(self.environ, LC_ALL="C")
         try:
             code, stdout, stderr = run_bounded(argv, timeout, 1_000_000, env=env)
-        except subprocess.TimeoutExpired:
-            return False, 'Monitor command timed out; check the current monitor state.'
+        except subprocess.TimeoutExpired as error:
+            message = 'Monitor command timed out; check the current monitor state.'
+            if getattr(error, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
         except OSError as exc:
-            return False, str(exc)
+            message = str(exc)
+            if getattr(exc, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
         return code == 0, (stdout + stderr).strip()
 
     def _call(self, argv):

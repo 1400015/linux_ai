@@ -18,6 +18,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src._version import __version__
 from src.ai_client import AIClient, redact_url
 from src.config_manager import ConfigManager
 from src.render_core import (
@@ -1054,7 +1055,7 @@ class TestGroqBaseUrl(unittest.TestCase):
 
     def test_shipped_template_matches(self):
         shipped = json.loads((ROOT / "config" / "config.json").read_text(encoding="utf-8"))
-        self.assertEqual(shipped["app"]["version"], "1.3.1")
+        self.assertEqual(shipped["app"]["version"], __version__)
         self.assertEqual(
             shipped["api"]["providers"]["groq"]["base_url"],
             "https://api.groq.com/openai/v1",
@@ -1073,7 +1074,7 @@ class TestGroqBaseUrl(unittest.TestCase):
                 config.get("api.providers.groq.base_url"),
                 "https://api.groq.com/openai/v1",
             )
-            self.assertEqual(config.get("app.version"), "1.3.1")
+            self.assertEqual(config.get("app.version"), __version__)
 
     def test_custom_groq_base_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -11,6 +11,7 @@ Estado: RASCUNHO · Modelo sem resultados. Substituir os campos `<...>` e apagar
 | Início / fim UTC | <ISO 8601, por exemplo AAAA-MM-DDThh:mm:ssZ> |
 | Fuso local dos logs | <fuso e offset efetivamente observado> |
 | Build | <SHA completo, versão e alterações locais> |
+| Origem da referência / estado do checkout | <operador / checkout / unknown; clean / dirty / unknown quando observado> |
 | Instalação | <checkout+venv / wheel / pacote nativo; origem e hash do artefacto> |
 | Tipo de ensaio | <físico / VM com arranque completo / WSL / fixture> |
 | Protocolo utilizado | <versão/data do protocolo e lista de casos selecionados> |

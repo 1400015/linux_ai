@@ -22,7 +22,7 @@ from .local_knowledge import (PROCEDURE_BY_ID, PROCEDURES, localized, normalize,
                               render_procedure, search_procedures)
 from .device_actions import scanner_support_packages, support_package
 from .diagnostics import analyze, render_findings
-from .process_output import run_bounded
+from .process_output import CLEANUP_UNCERTAINTY, run_bounded
 
 
 # --------------------------------------------------------------------------
@@ -848,10 +848,16 @@ class OfflineAssistant:
             return code == 0, (stdout + stderr).strip()
         except FileNotFoundError:
             return False, "pkexec is not installed (install polkit)."
-        except subprocess.TimeoutExpired:
-            return False, "The command timed out. Check the target state before repeating it."
+        except subprocess.TimeoutExpired as error:
+            message = "The command timed out. Check the target state before repeating it."
+            if getattr(error, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
         except OSError as exc:
-            return False, str(exc)
+            message = str(exc)
+            if getattr(exc, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
 
     # -- internals ---------------------------------------------------------
 

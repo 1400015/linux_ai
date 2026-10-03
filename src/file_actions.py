@@ -145,12 +145,14 @@ def _make_backup(path):
 
 
 def _run_privileged(argv, output_limit=MAX_DIFF_BYTES):
-    """Allow time for polkit authentication, then clean up a bounded process."""
+    """Bound polkit authentication and helper execution together to 120 seconds."""
     try:
         code, stdout, stderr = run_bounded(argv, PRIVILEGED_TIMEOUT, output_limit)
     except subprocess.TimeoutExpired as error:
         raise PermissionError(
-            'Privileged operation timed out. Check the target state and recovery journal before repeating it.'
+            'Privileged operation timed out after 120 seconds, including polkit authentication and execution. '
+            'This does not establish a file defect or cancellation. '
+            'Check the target state and recovery journal before repeating it.'
         ) from error
     return subprocess.CompletedProcess(argv, code, stdout, stderr)
 

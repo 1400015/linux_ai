@@ -25,6 +25,7 @@ import zlib
 
 from ._version import __version__
 from .action_audit import MAX_EVENTS
+from .build_info import BuildObservation, observe_checkout_build
 from .diagnostics import redact
 from .log_privacy import redact_argv, secret_option
 from .schema_validation import validate_schema
@@ -295,7 +296,8 @@ def _image_dimensions(data, extension):
 
 class TrialRecorder:
     def __init__(self, root=None, *, history_path=None, log_path=None,
-                 context_factory=None, clock=time.time, defaults=None, settings_factory=None):
+                 context_factory=None, clock=time.time, defaults=None, settings_factory=None,
+                 build_observer=None):
         self.root = _private_directory(root or Path.home() / '.local/share/linux_ai_assistant/trials')
         self.index = self.root / 'index.json'
         self.history_path = Path(history_path or Path.home() / '.config/linux_ai_assistant/history.json')
@@ -306,6 +308,7 @@ class TrialRecorder:
         self.clock = clock
         self.defaults = defaults or {}
         self.settings_factory = settings_factory
+        self.build_observer = build_observer or observe_checkout_build
 
     @contextmanager
     def _locked(self):
@@ -373,10 +376,24 @@ class TrialRecorder:
         if '_retained_bytes' in value and (type(value['_retained_bytes']) is not int
                                           or not 0 <= value['_retained_bytes'] <= MAX_ATTACHMENT_BYTES):
             raise ValueError('Invalid attachment storage accounting')
-        if (type(value['build']) is not dict or set(value['build']) != {'version', 'reference', 'python'}
+        build = value['build']
+        build_fields = {'version', 'reference', 'python'}
+        if (type(build) is not dict or set(build) not in (build_fields, build_fields | {'source', 'commit', 'worktree'})
                 or any(not isinstance(item, str) for item in value['build'].values())
                 or any(not isinstance(value[key], str) for key in ('title', 'environment', 'provider', 'model', 'notice'))):
             raise ValueError('Invalid trial metadata')
+        if 'source' in build:
+            if (build['source'] not in ('operator', 'checkout', 'unknown')
+                    or build['worktree'] not in ('clean', 'dirty', 'unknown')
+                    or (build['source'] == 'checkout' and not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', build['commit']))
+                    or (build['source'] != 'checkout' and (build['commit'] or build['worktree'] != 'unknown'))):
+                raise ValueError('Invalid build provenance')
+            if build['source'] == 'checkout':
+                suffix = {'clean': '', 'dirty': '-dirty', 'unknown': '-worktree-unknown'}[build['worktree']]
+                if build['reference'] != build['commit'] + suffix:
+                    raise ValueError('Build reference does not match observed provenance')
+            elif build['source'] == 'unknown' and build['reference'] != 'unknown':
+                raise ValueError('Unknown build provenance has an unexpected reference')
         for item in value['cases']:
             if (type(item) is not dict or not self._valid_id(item.get('id'), 'case')
                     or not isinstance(item.get('case_id'), str) or not _CASE_ID.fullmatch(item['case_id'])
@@ -600,10 +617,16 @@ class TrialRecorder:
                 raise ValueError('Trial storage reached 100 runs; archive them manually before continuing')
             identifier = 'run-' + uuid.uuid4().hex
             warnings = []
+            if build_ref.strip():
+                observation = BuildObservation(reference=build_ref, source='operator')
+            else:
+                observation = self.build_observer(Path(__file__))
+            if observation.warning:
+                warnings.append(_clean(observation.warning))
+            build = {'version': __version__, 'python': platform.python_version(), **observation.metadata()}
             run = {'format': 'linux-ai-trial', 'version': 1, 'id': identifier,
                    'title': title, 'environment': environment,
-                   'build': {'version': __version__, 'reference': build_ref or 'unknown',
-                             'python': platform.python_version()},
+                   'build': build,
                    'mode': mode, 'provider': _clean(provider, 128), 'model': _clean(model, 256),
                    'test_type': test_type, 'started_at': self._now(), 'finished_at': None,
                    'context': self._context(warnings), 'warnings': warnings,
@@ -768,6 +791,9 @@ class TrialRecorder:
         lines = ['# Linux AI — real-world trial', '', 'Trial: ' + _markdown(run['id']),
                  'Title: ' + _markdown(run['title']), 'Environment: ' + _markdown(run['environment']),
                  'Build reference: ' + _markdown(run['build']['reference']),
+                 'Build reference source: ' + _markdown(run['build'].get('source', 'unrecorded')),
+                 'Observed checkout commit: ' + _markdown(run['build'].get('commit') or 'unknown'),
+                 'Observed checkout changes: ' + _markdown(run['build'].get('worktree', 'unknown')),
                  'App / Python: ' + _markdown(run['build']['version'] + ' / ' + run['build']['python']),
                  'Type / mode: ' + _markdown(run['test_type'] + ' / ' + run['mode']),
                  'Started UTC: ' + _utc(run['started_at']),

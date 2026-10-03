@@ -23,7 +23,7 @@ import time
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .action_audit import record_command
-from .process_output import run_bounded
+from .process_output import CLEANUP_UNCERTAINTY, run_bounded
 
 
 SUPPORTED_MANAGERS = ("apt", "xbps")
@@ -101,14 +101,23 @@ def _run(argv: Sequence[str], timeout: int = 20, environment=None) -> Tuple[bool
     try:
         code, stdout, stderr = run_bounded(list(argv), timeout, MAX_OUTPUT_BYTES, env=env)
         if code and '... (output truncated at ' in stdout:
-            return False, "Package command output exceeded the size limit."
+            message = "Package command output exceeded the size limit."
+            if CLEANUP_UNCERTAINTY in stderr:
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
         return code == 0, (stdout + stderr).strip()
     except FileNotFoundError:
         return False, "The package command is not installed."
-    except subprocess.TimeoutExpired:
-        return False, "The package command timed out. Check the target state before repeating a change."
+    except subprocess.TimeoutExpired as error:
+        message = "The package command timed out. Check the target state before repeating a change."
+        if getattr(error, 'cleanup_uncertainty', None):
+            message += ' ' + CLEANUP_UNCERTAINTY
+        return False, message
     except OSError as exc:
-        return False, str(exc)
+        message = str(exc)
+        if getattr(exc, 'cleanup_uncertainty', None):
+            message += ' ' + CLEANUP_UNCERTAINTY
+        return False, message
 
 
 def _fields(text: str) -> Dict[str, str]:
