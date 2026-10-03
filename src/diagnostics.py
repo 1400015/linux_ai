@@ -5,12 +5,12 @@ make network requests, or turn a finding into an approved repair.
 """
 
 from datetime import datetime, timezone
-import ipaddress
 import json
 import re
 import shutil
 
 from .local_knowledge import PROCEDURE_BY_ID, localized
+from .log_privacy import redact_text
 
 MAX_INPUT_BYTES = 65536
 MAX_OBSERVATION_CHARS = 12000
@@ -26,32 +26,8 @@ PROBES = {
 
 
 def redact(text):
-    """Best-effort redaction, also applied to symptoms and finding excerpts.
-
-    Unknown secrets can still require manual removal before sharing a report.
-    """
-    text = re.sub(r"-----BEGIN [^-\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-\n]*PRIVATE KEY-----|\Z)",
-                  "[private key removed]", text)
-    text = re.sub(r"(?im)^(.*?\b(?:authorization|proxy-authorization)\s*[:=]\s*).*$", r"\1[redacted]", text)
-    text = re.sub(r"(?i)(\b(?:password|passwd|pwd|token|api[_-]?key|secret|access[_-]?key)\b[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
-                  r"\1[redacted]", text)
-    text = re.sub(r"(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]+)\b", "[token]", text)
-    text = re.sub(r"(https?://)[^\s/@]+:[^\s/@]+@", r"\1[credentials]@", text)
-    text = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[email]", text)
-    text = re.sub(r"/(?:home|Users)/[^/\s]+", "/home/[user]", text)
-    text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[IPv4]", text)
-    text = re.sub(r"(?i)(?<!\w)(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?!\w)", "[MAC]", text)
-    def hide_ipv6(match):
-        try:
-            ipaddress.IPv6Address(match[0].split('%')[0])
-        except ValueError:
-            return match[0]
-        return '[IPv6]'
-    text = re.sub(r"(?i)(?<![\w:])(?:[0-9a-f]*:){2,}[0-9a-f]*(?:%[\w.-]+)?(?![\w:])", hide_ipv6, text)
-    # Do not let terminal escape/control sequences affect the displayed report.
-    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-    return "".join(char for char in text if char in "\n\t" or ord(char) >= 32)
-
+    """Best-effort redaction; unknown data still requires human review."""
+    return redact_text(text)
 
 # (id, pattern, procedure, Portuguese explanation, English explanation)
 RULES = (

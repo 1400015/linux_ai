@@ -11,6 +11,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from .process_output import run_bounded
+
 
 @dataclass(frozen=True)
 class WifiNetwork:
@@ -266,17 +268,17 @@ def redact(text: str, secret: str) -> str:
 def run_argv(argv: Sequence[str], timeout: int = 20, secret: str = "") -> Tuple[bool, str]:
     """Run an argv list without a shell. ``secret`` is stripped from the output."""
     try:
-        completed = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout,
-        )
+        code, stdout, stderr = run_bounded(list(argv), timeout, 1_000_000)
     except FileNotFoundError:
         return False, f"{argv[0]} is not installed."
     except subprocess.TimeoutExpired:
-        return False, "The command timed out."
+        return False, "The command timed out. Check the target state before repeating it."
     except OSError as exc:
         return False, str(exc)
-    output = ((completed.stdout or "") + (completed.stderr or "")).strip()
-    return completed.returncode == 0, redact(output, secret)
+    if code and '... (output truncated at ' in stdout:
+        return False, 'Command output exceeded its limit. Check the target state before repeating it.'
+    output = (stdout + stderr).strip()
+    return code == 0, redact(output, secret)
 
 
 def collect_wifi() -> Tuple[List[WifiNetwork], str]:

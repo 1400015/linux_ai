@@ -1121,7 +1121,7 @@ class TestWaylandRegionCapture(unittest.TestCase):
     def test_slurp_geometry_is_the_grim_region(self):
         calls = []
         with tempfile.TemporaryDirectory() as directory, patch(
-            "src.system_utils.subprocess.run", side_effect=self._run(calls, "8,9 20x30\n")
+            "src.system_utils._run_process", side_effect=self._run(calls, "8,9 20x30\n")
         ):
             target = str(Path(directory) / "shot.png")
             ok, path = self.utils.capture_active_window(target)
@@ -1131,7 +1131,7 @@ class TestWaylandRegionCapture(unittest.TestCase):
 
     def test_unusable_slurp_output_is_not_passed_to_grim(self):
         calls = []
-        with patch("src.system_utils.subprocess.run", side_effect=self._run(calls, "select a window\n")):
+        with patch("src.system_utils._run_process", side_effect=self._run(calls, "select a window\n")):
             ok, _message = self.utils.capture_active_window(os.devnull)
         self.assertFalse(ok)
         self.assertEqual(calls, [["/usr/bin/slurp"]])

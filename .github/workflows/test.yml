@@ -27,7 +27,7 @@ jobs:
         run: python3 -m pip install -r requirements.txt
 
       - name: Byte-compile all sources
-        run: python3 -m py_compile src/*.py tests/*.py plugins/*.py
+        run: python3 -m py_compile src/*.py tests/*.py plugins/*.py scripts/run_gtk_tests.py
 
       - name: Run test suite
         run: python3 -m unittest discover -s tests -v
@@ -37,7 +37,7 @@ jobs:
         # conseguia quebrar o build. O projeto já define [tool.ruff] no pyproject.
         run: |
           python3 -m pip install ruff
-          python3 -m ruff check src/ tests/ plugins/
+          python3 -m ruff check src/ tests/ plugins/ scripts/run_gtk_tests.py
 
       - name: Shellcheck installers
         run: |
@@ -51,9 +51,9 @@ jobs:
       - name: Install GTK test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq python3-gi gir1.2-gtk-3.0 python3-requests python3-dotenv python3-tenacity xvfb
-      - name: Test real GTK buffers, streaming, sessions and provider settings
+          sudo apt-get install -y -qq python3-gi gir1.2-gtk-3.0 python3-venv xvfb
+          /usr/bin/python3 -m venv --system-site-packages .venv-gtk
+          .venv-gtk/bin/python -m pip install -r requirements.txt
+      - name: Test the complete suite with GTK and reject unexpected skips
         run: |
-          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_gui_stream.py' -v
-          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_feature_interfaces.py' -v
-          xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -p 'test_phase_two.py' -v
+          xvfb-run -a .venv-gtk/bin/python scripts/run_gtk_tests.py

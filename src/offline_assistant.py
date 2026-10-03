@@ -22,6 +22,7 @@ from .local_knowledge import (PROCEDURE_BY_ID, PROCEDURES, localized, normalize,
                               render_procedure, search_procedures)
 from .device_actions import scanner_support_packages, support_package
 from .diagnostics import analyze, render_findings
+from .process_output import run_bounded
 
 
 # --------------------------------------------------------------------------
@@ -843,16 +844,12 @@ class OfflineAssistant:
         if not command.privileged:
             raise ValueError("run_privileged() expects a privileged command")
         try:
-            proc = subprocess.run(
-                ["pkexec", *command.argv],
-                capture_output=True, text=True, timeout=timeout,
-            )
-            output = (proc.stdout or "") + (proc.stderr or "")
-            return proc.returncode == 0, output.strip()
+            code, stdout, stderr = run_bounded(["pkexec", *command.argv], timeout, 1_000_000)
+            return code == 0, (stdout + stderr).strip()
         except FileNotFoundError:
             return False, "pkexec is not installed (install polkit)."
         except subprocess.TimeoutExpired:
-            return False, "The command timed out."
+            return False, "The command timed out. Check the target state before repeating it."
         except OSError as exc:
             return False, str(exc)
 

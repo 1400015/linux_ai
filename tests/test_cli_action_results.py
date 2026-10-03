@@ -1,6 +1,7 @@
 """CLI outcomes reach the shell and history without running real commands."""
 
 import io
+from contextlib import contextmanager
 import subprocess
 import unittest
 from types import SimpleNamespace
@@ -10,6 +11,18 @@ from src.ai_client import AIProviderError
 from src.cli import CLIApp
 from src.i18n import set_language
 from src.offline_assistant import Command, Reply
+
+
+@contextmanager
+def patch_commands(**kwargs):
+    """One simulated executor for both regular and privileged catalog paths."""
+    run = Mock(**kwargs)
+    def bounded(argv, timeout, limit, **options):
+        result = run(argv, timeout=timeout, **options)
+        return result.returncode, result.stdout or '', result.stderr or ''
+    with patch('src.device_actions.run_bounded', side_effect=bounded), \
+            patch('src.offline_assistant.run_bounded', side_effect=bounded):
+        yield run
 
 
 class TestCliActionResults(unittest.TestCase):
@@ -56,7 +69,7 @@ class TestCliActionResults(unittest.TestCase):
                 with patch("sys.stdin.isatty", return_value=True), \
                         patch("builtins.input", return_value="yes"), \
                         patch("sys.stdout", io.StringIO()), \
-                        patch("subprocess.run", return_value=self.completed(
+                        patch_commands(return_value=self.completed(
                             command.argv, 7, error="Permission denied",
                         )) as run:
                     self.assertEqual(app.handle_chat(args), 1)
@@ -72,7 +85,7 @@ class TestCliActionResults(unittest.TestCase):
         app, _args = self.app(Reply("Catalog answer", [command]))
         with patch("builtins.input", return_value="yes"), \
                 patch("sys.stdout", io.StringIO()), \
-                patch("subprocess.run", return_value=self.completed(["true"])):
+                patch_commands(return_value=self.completed(["true"])):
             result = app._confirm_and_run([command])
         self.assertEqual(result.status, "success")
         self.assertEqual(result.exit_code, 0)
@@ -83,7 +96,7 @@ class TestCliActionResults(unittest.TestCase):
                 with patch("sys.stdin.isatty", return_value=True), \
                         patch("builtins.input", return_value="no"), \
                         patch("sys.stdout", io.StringIO()), \
-                        patch("subprocess.run") as run:
+                        patch_commands() as run:
                     self.assertEqual(app.handle_chat(args), 0)
                 run.assert_not_called()
         with patch("builtins.input", return_value="no"), \
@@ -103,7 +116,7 @@ class TestCliActionResults(unittest.TestCase):
                     with patch("sys.stdin.isatty", return_value=False), \
                             patch("builtins.input", side_effect=AssertionError("asked")), \
                             patch("sys.stdout", io.StringIO()) as output, \
-                            patch("subprocess.run", side_effect=AssertionError("executed")):
+                            patch_commands(side_effect=AssertionError("executed")):
                         self.assertEqual(app.handle_chat(args), 0)
                     self.assertIn("interactive terminal", output.getvalue())
 
@@ -112,7 +125,7 @@ class TestCliActionResults(unittest.TestCase):
         app, _args = self.app(Reply("Catalog answer", commands))
         with patch("builtins.input", return_value="yes"), \
                 patch("sys.stdout", io.StringIO()), \
-                patch("subprocess.run", side_effect=[
+                patch_commands(side_effect=[
                     self.completed(["first"], output="first done"),
                     self.completed(["second"], 2, error="second failed"),
                 ]) as run:
@@ -136,7 +149,7 @@ class TestCliActionResults(unittest.TestCase):
                 with patch("sys.stdin.isatty", return_value=True), \
                         patch("builtins.input", return_value="yes"), \
                         patch("sys.stdout", io.StringIO()), \
-                        patch("subprocess.run", return_value=self.completed(
+                        patch_commands(return_value=self.completed(
                             ["true"], 1, error="Action failed",
                         )):
                     self.assertEqual(app.handle_chat(args), 1)
@@ -158,7 +171,7 @@ class TestCliActionResults(unittest.TestCase):
                 patch("builtins.input", return_value="1"), \
                 patch("src.cli.getpass.getpass", return_value=secret), \
                 patch("sys.stdout", io.StringIO()) as output, \
-                patch("subprocess.run", side_effect=subprocess_result) as run:
+                patch_commands(side_effect=subprocess_result) as run:
             self.assertEqual(app.handle_chat(args), 1)
         self.assertEqual(run.call_args.args[0], [
             "nmcli", "device", "wifi", "connect", "Cafe", "password", secret,
@@ -175,7 +188,7 @@ class TestCliActionResults(unittest.TestCase):
                 with patch("sys.stdin.isatty", return_value=True), \
                         patch("builtins.input", side_effect=["1", queue, "yes"]), \
                         patch("sys.stdout", io.StringIO()), \
-                        patch("subprocess.run", side_effect=[
+                        patch_commands(side_effect=[
                             self.completed(["lpinfo"], output="network ipp://192.0.2.1/print"),
                             self.completed(["lpadmin"], 1, error="CUPS refused the queue"),
                         ]) as run:
@@ -195,7 +208,7 @@ class TestCliActionResults(unittest.TestCase):
         with patch("sys.stdin.isatty", return_value=True), \
                 patch("builtins.input", return_value="yes"), \
                 patch("sys.stdout", io.StringIO()), \
-                patch("subprocess.run", side_effect=[
+                patch_commands(side_effect=[
                     FileNotFoundError("scanimage"),
                     self.completed(command.argv, 1, error="Install failed"),
                 ]) as run:
@@ -211,7 +224,7 @@ class TestCliActionResults(unittest.TestCase):
                     with patch("sys.stdin.isatty", return_value=True), \
                             patch("builtins.input", side_effect=AssertionError("asked")), \
                             patch("sys.stdout", io.StringIO()), \
-                            patch("subprocess.run", return_value=self.completed(
+                            patch_commands(return_value=self.completed(
                                 [], code, error="Discovery failed" if code else "",
                             )):
                         self.assertEqual(app.handle_chat(args), 1 if code else 0)
@@ -224,7 +237,7 @@ class TestCliActionResults(unittest.TestCase):
         with patch("sys.stdin.isatty", return_value=True), \
                 patch("builtins.input", return_value="yes"), \
                 patch("sys.stdout", io.StringIO()), \
-                patch("subprocess.run", return_value=self.completed(["true"], 1)):
+                patch_commands(return_value=self.completed(["true"], 1)):
             self.assertEqual(app.handle_chat(args), 1)
         self.assertEqual(app.conversation_history, [])
         app._save_history.assert_not_called()
