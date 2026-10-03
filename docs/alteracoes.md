@@ -1,5 +1,14 @@
 # Registo de Alterações — linux_ai
 
+## Correções de robustez, privacidade e CI (2026-10-03, pós-v1.3.1)
+
+- Leituras textuais de informação do sistema com encoding explícito; /etc/os-release aceita BOM. O fallback sem psutil usa MemAvailable, conservando MemFree apenas quando o kernel não fornece aquele campo.
+- Executores de pacotes, serviços, monitores, dispositivos, captura/OCR por binário e helpers de ficheiros usam saída limitada durante a leitura, stdin fechado, prazo e sessão própria. A pesquisa de executáveis usa shutil.which, sem lançar o comando which.
+- A terminação do grupo de processos é tentada mesmo quando o processo principal já terminou. Se a elevação impedir a terminação, a espera local continua limitada e a mensagem exige verificar o alvo antes de repetir. Timeout não garante rollback; não é imposto limite de RAM ao processo externo.
+- Comandos são registados como argumentos estruturados, com credenciais conhecidas ocultadas, incluindo cookies e autenticação HTTP. Logs antigos com atribuições ou flags de segredo sem aspas ocultam conservadoramente o resto da linha; palavras isoladas como password e token só recebem esse tratamento em linhas de comando identificadas. Diagnóstico e ensaios partilham a mesma implementação, preservando mensagens de erro e métricas de utilização.
+- O job GTK instala as dependências completas num venv com acesso aos bindings do sistema e executa toda a suite com Xvfb. Skips inesperados falham o job, incluindo os causados por dependências de GUI ausentes.
+- Regressões com dados sintéticos para memória, BOM, segredos com espaços, exportação, limites de saída, cleanup e autenticação simulada. A autenticação polkit e as alterações a recursos físicos continuam sujeitas ao protocolo de ensaios reais.
+
 
 ## Base de conhecimento offline por distribuição + multilingue reforçado (2026-10-01, pós-v1.1.0)
 

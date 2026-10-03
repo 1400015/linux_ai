@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -298,34 +297,32 @@ class TestPackageInstallation(unittest.TestCase):
 
 
 class TestBoundedPackageRunner(unittest.TestCase):
-    def test_default_runner_forces_c_locale_no_shell_and_disables_stdin(self):
+    def test_default_runner_forces_c_locale_with_bounded_deadline(self):
         captured = {}
 
-        def run(argv, **kwargs):
-            captured.update(kwargs)
+        def run(argv, timeout, limit, **kwargs):
+            captured.update(kwargs, timeout=timeout, limit=limit)
             captured["argv"] = argv
-            kwargs["stdout"].write(b"candidate output\n")
-            return SimpleNamespace(returncode=0)
+            return 0, "candidate output\n", ""
 
-        with patch("src.package_actions.subprocess.run", side_effect=run):
+        with patch("src.package_actions.run_bounded", side_effect=run):
             self.assertEqual(_run(["apt-cache", "search", "--", "nano"], 7), (True, "candidate output"))
         self.assertEqual(captured["env"]["LC_ALL"], "C")
         self.assertEqual(captured["env"]["NO_COLOR"], "1")
         self.assertEqual(captured["timeout"], 7)
-        self.assertEqual(captured["stdin"], subprocess.DEVNULL)
-        self.assertNotIn("shell", captured)
+        self.assertEqual(captured["limit"], MAX_OUTPUT_BYTES)
+        self.assertEqual(captured["argv"], ["apt-cache", "search", "--", "nano"])
 
     def test_default_runner_handles_timeout_and_output_limit(self):
-        with patch("src.package_actions.subprocess.run", side_effect=subprocess.TimeoutExpired(["apt-cache"], 1)):
+        with patch("src.package_actions.run_bounded", side_effect=subprocess.TimeoutExpired(["apt-cache"], 1)):
             ok, text = _run(["apt-cache"], 1)
             self.assertFalse(ok)
             self.assertIn("timed out", text)
 
-        def noisy(argv, **kwargs):
-            kwargs["stdout"].write(b"x" * (MAX_OUTPUT_BYTES + 1))
-            return SimpleNamespace(returncode=0)
+        def noisy(*args, **kwargs):
+            return 1, "... (output truncated at {} bytes)".format(MAX_OUTPUT_BYTES), ""
 
-        with patch("src.package_actions.subprocess.run", side_effect=noisy):
+        with patch("src.package_actions.run_bounded", side_effect=noisy):
             ok, text = _run(["apt-cache"], 1)
             self.assertFalse(ok)
             self.assertIn("size limit", text)

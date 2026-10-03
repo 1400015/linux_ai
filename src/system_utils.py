@@ -16,9 +16,16 @@ logger = logging.getLogger(__name__)
 
 from .command_policy import validate_arguments
 from .process_output import run_bounded
+from .log_privacy import redact_command
 
 # Maximum bytes retained from a diagnostic process.
 MAX_COMMAND_OUTPUT = 1_000_000
+
+
+def _run_process(argv, timeout=5):
+    """Read bounded output with a deadline and process-group cleanup."""
+    code, stdout, stderr = run_bounded(argv, timeout, MAX_COMMAND_OUTPUT)
+    return subprocess.CompletedProcess(argv, code, stdout, stderr)
 
 # grim -g and slurp both speak "x,y WxH". Anything else is not a geometry.
 _CAPTURE_GEOMETRY = re.compile(r"^-?\d+,-?\d+ [1-9]\d*x[1-9]\d*$")
@@ -100,7 +107,7 @@ class SystemUtils:
             # Use shlex for safe splitting
             return shlex.split(command)
         except ValueError as e:
-            logger.error(f"Invalid command to sanitize: {command} - {e}")
+            logger.error("Invalid command syntax (%s)", type(e).__name__)
             return []
 
     def _validate_path(self, path: str) -> bool:
@@ -150,7 +157,7 @@ class SystemUtils:
             info["is_void"] = False
             info["is_d77void"] = False
             try:
-                with open('/etc/os-release', 'r') as f:
+                with open('/etc/os-release', 'r', encoding='utf-8-sig') as f:
                     for line in f:
                         if line.startswith('ID='):
                             info["distro_id"] = line.split('=')[1].strip().strip('"')
@@ -172,14 +179,17 @@ class SystemUtils:
             except ImportError:
                 # Fallback without psutil
                 try:
-                    with open('/proc/meminfo', 'r') as f:
+                    with open('/proc/meminfo', 'r', encoding='utf-8') as f:
+                        memory = {}
                         for line in f:
-                            if line.startswith('MemTotal:'):
-                                total_kb = int(line.split()[1])
-                                info["memory_total"] = f"{total_kb / (1024**2):.2f} GB"
-                            elif line.startswith('MemFree:'):
-                                free_kb = int(line.split()[1])
-                                info["memory_available"] = f"{free_kb / (1024**2):.2f} GB"
+                            key, _, value = line.partition(':')
+                            if key in {'MemTotal', 'MemFree', 'MemAvailable'}:
+                                memory[key] = int(value.split()[0])
+                        if 'MemTotal' in memory:
+                            info["memory_total"] = f"{memory['MemTotal'] / (1024**2):.2f} GB"
+                        available = memory.get('MemAvailable', memory.get('MemFree'))
+                        if available is not None:
+                            info["memory_available"] = f"{available / (1024**2):.2f} GB"
                 except Exception as e:
                     logger.warning(f"Could not get memory info: {e}")
 
@@ -195,7 +205,7 @@ class SystemUtils:
                 info["cpu_freq"] = f"{_freq.current:.2f} MHz" if _freq is not None and hasattr(_freq, 'current') else "N/A"
             except ImportError:
                 try:
-                    with open('/proc/cpuinfo', 'r') as f:
+                    with open('/proc/cpuinfo', 'r', encoding='utf-8') as f:
                         cores = 0
                         for line in f:
                             if line.startswith('processor'):
@@ -226,7 +236,7 @@ class SystemUtils:
                 uptime_seconds = int(time.time() - psutil.boot_time())
             except ImportError:
                 try:
-                    with open('/proc/uptime', 'r') as f:
+                    with open('/proc/uptime', 'r', encoding='utf-8') as f:
                         uptime_seconds = int(float(f.readline().split()[0]))
                 except Exception as e:
                     logger.warning(f"Could not get uptime: {e}")
@@ -259,7 +269,7 @@ class SystemUtils:
 
             # Linux distribution
             try:
-                with open('/etc/os-release', 'r') as f:
+                with open('/etc/os-release', 'r', encoding='utf-8-sig') as f:
                     for line in f:
                         if line.startswith('PRETTY_NAME='):
                             info["distro"] = line.split('=')[1].strip().strip('"')
@@ -300,8 +310,8 @@ class SystemUtils:
                 if not cmd_parts:
                     return False, "Invalid command after sanitization"
             except Exception as e:
-                logger.error(f"Error sanitizing command: {e}")
-                return False, f"Error processing command: {e}"
+                logger.error("Error parsing command (%s)", type(e).__name__)
+                return False, "Invalid command syntax"
         else:
             logger.error("Invalid command")
             return False, "Invalid command"
@@ -319,7 +329,7 @@ class SystemUtils:
             return False, f"Path not allowed: {cmd_base}"
 
         try:
-            logger.info(f"Running command: {' '.join(cmd_parts)}")
+            logger.info("Running command: %s", redact_command(cmd_parts))
 
             returncode, stdout, stderr = run_bounded(cmd_parts, timeout, MAX_COMMAND_OUTPUT)
             if returncode == 0:
@@ -330,8 +340,8 @@ class SystemUtils:
             logger.error(f"Timeout running command: {cmd_base}")
             return False, f"Timeout running command: {cmd_base}"
         except Exception as e:
-            logger.error(f"Error running command: {e}")
-            return False, f"Error running command: {e}"
+            logger.error("Error running command (%s)", type(e).__name__)
+            return False, f"Error running command: {type(e).__name__}"
 
     def read_file(self, filepath: str, max_lines: int = 100) -> Tuple[bool, str]:
         """
@@ -395,7 +405,7 @@ class SystemUtils:
 
     @staticmethod
     def _which(name: str) -> Optional[str]:
-        """shutil.which com timeout — sem isso `which` podia bloquear indefinidamente."""
+        """Locate an executable without launching the external which command."""
         try:
             return shutil.which(name)
         except Exception:
@@ -406,10 +416,7 @@ class SystemUtils:
         if self._which("swaymsg") is None:
             return None
         try:
-            result = subprocess.run(
-                ["swaymsg", "-t", "get_tree", "-r"],
-                capture_output=True, text=True, timeout=5,
-            )
+            result = _run_process(["swaymsg", "-t", "get_tree", "-r"], timeout=5)
             if result.returncode != 0:
                 return None
             tree = json.loads(result.stdout)
@@ -446,9 +453,7 @@ class SystemUtils:
         if slurp is None:
             return None
         try:
-            result = subprocess.run(
-                [slurp], capture_output=True, text=True, timeout=60,
-            )
+            result = _run_process([slurp], timeout=60)
             # slurp exits non-zero when the selection is cancelled (Esc).
             if result.returncode != 0:
                 logger.warning(
@@ -491,8 +496,7 @@ class SystemUtils:
             # (que não funciona em Wayland).
             grim = self._which("grim")
             if self.is_wayland and grim:
-                result = subprocess.run([grim, output_path],
-                                        capture_output=True, timeout=10)
+                result = _run_process([grim, output_path], timeout=10)
                 if result.returncode == 0:
                     logger.info(f"Screen captured with grim: {output_path}")
                     return True, output_path
@@ -501,8 +505,7 @@ class SystemUtils:
             # X11: scrot
             scrot = self._which("scrot")
             if scrot and not self.is_wayland:
-                result = subprocess.run([scrot, output_path],
-                                        capture_output=True, timeout=10)
+                result = _run_process([scrot, output_path], timeout=10)
                 if result.returncode == 0:
                     logger.info(f"Screen captured with scrot: {output_path}")
                     return True, output_path
@@ -510,8 +513,7 @@ class SystemUtils:
             # gnome-screenshot (último recurso, ambos os servidores gráficos)
             gnome = self._which("gnome-screenshot")
             if gnome:
-                result = subprocess.run([gnome, "-f", output_path],
-                                        capture_output=True, timeout=10)
+                result = _run_process([gnome, "-f", output_path], timeout=10)
                 if result.returncode == 0:
                     logger.info(f"Screen captured with gnome-screenshot: {output_path}")
                     return True, output_path
@@ -566,10 +568,7 @@ class SystemUtils:
                     geometry = (self._wayland_focused_geometry()
                                 or self._wayland_selected_geometry())
                 if grim and geometry:
-                    result = subprocess.run(
-                        [grim, "-g", geometry, output_path],
-                        capture_output=True, timeout=10,
-                    )
+                    result = _run_process([grim, "-g", geometry, output_path], timeout=10)
                     if result.returncode == 0:
                         logger.info(
                             f"Active window captured with grim -g: {output_path}"
@@ -588,8 +587,7 @@ class SystemUtils:
 
             scrot = self._which("scrot")
             if scrot:
-                result = subprocess.run([scrot, "-u", output_path],
-                                        capture_output=True, timeout=10)
+                result = _run_process([scrot, "-u", output_path], timeout=10)
                 if result.returncode == 0:
                     logger.info(f"Active window captured with scrot: {output_path}")
                     return True, output_path
@@ -619,9 +617,8 @@ class SystemUtils:
         try:
             if self.is_wayland:
                 # Try using swaymsg for Wayland (Sway)
-                if subprocess.run(['which', 'swaymsg'], capture_output=True).returncode == 0:
-                    result = subprocess.run(['swaymsg', '-t', 'get_tree'],
-                                          capture_output=True, text=True, timeout=5)
+                if self._which('swaymsg'):
+                    result = _run_process(['swaymsg', '-t', 'get_tree'], timeout=5)
                     if result.returncode == 0:
                         try:
                             import json
@@ -637,41 +634,28 @@ class SystemUtils:
                             logger.warning(f"Error parsing swaymsg: {e}")
 
                 # Try using wl-focus for Wayland
-                if subprocess.run(['which', 'wl-focus'], capture_output=True).returncode == 0:
-                    result = subprocess.run(['wl-focus', '--get'],
-                                          capture_output=True, text=True, timeout=5)
+                if self._which('wl-focus'):
+                    result = _run_process(['wl-focus', '--get'], timeout=5)
                     if result.returncode == 0:
                         info['window_id'] = result.stdout.strip()
             else:
                 # Use xdotool for X11
-                if subprocess.run(['which', 'xdotool'], capture_output=True).returncode == 0:
-                    result = subprocess.run(
-                        ['xdotool', 'getactivewindow', 'getwindowname'],
-                        capture_output=True, text=True, timeout=5
-                    )
+                if self._which('xdotool'):
+                    result = _run_process(['xdotool', 'getactivewindow', 'getwindowname'], timeout=5)
                     if result.returncode == 0:
                         info["title"] = result.stdout.strip()
 
-                    result = subprocess.run(
-                        ['xdotool', 'getactivewindow', 'getwindowclass'],
-                        capture_output=True, text=True, timeout=5
-                    )
+                    result = _run_process(['xdotool', 'getactivewindow', 'getwindowclass'], timeout=5)
                     if result.returncode == 0:
                         info["class"] = result.stdout.strip()
 
-                    result = subprocess.run(
-                        ['xdotool', 'getactivewindow', 'getwindowgeometry'],
-                        capture_output=True, text=True, timeout=5
-                    )
+                    result = _run_process(['xdotool', 'getactivewindow', 'getwindowgeometry'], timeout=5)
                     if result.returncode == 0:
                         info["geometry"] = result.stdout.strip()
 
                 # Use xprop to get more info
-                if subprocess.run(['which', 'xprop'], capture_output=True).returncode == 0:
-                    result = subprocess.run(
-                        ['xprop', '-root', '_NET_ACTIVE_WINDOW'],
-                        capture_output=True, text=True, timeout=5
-                    )
+                if self._which('xprop'):
+                    result = _run_process(['xprop', '-root', '_NET_ACTIVE_WINDOW'], timeout=5)
                     if result.returncode == 0:
                         info["window_id"] = result.stdout.strip()
 
@@ -735,10 +719,7 @@ class SystemUtils:
             if not binary:
                 return False, "Tesseract OCR is not installed"
             try:
-                result = subprocess.run(
-                    [binary, image_path, "stdout", "-l", lang],
-                    capture_output=True, text=True, timeout=30
-                )
+                result = _run_process([binary, image_path, "stdout", "-l", lang], timeout=30)
                 if result.returncode != 0:
                     return False, result.stderr.strip()
                 return True, result.stdout.strip()
@@ -769,7 +750,7 @@ class SystemUtils:
         except ImportError:
             # Fallback without psutil
             try:
-                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True, timeout=5)
+                result = _run_process(['ps', 'aux'], timeout=5)
                 if result.returncode == 0:
                     for line in result.stdout.split('\n')[1:]:  # Skip header
                         parts = line.split()
@@ -817,11 +798,11 @@ class SystemUtils:
         except ImportError:
             # Fallback without psutil
             try:
-                result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=5)
+                result = _run_process(['ip', 'addr'], timeout=5)
                 if result.returncode == 0:
                     info["interfaces"] = {"output": result.stdout}
 
-                result = subprocess.run(['ss', '-tuln'], capture_output=True, text=True, timeout=5)
+                result = _run_process(['ss', '-tuln'], timeout=5)
                 if result.returncode == 0:
                     info["connections"] = result.stdout.split('\n')
             except Exception as e:

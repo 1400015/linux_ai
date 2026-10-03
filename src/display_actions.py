@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional, Tuple
 
 from .action_audit import _sink, record_command
+from .process_output import run_bounded
 
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -392,10 +393,12 @@ class DisplayService:
     def _run(self, argv, timeout=8):
         env = dict(self.environ, LC_ALL="C")
         try:
-            result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            code, stdout, stderr = run_bounded(argv, timeout, 1_000_000, env=env)
+        except subprocess.TimeoutExpired:
+            return False, 'Monitor command timed out; check the current monitor state.'
+        except OSError as exc:
             return False, str(exc)
-        return result.returncode == 0, ((result.stdout or "") + (result.stderr or "")).strip()
+        return code == 0, (stdout + stderr).strip()
 
     def _call(self, argv):
         try:

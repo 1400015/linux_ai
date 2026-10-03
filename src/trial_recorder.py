@@ -26,6 +26,7 @@ import zlib
 from ._version import __version__
 from .action_audit import MAX_EVENTS
 from .diagnostics import redact
+from .log_privacy import redact_argv, secret_option
 from .schema_validation import validate_schema
 from .system_context import detect_system_context
 
@@ -45,7 +46,7 @@ MAX_ATTACHMENTS = 30
 MAX_IMAGE_PIXELS = 20_000_000
 _IDENTIFIER = re.compile(r'^(?:run|case|att)-[a-f0-9]{32}$')
 _CASE_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
-_SECRET_KEY = re.compile(r'(?i)(?:password|passwd|pwd|token|api[_-]?key|secret|authorization|cookie|encryption[_-]?key)')
+_SECRET_KEY = re.compile(r'(?i)(?:password|passwd|pwd|passphrase|token|api[_-]?key|secret|authorization|cookie|encryption[_-]?key)')
 _TEXT_EXTENSIONS = {'.txt', '.log', '.md', '.csv', '.json'}
 _NOTICE = ('Automatic redaction is partial. Review text, image pixels and image metadata before sharing. '
            'Logs are global to the application, not isolated to a conversation. Missing events do not prove '
@@ -64,12 +65,6 @@ def _clean(text, limit=4096):
     if not isinstance(text, str) or len(text) > limit:
         raise ValueError('Text exceeds its limit or is not a string')
     value = redact(text)
-    # App logs can show argv lists or '--password value', not just key=value.
-    pattern = r"(?i)([\"']?(?:--?)?(?:password|passwd|pwd|token|secret|api[_-]?key)[\"']?\s*(?:,\s*|\s+))([\"'][^\"'\n]*[\"']|[^\s,;\]\)]+)"
-    value = re.sub(pattern, lambda match: match[0] if match[2].lstrip("\"'").startswith('[redacted')
-                   else match[1] + '[redacted]', value)
-    value = re.sub(r'(?im)^(.*?\b(?:cookie|set-cookie)\s*[:=]\s*).*$', r'\1[redacted]', value)
-    value = re.sub(r'(?i)\b(Bearer\s+)\S+', r'\1[redacted]', value)
     home = str(Path.home())
     return value.replace(home, '[home]') if len(home) > 1 else value
 
@@ -86,11 +81,14 @@ def _sanitized(value, depth=0):
     if type(value) is list:
         if len(value) > 2048:
             raise ValueError('Too many evidence entries')
+        if all(isinstance(item, str) for item in value):
+            if any(len(item) > MAX_TEXT_BYTES for item in value):
+                raise ValueError('Text exceeds its limit')
+            return [_clean(item, MAX_TEXT_BYTES) for item in redact_argv(value)]
         items, hide_next = [], False
         for item in value:
             items.append('[redacted]' if hide_next else _sanitized(item, depth + 1))
-            hide_next = isinstance(item, str) and item.lower().lstrip('-') in {
-                'password', 'passwd', 'pwd', 'token', 'secret', 'api-key', 'api_key'}
+            hide_next = secret_option(item)
         return items
     if type(value) is dict:
         if len(value) > 2048 or any(not isinstance(key, str) for key in value):

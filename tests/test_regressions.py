@@ -1121,7 +1121,7 @@ class TestWaylandRegionCapture(unittest.TestCase):
     def test_slurp_geometry_is_the_grim_region(self):
         calls = []
         with tempfile.TemporaryDirectory() as directory, patch(
-            "src.system_utils.subprocess.run", side_effect=self._run(calls, "8,9 20x30\n")
+            "src.system_utils._run_process", side_effect=self._run(calls, "8,9 20x30\n")
         ):
             target = str(Path(directory) / "shot.png")
             ok, path = self.utils.capture_active_window(target)
@@ -1131,10 +1131,46 @@ class TestWaylandRegionCapture(unittest.TestCase):
 
     def test_unusable_slurp_output_is_not_passed_to_grim(self):
         calls = []
-        with patch("src.system_utils.subprocess.run", side_effect=self._run(calls, "select a window\n")):
+        with patch("src.system_utils._run_process", side_effect=self._run(calls, "select a window\n")):
             ok, _message = self.utils.capture_active_window(os.devnull)
         self.assertFalse(ok)
         self.assertEqual(calls, [["/usr/bin/slurp"]])
+
+
+class TestPkexecTimeouts(unittest.TestCase):
+    """Regression: every privileged helper uses the bounded executor deadline."""
+
+    def test_privileged_helpers_have_timeout(self):
+        import src.file_actions as fa
+        with patch.object(fa, "run_bounded", return_value=(0, "{}", "")) as run:
+            fa._write_privileged("/tmp/src", "/tmp/dst", parent_identity=(1, 2))
+            fa._remove_privileged("/tmp/dst", "digest" * 8, (1, 2))
+            fa._inspect_privileged("/tmp/dst", "digest" * 8, (1, 2))
+        self.assertEqual(run.call_count, 3)
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0][0], "pkexec")
+            self.assertEqual(call.args[1], fa.PRIVILEGED_TIMEOUT)
+
+
+class TestMeminfoFallback(unittest.TestCase):
+    """Regression: the psutil-less fallback must use MemAvailable, not MemFree."""
+
+    def test_fallback_uses_mem_available(self):
+        import builtins
+        from src.system_utils import SystemUtils
+        meminfo = ("MemTotal:       16000000 kB\n"
+                   "MemFree:          100000 kB\n"
+                   "MemAvailable:   8000000 kB\n")
+        real_open = builtins.open
+        def fake_open(path, *args, **kwargs):
+            if str(path) == "/proc/meminfo":
+                import io
+                return io.StringIO(meminfo)
+            return real_open(path, *args, **kwargs)
+        with patch("builtins.open", side_effect=fake_open), \
+                patch.dict("sys.modules", {"psutil": None}):
+            info = SystemUtils(FakeConfig()).get_system_info()
+        self.assertEqual(info["memory_available"], "7.63 GB")
 
 
 if __name__ == "__main__":

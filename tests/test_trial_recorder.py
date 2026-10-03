@@ -567,6 +567,42 @@ class TrialRecorderTests(unittest.TestCase):
                     self.assertFalse(cell.lstrip().startswith(('=', '+', '-', '@')), repr(cell))
         self.assertEqual(source.read_text(), original)
 
+    def test_unquoted_multiword_log_secrets_are_absent_from_storage_and_export(self):
+        self.write_private(self.log, 'before trial\n')
+        self.start()
+        self.begin()
+        with self.log.open('a', encoding='utf-8') as stream:
+            stream.write('Running command: fixture --password correct horse battery staple\n')
+            stream.write('token=another complete credential phrase\n')
+            stream.write('No password required; connection refused\n')
+            stream.write('Token usage - openrouter: input=100, output=20\n')
+        self.recorder.end_case('PASS', collect_logs=True)
+        source = self.write_private(self.base / 'passphrase.json', json.dumps({
+            'passphrase': 'a separate complete secret',
+            'argv': ['fixture', '--passphrase', 'array phrase with spaces'],
+            'commands': [
+                ['curl', '--user', 'person:correct horse battery staple'],
+                ['curl', '--user=person:correct horse battery staple'],
+                ['curl', '-b', 'session=correct horse battery staple'],
+                ['curl', '-bsession=correct horse battery staple'],
+            ],
+            'large_argv': ['fixture'] + ['non-secret argument'] * 260
+                + ['--password', 'late credential phrase', 'retained final argument']}))
+        self.recorder.attach(source)
+        self.recorder.finish()
+        text = self.text_contents(self.export())
+        for part in ('correct', 'horse', 'battery', 'staple', 'credential phrase',
+                     'separate complete secret', 'array phrase with spaces'):
+            self.assertNotIn(part, text)
+            for path in self.root.rglob('*'):
+                if path.is_file():
+                    self.assertNotIn(part.encode(), path.read_bytes())
+        self.assertIn('retained final argument', text)
+        self.assertIn('No password required; connection refused', text)
+        self.assertIn('Token usage - openrouter: input=100, output=20', text)
+        self.assertIn('horse battery staple', self.log.read_text(encoding='utf-8'))
+        self.assertIn('array phrase with spaces', source.read_text(encoding='utf-8'))
+
     def test_png_dimension_limit_refuses_large_header_after_valid_small_image(self):
         self.complete()
         data = base64.b64decode(

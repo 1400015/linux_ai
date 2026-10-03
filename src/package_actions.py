@@ -19,11 +19,11 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .action_audit import record_command
+from .process_output import run_bounded
 
 
 SUPPORTED_MANAGERS = ("apt", "xbps")
@@ -95,24 +95,18 @@ class PackageCandidate:
 
 
 def _run(argv: Sequence[str], timeout: int = 20, environment=None) -> Tuple[bool, str]:
-    """Bound memory/output, disable stdin and force parseable query output."""
+    """Cap retained output while reading, with a deadline and C locale."""
     env = dict(os.environ if environment is None else environment)
     env.update(LC_ALL="C", LANG="C", LANGUAGE="C", NO_COLOR="1")
     try:
-        with tempfile.TemporaryFile() as output:
-            completed = subprocess.run(
-                list(argv), stdout=output, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, timeout=timeout, env=env,
-            )
-            output.seek(0)
-            raw = output.read(MAX_OUTPUT_BYTES + 1)
-        if len(raw) > MAX_OUTPUT_BYTES:
+        code, stdout, stderr = run_bounded(list(argv), timeout, MAX_OUTPUT_BYTES, env=env)
+        if code and '... (output truncated at ' in stdout:
             return False, "Package command output exceeded the size limit."
-        return completed.returncode == 0, raw.decode("utf-8", errors="replace").strip()
+        return code == 0, (stdout + stderr).strip()
     except FileNotFoundError:
         return False, "The package command is not installed."
     except subprocess.TimeoutExpired:
-        return False, "The package command timed out."
+        return False, "The package command timed out. Check the target state before repeating a change."
     except OSError as exc:
         return False, str(exc)
 

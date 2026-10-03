@@ -83,6 +83,10 @@ O stdout da CLI pode incluir mensagens de log da aplicação. Para guardar a pr�
 
 As fontes têm limites e podem sofrer rotação, truncagem ou estar indisponíveis. A ferramenta regista avisos, mas não pode reconstruir informação já perdida. Fechar cada caso logo após a verificação ajuda a conservar a evidência relevante. Notas e anexos continuam a ser necessários para saídas específicas que não constem da auditoria.
 
+Os novos logs do executor conservam os argumentos como vetor JSON e ocultam credenciais reconhecidas antes de escrever o comando. Num log antigo que perdeu as fronteiras entre argumentos, um segredo sem aspas pode obrigar a ocultar todo o resto da linha. Isso evita conservar parte de uma palavra-passe com espaços, mas pode remover também informação de diagnóstico.
+
+Os executores têm prazo e limite de saída capturada. Um timeout numa ação elevada não prova cancelamento nem reposição: o processo pode já ter alterado o alvo, e o utilizador normal pode não conseguir terminá-lo depois da elevação. Verificar o estado real e o journal antes de repetir a operação. Estes limites não impõem um limite de RAM ao processo externo.
+
 O resultado é uma declaração do operador. Escrever nas observações como foi verificado: consulta independente, estado antes/depois, observação visual ou outro método do protocolo. `PASS` não é uma certificação automática. Uma variante não executada fica `NOT_RUN`; casos previstos mas nunca registados devem continuar na matriz de planeamento externa. Repetições aumentam o número de tentativas, não a cobertura.
 
 ## 4. Anexos e captura manual

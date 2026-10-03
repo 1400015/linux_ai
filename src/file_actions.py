@@ -17,6 +17,8 @@ import time
 import uuid
 from xml.sax.saxutils import escape
 
+from .process_output import run_bounded
+
 try:
     from .render_core import FileBlock
     from .i18n import _
@@ -65,6 +67,10 @@ def is_allowed_path(path, allowed_dirs=None):
 
 
 MAX_DIFF_BYTES = 1024 * 1024
+PRIVILEGED_TIMEOUT = 120
+# inspect_file decodes up to 1 MiB; json.dumps can escape one byte as six
+# ASCII bytes (e.g. an invalid UTF-8 byte decoded as U+FFFD), plus its envelope.
+MAX_PRIVILEGED_PREVIEW_BYTES = 6 * MAX_DIFF_BYTES + 4096
 
 _DIFF_TRUNCATION_NOTE = _(
     "WARNING: preview truncated at 1 MB; the file is bigger and this diff "
@@ -138,17 +144,27 @@ def _make_backup(path):
     return None
 
 
+def _run_privileged(argv, output_limit=MAX_DIFF_BYTES):
+    """Allow time for polkit authentication, then clean up a bounded process."""
+    try:
+        code, stdout, stderr = run_bounded(argv, PRIVILEGED_TIMEOUT, output_limit)
+    except subprocess.TimeoutExpired as error:
+        raise PermissionError(
+            'Privileged operation timed out. Check the target state and recovery journal before repeating it.'
+        ) from error
+    return subprocess.CompletedProcess(argv, code, stdout, stderr)
+
+
 def _write_privileged(temp_path, dest_path, expected_digest=None, parent_identity=None, source_digest=None):
     """One elevation prompt; anchored, exclusive destination and backup files."""
     if parent_identity is None:
         parent = os.stat(os.path.dirname(dest_path))
         parent_identity = (parent.st_dev, parent.st_ino)
     helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
-    result = subprocess.run(
+    result = _run_privileged(
         ['pkexec', os.path.realpath(sys.executable), helper, temp_path, dest_path,
          expected_digest if expected_digest is not None else '-',
          str(parent_identity[0]), str(parent_identity[1])] + ([source_digest] if source_digest else []),
-        capture_output=True, text=True,
     )
     if result.returncode != 0:
         raise PermissionError(
@@ -159,10 +175,9 @@ def _write_privileged(temp_path, dest_path, expected_digest=None, parent_identit
 
 def _remove_privileged(path, expected_digest, parent_identity):
     helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
-    result = subprocess.run(
+    result = _run_privileged(
         ['pkexec', os.path.realpath(sys.executable), helper, '--remove', path,
          expected_digest, str(parent_identity[0]), str(parent_identity[1])],
-        capture_output=True, text=True,
     )
     if result.returncode:
         raise PermissionError(result.stderr.strip() or 'Recovery denied')
@@ -171,10 +186,10 @@ def _remove_privileged(path, expected_digest, parent_identity):
 
 def _inspect_privileged(path, expected_digest, parent_identity, backup=None, backup_digest=None):
     helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
-    result = subprocess.run(
+    result = _run_privileged(
         ['pkexec', os.path.realpath(sys.executable), helper, '--inspect', path, expected_digest,
          str(parent_identity[0]), str(parent_identity[1]), backup or '-', backup_digest or '-'],
-        capture_output=True, text=True,
+        output_limit=MAX_PRIVILEGED_PREVIEW_BYTES,
     )
     if result.returncode:
         raise PermissionError(result.stderr.strip() or 'Recovery preview denied')
