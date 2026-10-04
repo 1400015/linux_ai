@@ -11,7 +11,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
-from .storage import update_json
+from .storage import JsonWriteCommittedError, update_json
 from .stream_events import iter_sse_json
 from .provider_modes import (
     ASSISTANCE_MODES, LocalModelError, ProviderStatus, discover_local_models,
@@ -520,6 +520,17 @@ class AIClient:
             self._usage_pending.clear()
             self._usage_reset = False
             self._usage_dirty = False
+        except JsonWriteCommittedError as error:
+            # The replacement already contains these deltas/reset. Retrying
+            # them would double-count usage or erase another client's work.
+            # Keep a durability retry pending, but merge against the latest
+            # disk value on that retry instead of replaying this snapshot.
+            self.token_usage = error.value
+            self._usage_pending.clear()
+            self._usage_reset = False
+            self._usage_dirty = True
+            logger.warning("Token usage JSON was replaced, but durability is not confirmed: %s",
+                           redact_url(str(error)))
         except Exception as error:
             self._usage_dirty = True
             logger.warning("Could not save token usage: %s", redact_url(str(error)))

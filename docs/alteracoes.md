@@ -1,5 +1,12 @@
 # Registo de Alterações — linux_ai
 
+## v1.3.3 — Persistência de tokens e correções de robustez (2026-10-04)
+
+- Repetir uma gravação de utilização de tokens após uma falha de sincronização já não duplica incrementos publicados: um total de 15 tokens permanece 15, em vez de subir para 30.
+- A persistência distingue falhas anteriores à substituição do JSON de erros posteriores à publicação. As primeiras conservam os incrementos e o reset pendentes; as segundas consomem o que já foi publicado, mantêm o aviso de durabilidade incerta e repetem a sincronização lendo os totais atuais sob lock, sem reaplicar incrementos ou resets anteriores.
+- 22 regressões cobrem falhas de escrita/sincronização/fecho, publicação seguida de erro ao fechar o lock, clientes e processos concorrentes, resets e preservação do erro original durante a limpeza. O conteúdo publicado não é incluído na mensagem da exceção.
+- Cabeçalhos HTTP `Retry-After` com data passam a determinar a espera, respeitando os limites existentes. Falhas na limpeza de temporários de captura preservam o resultado tratado; as anotações de resultados da CLI, callbacks de escrita e argumentos opcionais de IA correspondem aos contratos usados em execução.
+
 ## v1.3.2 — Identificação de ensaios e limpeza de processos (2026-10-03)
 
 - Campanhas sem referência explícita observam o commit do checkout que contém o código executado, registam a origem da referência e distinguem alterações locais/estado desconhecido. Instalações sem checkout mantêm `unknown`; referências do operador são preservadas. Relatórios existentes continuam legíveis.
