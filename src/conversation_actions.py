@@ -77,11 +77,12 @@ class ConversationActions:
     are revalidated by their backend immediately before execution.
     """
 
-    def __init__(self, store, manager, packages=None, displays=None, clock=time.time, *, context=None, audit=None, services=None):
+    def __init__(self, store, manager, packages=None, displays=None, clock=time.time, *, context=None, audit=None,
+                 services=None, independent_display_watchdog=False):
         self.store = store
         self.manager = manager
         self.packages = packages if packages is not None else PackageService(manager)
-        self.displays = displays if displays is not None else DisplayService()
+        self.displays = displays if displays is not None else DisplayService(independent_watchdog=independent_display_watchdog)
         self.clock = clock
         from .offline_assistant import DistroInfo
         from .system_context import detect_system_context

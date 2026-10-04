@@ -54,6 +54,7 @@ jobs:
           sudo apt-get install -y -qq python3-gi gir1.2-gtk-3.0 python3-venv xvfb
           /usr/bin/python3 -m venv --system-site-packages .venv-gtk
           .venv-gtk/bin/python -m pip install -r requirements.txt
+          .venv-gtk/bin/python -m pip install ".[encryption]"
       - name: Test the complete suite with GTK and reject unexpected skips
         run: |
           xvfb-run -a .venv-gtk/bin/python scripts/run_gtk_tests.py

@@ -1,12 +1,16 @@
 # Native Void Linux package
 
-The template builds published snapshot `be865168e74f42f858bc69f412522df84b3e53d1`
-(application 1.3.0, package revision 2). That snapshot already contains the
-security fixes, sessions, assistance modes and Wayland window fixes, so the
-recipe no longer carries a patch. The archive checksum was verified against
-the GitHub tarball. Copy the whole package directory, including this README,
-when moving the recipe. After a newer commit is published, update `_commit`
-and `checksum` together.
+The template builds published snapshot `58e67232cbd6f02a363e5a9910f632c10f0bdc65`
+(application 1.3.3, package revision 1). It includes the fix that prevents token
+usage from being applied twice after a JSON replacement succeeds but durability
+confirmation fails. The archive checksum and source version were verified
+against the GitHub tarball; an offline wheel build and its GTK test suite also
+passed. A native XBPS binary build has not been verified in Void Linux.
+
+This is a pinned published snapshot, not the current working tree: later
+credential and model-management changes are not included until another snapshot
+is published and selected. After a newer commit is published, update `_commit`,
+`version` and `checksum` together, then build and test the package in Void.
 
 ## Build
 
@@ -21,7 +25,8 @@ cp -r /path/to/linux_ai/xbps-src/linux-ai-assistant srcpkgs/
 sudo xbps-install -R "$PWD/hostdir/binpkgs" linux-ai-assistant
 ```
 
-Copy the entire package directory, not just the template.
+Copy the entire package directory, not just the template. The README is at
+`xbps-src/README.md` and can be kept alongside the copied package for reference.
 Copying a recipe alone does not create or publish an installable binary package.
 
 The Python console entry point is installed in `/usr/bin`, the desktop entry in

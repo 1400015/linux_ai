@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Linux AI Assistant",
-        "version": "1.3.3",
+    "version": "1.3.3",
     "width": 400,
     "height": 500,
     "x_position": 100,
@@ -11,6 +11,7 @@
     "auto_start": false,
     "theme": "dark",
     "encryption_enabled": false,
+    "display_independent_watchdog": false,
     "dock_mode": "float",
     "dock_edge": "right",
     "button_edge": "right",
@@ -29,13 +30,13 @@
       "google_ai_studio": {
         "api_key": "",
         "base_url": "https://generativelanguage.googleapis.com/v1",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash-lite",
         "timeout": 30
       },
       "anthropic": {
         "api_key": "",
         "base_url": "https://api.anthropic.com/v1",
-        "model": "claude-3-5-haiku-latest",
+        "model": "claude-haiku-4-5-20251001",
         "timeout": 60
       },
       "mistral": {
@@ -47,13 +48,13 @@
       "groq": {
         "api_key": "",
         "base_url": "https://api.groq.com/openai/v1",
-        "model": "llama-3.1-8b-instant",
+        "model": "openai/gpt-oss-20b",
         "timeout": 60
       },
       "cohere": {
         "api_key": "",
         "base_url": "https://api.cohere.ai/v1",
-        "model": "command-r",
+        "model": "command-r-08-2024",
         "timeout": 60
       },
       "local_llm": {

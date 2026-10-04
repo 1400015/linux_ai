@@ -1,5 +1,14 @@
 # Registo de Alterações — linux_ai
 
+## Por publicar — Credenciais, modelos e manutenção
+
+- Encriptação de chaves sem fallback para texto simples, formato Fernet identificado e leitura compatível dos formatos anteriores. Falhas de desencriptação deixam a credencial indisponível; uma chave de encriptação perdida não é regenerada sobre cifras existentes.
+- Definições mostram apenas a chave guardada. Gravar OK só persiste alterações explícitas; copiar uma chave do ambiente ou migrar armazenamento exige o respetivo botão. Variáveis canónicas têm precedência sobre nomes legados, incluindo valores vazios.
+- Cofre Linux Secret Service opcional, sem desbloqueio no arranque, sem backend alternativo, com propriedade exata dos itens e migração após verificação da escrita.
+- Listagem de modelos remotos apenas a pedido, com endpoints específicos, limites e redirecionamentos recusados. Modelos manuais e configurações existentes são preservados; predefinições revistas para novas configurações.
+- Recuperação de ecrã num processo separado disponível como opção experimental, desativada por defeito. Ensaios simulados cobrem morte do frontend; campanhas X11/Sway reais continuam pendentes.
+- CI de tipos gradual em quatro módulos, incluindo o cofre opcional, e documentação reorganizada. Receita XBPS atualizada para o snapshot publicado 1.3.3; as alterações por publicar não pertencem a esse snapshot.
+
 ## v1.3.3 — Persistência de tokens e correções de robustez (2026-10-04)
 
 - Repetir uma gravação de utilização de tokens após uma falha de sincronização já não duplica incrementos publicados: um total de 15 tokens permanece 15, em vez de subir para 30.

@@ -10,6 +10,8 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 
 - ✅ **Transparent floating interface** - Permanent window with black backgrounds and configurable transparency
 - ✅ **Multi-API integration** - Support for OpenRouter, Google AI Studio and local models
+- ✅ **Credential storage** - Stored-key editing, explicit environment-key copying and optional Linux Secret Service storage
+- ✅ **Remote model selection** - Manual model IDs and explicit model listing on supported provider endpoints
 - ✅ **Screen capture with OCR** - Captures the screen and extracts text automatically
 - ✅ **Expert Mode** - Assistant specialized in Linux systems
 - ✅ **File editing** - Edit configuration files with authorization
@@ -249,12 +251,20 @@ GOOGLE_AI_STUDIO_KEY=
 ```
 
 The `.env` file is loaded from the same directory as `config.json` without
-replacing existing process environment variables. Empty API key entries fall
-back to the keys saved through the settings dialog. Canonical environment names
-such as `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` take precedence over the
-legacy `OPENROUTER_API_KEY` name. When an environment variable is active, the
-**Settings → API** tab warns about it and offers **Reload saved keys** and
-**Copy effective key to config**; see [Manual QA: API settings tab](#manual-qa-api-settings-tab).
+replacing existing process environment variables. A canonical name such as
+`LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` takes precedence even when its
+value is empty. Otherwise a nonempty legacy variable overrides the selected
+credential store; an empty legacy variable falls back to that store.
+
+**Settings → API** shows the stored key, keeps edits for each provider until
+**OK**, and identifies an active environment override. Copying the effective
+environment key and moving a stored key require their separate buttons. Optional
+Linux Secret Service storage uses an existing default desktop collection and
+requires an explicit unlock before writing; install it with
+`python -m pip install '.[secret-service]'` from the checkout. Optional JSON
+encryption uses `python -m pip install '.[encryption]'`. See the
+[credential, model and manual QA guide](docs/credenciais-modelos.md) for
+precedence, verified migration, encryption recovery and safe inspection.
 
 GTK bindings come from the system packages; use `--system-site-packages` so the
 virtual environment can import them. Do not install the unrelated PyPI `gi`
@@ -286,17 +296,20 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 | Provider | Base URL | Default Model |
 |----------|----------|---------------|
 | OpenRouter | https://openrouter.ai/api/v1 | google/gemini-2.5-flash |
-| Google AI Studio | https://generativelanguage.googleapis.com/v1 | gemini-2.5-flash |
-| Anthropic | https://api.anthropic.com/v1 | claude-3-5-haiku-latest |
+| Google AI Studio | https://generativelanguage.googleapis.com/v1 | gemini-3.5-flash-lite |
+| Anthropic | https://api.anthropic.com/v1 | claude-haiku-4-5-20251001 |
 | Mistral | https://api.mistral.ai/v1 | mistral-small-latest |
-| Groq | https://api.groq.com/openai/v1 | llama-3.1-8b-instant |
-| Cohere | https://api.cohere.ai/v1 | command-r |
+| Groq | https://api.groq.com/openai/v1 | openai/gpt-oss-20b |
+| Cohere | https://api.cohere.ai/v1 | command-r-08-2024 |
 | Local Model | http://localhost:11434/v1 | llama3.2 |
 
-Model IDs change over time: check your provider's documentation if a
-default model stops being available, and update `api.providers.<name>.model`
-in `config.json`. Keys are read from `~/.config/linux_ai_assistant/.env`
-(copy it from `config/.env.example`).
+These defaults apply to new configurations and missing fields; existing model
+choices are preserved. Model availability depends on the provider and account.
+In **Settings → API**, enter a model ID or explicitly click **List models**;
+listing runs in the background and changes no saved model until **OK**. Remote
+listing uses supported standard HTTPS endpoints and is blocked in local/offline
+modes. Direct Google and OpenRouter model IDs are independent. See the
+[model selection guide](docs/credenciais-modelos.md#modelos-remotos).
 
 ## Offline Mode
 
@@ -343,13 +356,15 @@ Safety model:
 - **Diagnostics** (e.g. `df -h`, `free -h`) are run through the sandboxed
   `SystemUtils`, so only commands allowed in `permissions.allowed_commands`
   are executed.
-- **Changes** are never run silently: they are shown and executed through
-  `pkexec` only after you confirm the dialog (GUI) or run them yourself
-  (CLI). Commands are built as argument lists, so user input cannot inject a
-  shell.
+- **Changes:** legacy action offers show commands and require confirmation in
+  the GUI or an interactive CLI terminal. Structured software and monitor tasks
+  follow the explicit request and choice flow described above. Noninteractive
+  CLI input produces proposals. Administrator authentication uses `pkexec`;
+  commands are built as argument lists.
 
-Offline mode is automatic. The CLI (`python -m src.cli chat "..."`) falls
-back to it the same way and prints the suggested commands for you to run.
+Offline fallback also applies to the CLI (`python -m src.cli chat "..."`). An
+interactive terminal can execute authorized actions; pipes and file/stdin input
+show proposals without executing changes.
 
 ## Usage
 
@@ -434,6 +449,8 @@ To configure the application to start automatically:
 
 ## Project Structure
 
+Selected modules and directories:
+
 ```
 linux_ai_assistant/
 ├── src/
@@ -441,13 +458,22 @@ linux_ai_assistant/
 │   ├── app.py              # Main application
 │   ├── ai_client.py        # AI APIs client
 │   ├── config_manager.py   # Configuration manager
+│   ├── credential_settings.py # Stored-key editing and explicit migration
+│   ├── credential_store.py # Optional Linux Secret Service backend
+│   ├── remote_model_settings.py # Model selection UI
+│   ├── remote_models.py    # Explicit bounded remote model discovery
+│   ├── action_contract.py  # Structured action requests and results
+│   ├── conversation_actions.py # Session-scoped task choices
 │   ├── dock.py             # Docked mode (struts/layer-shell)
 │   ├── file_actions.py     # File writing with diff confirmation
 │   ├── i18n.py             # Translations (English fallback)
 │   ├── main_window.py      # Main window
 │   ├── offline_assistant.py # Offline answers and local tasks
 │   ├── render_core.py      # Markup rendering (GTK-free)
+│   ├── storage.py          # Locked atomic JSON transactions
 │   ├── system_utils.py     # System utilities
+│   ├── trial_recorder.py   # Local trial evidence and reviewed ZIP export
+│   ├── trial_dialog.py     # Trials / Debug UI
 │   └── tray_icon.py        # System tray icon
 ├── config/
 │   ├── config.json         # Default configuration
@@ -647,50 +673,11 @@ python -m src.cli --help
 for script in run.sh scripts/*.sh; do bash -n "$script" || exit; done
 ```
 
-### Manual QA: API settings tab
-
-The **Settings → API** tab manages the default provider and its key. Since
-environment variables override `config.json`, check both the normal flow and
-the override flow. Open the dialog from `Menu → Settings` and use the helper
-below to inspect what is on disk at any point:
-
-```bash
-python - <<'PY'
-import json, pathlib
-p = pathlib.Path.home() / ".config" / "linux_ai_assistant" / "config.json"
-d = json.loads(p.read_text())
-print("default:", d["api"]["default_provider"])
-print({k: v.get("api_key") for k, v in d["api"]["providers"].items()})
-PY
-```
-
-1. **The key loads for the current provider.** The *AI Provider* combo shows
-   `api.default_provider` and the key field is pre-filled with that provider's
-   key.
-2. **Switching provider reloads the key.** Save a distinct key on two
-   providers, then switch between them in the combo: the field must show each
-   provider's own key (never the previous one).
-3. **Saving writes to the right provider.** Select provider B, type a new key
-   and click **OK**. `api.default_provider` becomes B and only B's key changes;
-   the other provider's key must stay untouched.
-4. **Env overrides are announced.** With `OPENROUTER_API_KEY` (or the canonical
-   `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY`) exported, open Settings and
-   select OpenRouter. The warning *“the … environment variable overrides this
-   key”* appears together with two buttons that are hidden otherwise:
-   - **Reload saved keys** fills the field with the value stored in
-     `config.json`, ignoring the env override.
-   - **Copy effective key to config** writes the effective (env) value into
-     `config.json` and notifies *“Key copied to config.json”*.
-5. **The app picks changes up live.** After saving, send a message without
-   restarting the app: `chat()`/`stream_chat()` read `api.default_provider` on
-   every request.
-
-Steps 2, 3 and 4 are also covered by the automated regression tests:
-
-```bash
-python -m unittest tests.test_regressions.TestStoredApiKeyIgnoresEnvOverride -v
-python -m unittest tests.test_regressions.TestCopyEffectiveKeyToConfig -v
-```
+The [credential and model guide](docs/credenciais-modelos.md#verificação-manual)
+contains the API settings QA steps and a helper that prints credential presence
+and origin without printing values. The
+[maintenance and compatibility guide](docs/manutencao-compatibilidade.md)
+describes the current Python/GTK support and the limited mypy CI gate.
 
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
 For structured actions, service control, private operation events, offline checksums and validated YAML knowledge, see [the infrastructure guide](docs/infraestrutura-acoes-conhecimento.md). Existing virtual environments need the updated `requirements.txt`.
