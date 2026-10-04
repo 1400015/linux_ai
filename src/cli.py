@@ -49,13 +49,15 @@ class _ActionResult(str):
     the chat command a nonzero exit code.
     """
 
-    def __new__(cls, text="", status="none"):
+    status: str
+
+    def __new__(cls, text: str = "", status: str = "none") -> "_ActionResult":
         result = super().__new__(cls, text)
         result.status = status
         return result
 
     @property
-    def exit_code(self):
+    def exit_code(self) -> int:
         return 1 if self.status == "failed" else 0
 
 
@@ -614,7 +616,7 @@ Examples:
         self._pending_exchanges.extend(exchange)
         self.conversation_history = self.conversation_history[-1000:]
 
-    def _run_offline(self, message: str) -> str:
+    def _run_offline(self, message: str) -> _ActionResult:
         """Answer from local knowledge and, on a terminal, offer to run the action."""
         reply = self.offline.handle(message, get_language())
         print(f"\n[OFFLINE]\n{reply.text}\n")
@@ -623,7 +625,7 @@ Examples:
             return _ActionResult(reply.text + "\n\n" + extra, extra.status)
         return _ActionResult(reply.text, extra.status)
 
-    def _offer_model_action(self, message: str) -> str:
+    def _offer_model_action(self, message: str) -> _ActionResult:
         """Offer a catalog action for the user's sentence, not for model text."""
         propose = getattr(self.offline, "propose", None)
         if not callable(propose):
@@ -640,7 +642,7 @@ Examples:
             print(f"\n{reply.text}\n")
         return self._offer_action(reply)
 
-    def _offer_action(self, reply) -> str:
+    def _offer_action(self, reply) -> _ActionResult:
         """Print the exact argv. Run it only after a confirmation on a TTY.
 
         A pipe or a unit test is not a terminal: the commands are shown and
@@ -683,7 +685,7 @@ Examples:
         except EOFError:
             return ""
 
-    def _confirm_and_run(self, commands) -> str:
+    def _confirm_and_run(self, commands) -> _ActionResult:
         if not commands:
             return _ActionResult()
         if not confirmed(self._ask(_("Run these commands? [y/N] "))):
@@ -704,7 +706,7 @@ Examples:
                 break
         return _ActionResult("\n".join(chunks), status)
 
-    def _choose_wifi(self) -> str:
+    def _choose_wifi(self) -> _ActionResult:
         networks, error = collect_wifi()
         if not networks:
             text = error or _("No Wi-Fi networks found.")
@@ -741,7 +743,7 @@ Examples:
         print(text)
         return _ActionResult(text, "success" if ok else "failed")
 
-    def _choose_printer(self, commands) -> str:
+    def _choose_printer(self, commands) -> _ActionResult:
         devices, error = collect_printers()
         if not devices:
             if commands:
@@ -772,7 +774,7 @@ Examples:
         self._print_commands([command])
         return self._confirm_and_run([command])
 
-    def _choose_scanner(self, commands) -> str:
+    def _choose_scanner(self, commands) -> _ActionResult:
         devices, error = collect_scanners()
         if devices:
             lines = [f"{item.device} — {item.description}" for item in devices]

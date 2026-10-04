@@ -3,8 +3,11 @@ import copy
 import time
 import atexit
 import logging
+import math
 import re
 import threading
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -227,7 +230,7 @@ class AIClient:
         mode = self.config.get("assistance.mode", "auto")
         return mode if mode in ASSISTANCE_MODES else "offline"
 
-    def active_provider(self, provider: str = None) -> Optional[str]:
+    def active_provider(self, provider: Optional[str] = None) -> Optional[str]:
         """Resolve selection without making any network requests."""
         mode = self.get_assistance_mode()
         if mode == "offline":
@@ -251,7 +254,7 @@ class AIClient:
                                  ("backend", "ollama"), ("strict_local", True))
         }
 
-    def _strict_local(self, settings: Dict[str, Any], mode: str = None) -> bool:
+    def _strict_local(self, settings: Dict[str, Any], mode: Optional[str] = None) -> bool:
         # Explicit local mode always stays on the machine, even if a legacy
         # LAN-server setting allowed remote addresses in automatic mode.
         if mode is not None and mode not in ASSISTANCE_MODES:
@@ -278,7 +281,7 @@ class AIClient:
             return False
         return bool(self._get_api_key(provider))
 
-    def provider_ready(self, provider: str = None) -> bool:
+    def provider_ready(self, provider: Optional[str] = None) -> bool:
         """Legacy configuration check; use provider_status for reachability.
 
         This method deliberately performs no I/O: a configured URL is not
@@ -299,13 +302,13 @@ class AIClient:
         return effective
 
     def _discover_local(self, timeout: float = 3.0, settings: Optional[Dict[str, Any]] = None,
-                        mode: str = None):
+                        mode: Optional[str] = None):
         settings = self._probe_local_settings(settings)
         return discover_local_models(settings["base_url"], settings["backend"],
                                      self._strict_local(settings, mode), timeout)
 
     def list_local_models(self, timeout: float = 3.0, settings: Optional[Dict[str, Any]] = None,
-                          mode: str = None) -> List[str]:
+                          mode: Optional[str] = None) -> List[str]:
         """List already installed models; never pull, generate or contact cloud."""
         try:
             names, _ = self._discover_local(timeout, settings, mode)
@@ -315,7 +318,7 @@ class AIClient:
 
     def test_local_connection(self, timeout: float = 3.0,
                               settings: Optional[Dict[str, Any]] = None,
-                              mode: str = None) -> ProviderStatus:
+                              mode: Optional[str] = None) -> ProviderStatus:
         """Check server and installed model without sending a user prompt."""
         mode = self.get_assistance_mode() if mode is None else mode
         try:
@@ -345,7 +348,7 @@ class AIClient:
                               detail="" if installed else "Selected model is not installed on this server")
 
     def provider_status(self, check_connection: bool = False, timeout: float = 3.0,
-                        provider: str = None) -> ProviderStatus:
+                        provider: Optional[str] = None) -> ProviderStatus:
         """Report mode, configuration and (only on request) local readiness.
 
         Cloud connection tests would transmit requests to a third party, so
@@ -521,7 +524,7 @@ class AIClient:
             self._usage_dirty = True
             logger.warning("Could not save token usage: %s", redact_url(str(error)))
 
-    def get_token_usage(self, provider: str = None) -> Dict[str, Any]:
+    def get_token_usage(self, provider: Optional[str] = None) -> Dict[str, Any]:
         """Get token usage"""
         with self._usage_lock:
             if provider:
@@ -542,8 +545,8 @@ class AIClient:
         logger.info("Token usage reset")
 
     @retry(**NETWORK_RETRY)
-    def _make_request(self, url: str, payload: Dict, headers: Dict = None,
-                     timeout: int = None, stream: bool = False):
+    def _make_request(self, url: str, payload: Dict, headers: Optional[Dict] = None,
+                     timeout: Optional[int] = None, stream: bool = False):
         """Make request with retry and error handling"""
         timeout = timeout or self.DEFAULT_TIMEOUT
         merged_headers = {**self.session.headers, **(headers or {})}
@@ -618,15 +621,23 @@ class AIClient:
             logger.error(f"Unexpected error in request for {safe_url}: {redact_url(str(e))}")
             raise AIProviderError(redact_url(str(e))) from e
 
-    def _parse_retry_after(self, value: Any) -> Optional[int]:
+    def _parse_retry_after(self, value: Any) -> int:
         """Interpret the Retry-After header (seconds or HTTP date)."""
         if value is None:
             return self.RATE_LIMIT_WAIT
         try:
             seconds = int(str(value).strip())
         except (TypeError, ValueError):
-            logger.warning(f"Invalid Retry-After: {value!r}. Using {self.RATE_LIMIT_WAIT}s")
-            return self.RATE_LIMIT_WAIT
+            try:
+                date = parsedate_to_datetime(str(value).strip())
+                if date.tzinfo is None:
+                    date = date.replace(tzinfo=timezone.utc)
+                # HTTP dates have second precision. Round up a future delay
+                # rather than retrying before that second has arrived.
+                seconds = math.ceil(date.timestamp() - time.time())
+            except (TypeError, ValueError, OverflowError, OSError):
+                logger.warning(f"Invalid Retry-After: {value!r}. Using {self.RATE_LIMIT_WAIT}s")
+                return self.RATE_LIMIT_WAIT
         # Cap apenas defensivo: um header válido pode pedir mais do que o
         # default de 15 s (antes o cap cortava o valor e as tentativas
         # seguintes falhavam todas contra um limiar não reposto).
@@ -728,7 +739,7 @@ class AIClient:
 
         return True
 
-    def chat(self, messages: List[Dict[str, str]], provider: str = None, model: str = None,
+    def chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
              temperature: float = 0.7, max_tokens: int = 2000) -> Optional[str]:
         """
         Send messages to the AI API and get a response.
@@ -1236,7 +1247,7 @@ class AIClient:
             logger.error(f"Local model error: {redact_url(str(e))}")
             return None
 
-    def stream_chat(self, messages: List[Dict[str, str]], provider: str = None, model: str = None,
+    def stream_chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
                     temperature: float = 0.7, max_tokens: int = 2000):
         """
         AI response stream (generator).

@@ -359,7 +359,7 @@ def split_offer(reply) -> Tuple[str, list]:
     return interaction, commands
 
 
-def choose_numbered(items: Sequence, read_line: Callable[[str], str], write: Callable[[str], None],
+def choose_numbered(items: Sequence, read_line: Callable[[str], str], write: Callable[[str], object],
                     render: Callable, prompt: str = "Number (Enter cancels): ") -> Optional[int]:
     """Ask for a 1-based index. Empty input and invalid input cancel."""
     if not items:
