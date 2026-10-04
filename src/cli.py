@@ -82,7 +82,8 @@ class CLIApp:
         from .system_context import detect_system_context
         self.system_context = detect_system_context(self.offline.distro)
         self.offline.set_system_context(self.system_context)
-        self.actions = ConversationActions(self._store(), self.offline.distro.pkg_manager, context=self.system_context)
+        self.actions = ConversationActions(self._store(), self.offline.distro.pkg_manager, context=self.system_context,
+                                           independent_display_watchdog=self.config.get('app.display_independent_watchdog', False))
 
     def parse_args(self):
         """Parse the command-line arguments."""

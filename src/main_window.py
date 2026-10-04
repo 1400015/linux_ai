@@ -32,6 +32,8 @@ from .change_dialog import show_file_changes
 from .diagnostic_dialog import show_diagnostic_report
 from .trial_dialog import show_trials
 from .provider_settings import ProviderSettings, MODE_LABELS, STATUS_LABELS
+from .credential_settings import APIKeySettings
+from .remote_model_settings import RemoteModelSettings
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -173,7 +175,8 @@ class MainWindow(Gtk.Window):
         from .system_context import detect_system_context
         self.system_context = detect_system_context(self.offline.distro)
         self.offline.set_system_context(self.system_context)
-        self.actions = ConversationActions(self.history_store, self.offline.distro.pkg_manager, context=self.system_context)
+        self.actions = ConversationActions(self.history_store, self.offline.distro.pkg_manager, context=self.system_context,
+                                           independent_display_watchdog=self.config.get('app.display_independent_watchdog', False))
         self._refreshing_sessions = False
 
         # Create interface
@@ -959,95 +962,13 @@ class MainWindow(Gtk.Window):
         provider_combo.set_active_id(current_provider)
         api_box.pack_start(provider_combo, False, False, 0)
 
-        # API Key
-        api_key_label = Gtk.Label(label=_("API Key:"))
-        api_box.pack_start(api_key_label, False, False, 0)
-
-        api_key_entry = Gtk.Entry()
-        api_key_entry.set_visibility(False)
-        api_key_entry.set_invisible_char('*')
-        api_key_entry.set_placeholder_text(_("Enter your API Key"))
-
-        # Load current API key
-        api_key_entry.set_text(self.config.get_api_key(current_provider) or "")
-        api_box.pack_start(api_key_entry, False, False, 0)
-
-        # Warn when an environment variable overrides the key: env vars take
-        # precedence over config.json, so saving here would look like a no-op.
-        api_key_warning = Gtk.Label()
-        api_key_warning.set_halign(Gtk.Align.START)
-        api_key_warning.set_line_wrap(True)
-        api_key_warning.set_no_show_all(True)
-        api_box.pack_start(api_key_warning, False, False, 0)
-
-        # Shown only while an env override is active: brings back the value
-        # that is actually stored in config.json, so it can be inspected.
-        reload_key_btn = Gtk.Button(label=_("Reload saved keys"))
-        reload_key_btn.set_halign(Gtk.Align.START)
-        reload_key_btn.set_no_show_all(True)
-        api_box.pack_start(reload_key_btn, False, False, 0)
-
-        # Persist the effective (env) key into config.json, so removing the
-        # environment variable later still leaves a working key behind.
-        copy_key_btn = Gtk.Button(label=_("Copy effective key to config"))
-        copy_key_btn.set_halign(Gtk.Align.START)
-        copy_key_btn.set_no_show_all(True)
-        api_box.pack_start(copy_key_btn, False, False, 0)
-
-        def _refresh_key_warning(provider):
-            override = self.config.get_api_key_env_override(provider)
-            if override:
-                api_key_warning.set_text(
-                    _("Note: the {var} environment variable overrides this key.")
-                    .format(var=override)
-                )
-                api_key_warning.show()
-                reload_key_btn.show()
-                copy_key_btn.show()
-            else:
-                api_key_warning.hide()
-                reload_key_btn.hide()
-                copy_key_btn.hide()
-
-        # The entry always holds the key of the provider shown in the combo.
-        # Without this, switching provider saved the previous provider's key
-        # under the newly selected provider's name (the entry was never
-        # reloaded on change).
-        loaded_provider = [current_provider]
-
-        def on_provider_changed(combo):
-            selected = combo.get_active_id()
-            if selected:
-                loaded_provider[0] = selected
-                api_key_entry.set_text(self.config.get_api_key(selected) or "")
-                _refresh_key_warning(selected)
-
-        def on_reload_saved_keys(button):
-            # Ignore the env override on purpose: show the stored value.
-            api_key_entry.set_text(
-                self.config.get_stored_api_key(loaded_provider[0])
-            )
-
-        def on_copy_effective_key(button):
-            provider = loaded_provider[0]
-            # While the env var is set, get_api_key() returns it: that is the
-            # key the application is actually using.
-            effective = self.config.get_api_key(provider) or ""
-            self.config.set_api_key(provider, effective)
-            self.config.save()
-            api_key_entry.set_text(effective)
-            logger.info("Effective API key copied to config.json for %s", provider)
-            self.show_notification(
-                "Linux AI Assistant", _("Key copied to config.json")
-            )
-
-        provider_combo.connect("changed", on_provider_changed)
-        reload_key_btn.connect("clicked", on_reload_saved_keys)
-        copy_key_btn.connect("clicked", on_copy_effective_key)
-        _refresh_key_warning(current_provider)
+        credential_settings = APIKeySettings(self.config, provider_combo)
+        api_box.pack_start(credential_settings, False, False, 0)
 
         notebook.append_page(api_box, Gtk.Label(label=_("API")))
         assistance_settings = ProviderSettings(self.config, self.ai_client)
+        model_settings = RemoteModelSettings(self.config, self.ai_client, provider_combo, assistance_settings.mode)
+        api_box.pack_start(model_settings, False, False, 0)
         notebook.append_page(assistance_settings, Gtk.Label(label=_("Assistance")))
 
         # Appearance section
@@ -1197,6 +1118,9 @@ class MainWindow(Gtk.Window):
                         }):
                     self._cancel_for_session_change()
                 assistance_settings.save()
+                model_settings.save()
+                if not credential_settings.save():
+                    continue
                 break
             except ValueError as error:
                 warning = Gtk.MessageDialog(transient_for=dialog, modal=True,
@@ -1209,12 +1133,6 @@ class MainWindow(Gtk.Window):
             new_provider = provider_combo.get_active_id()
             if new_provider:
                 self.config.set("api.default_provider", new_provider)
-
-                # Store the key under the provider the entry was loaded for
-                # (updated by on_provider_changed), never under a provider the
-                # key does not belong to.
-                api_key = api_key_entry.get_text()
-                self.config.set_api_key(loaded_provider[0], api_key)
 
             # Save opacity
             opacity = opacity_scale.get_value()

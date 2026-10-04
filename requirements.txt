@@ -18,4 +18,5 @@ jsonschema>=4.18,<5
 #
 #   cryptography>=42.0.2   encriptação de API keys em config.json
 #                          (`app.encryption_enabled`)
+#   secretstorage>=3.3,<4  cofre Linux opcional; extra `.[secret-service]`
 #   python-json-logger     não é usado pelo projeto; removido

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional, Dict, List
 import logging
 import sys
+import uuid
 from dotenv import load_dotenv
 from .provider_modes import ASSISTANCE_MODES, validate_local_url, validate_model_name
 
@@ -68,6 +69,28 @@ SAVE_DEBOUNCE_SECONDS = 0.5
 # A theme name is used to build a file name (see _load_theme), so it is
 # restricted to the same simple identifier the "Add Theme" dialog accepts.
 _THEME_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_ENCRYPTED_PREFIX = "fernet:v1:"
+
+
+class CredentialEncryptionError(ValueError):
+    """A credential operation failed without exposing credential contents."""
+
+
+def _encrypted_payload(value: str) -> Optional[bytes]:
+    if value.startswith(_ENCRYPTED_PREFIX):
+        return value[len(_ENCRYPTED_PREFIX):].encode("utf-8")
+    if value.startswith("gAAAA"):
+        return value.encode("utf-8")
+    try:
+        decoded = base64.b64decode(value.encode("ascii"), validate=True)
+        if decoded.startswith(b"gAAAA"):
+            return decoded
+    except (ValueError, UnicodeError):
+        pass
+    # Recognise damaged legacy outer base64 as ciphertext as well.
+    if value.startswith("Z0FBQU"):
+        return b""
+    return None
 
 
 class ConfigManager:
@@ -86,6 +109,7 @@ class ConfigManager:
             "auto_start": False,
             "theme": "dark",
             "encryption_enabled": False,
+            "display_independent_watchdog": False,
             "dock_mode": "float",
             "dock_edge": "right",
             "button_edge": "right",
@@ -104,13 +128,13 @@ class ConfigManager:
                 "google_ai_studio": {
                     "api_key": "",
                     "base_url": "https://generativelanguage.googleapis.com/v1",
-                    "model": "gemini-2.5-flash",
+                    "model": "gemini-3.5-flash-lite",
                     "timeout": 30
                 },
                 "anthropic": {
                     "api_key": "",
                     "base_url": "https://api.anthropic.com/v1",
-                    "model": "claude-3-5-haiku-latest",
+                    "model": "claude-haiku-4-5-20251001",
                     "timeout": 60
                 },
                 "mistral": {
@@ -122,13 +146,13 @@ class ConfigManager:
                 "groq": {
                     "api_key": "",
                     "base_url": _GROQ_OPENAI_BASE,
-                    "model": "llama-3.1-8b-instant",
+                    "model": "openai/gpt-oss-20b",
                     "timeout": 60
                 },
                 "cohere": {
                     "api_key": "",
                     "base_url": "https://api.cohere.ai/v1",
-                    "model": "command-r",
+                    "model": "command-r-08-2024",
                     "timeout": 60
                 },
                 "local_llm": {
@@ -203,6 +227,7 @@ class ConfigManager:
             "auto_start": bool,
             "theme": str,
             "encryption_enabled": bool,
+            "display_independent_watchdog": bool,
             "dock_mode": str,
             "dock_edge": str,
             "button_edge": str,
@@ -262,6 +287,7 @@ class ConfigManager:
         self.config_path = config_path
         self.config = {}
         self._encryption_key = None
+        self._credential_store = None
         self._save_timer = None
         self._dirty = False
         # Último erro persistente de escrita (None se a última gravação
@@ -280,77 +306,65 @@ class ConfigManager:
         atexit.register(self.flush)
 
     def _load_encryption_key(self):
-        """Load or generate encryption key"""
+        """Keep encryption enabled on failure; never replace a lost key."""
         if self.get("app.encryption_enabled", False):
-            key_path = Path.home() / ".config" / "linux_ai_assistant" / ".encryption_key"
-            if key_path.exists():
-                try:
+            key_path = Path(self.config_path).parent / ".encryption_key"
+            try:
+                from cryptography.fernet import Fernet
+                if key_path.exists():
                     with open(key_path, 'rb') as f:
-                        self._encryption_key = f.read()
+                        key = f.read(1024)
+                    Fernet(key)
+                    self._encryption_key = key
                     logger.info("Encryption key loaded")
-                except Exception as e:
-                    logger.error(f"Error loading encryption key: {e}")
-                    self.config["app"]["encryption_enabled"] = False
-                    self.save()
-            else:
-                # Generate new key
-                try:
-                    from cryptography.fernet import Fernet
-                    self._encryption_key = Fernet.generate_key()
-                    key_path.parent.mkdir(parents=True, exist_ok=True)
-                    fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                else:
+                    providers = self.config.get("api", {}).get("providers", {})
+                    if any(isinstance(record, dict) and isinstance(record.get("api_key"), str)
+                           and _encrypted_payload(record["api_key"]) is not None
+                           for record in providers.values()):
+                        raise CredentialEncryptionError("The encryption key is missing; restore it before changing credentials.")
+                    key = Fernet.generate_key()
+                    key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, 'wb') as f:
-                        f.write(self._encryption_key)
+                        f.write(key)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    self._encryption_key = key
                     logger.info("New encryption key generated")
-                except ImportError:
-                    logger.warning("cryptography not installed. Encryption disabled.")
-                    self.config["app"]["encryption_enabled"] = False
-                    self.save()
-                except Exception as e:
-                    logger.error(f"Error generating encryption key: {e}")
-                    self.config["app"]["encryption_enabled"] = False
-                    self.save()
+            except Exception:
+                self._encryption_key = None
+                logger.error("Encryption key is unavailable; encrypted credential writes are blocked")
 
     def _encrypt_value(self, value: str) -> str:
         """Encrypt value"""
-        if not self.get("app.encryption_enabled", False) or not self._encryption_key:
+        if not value or not self.get("app.encryption_enabled", False):
             return value
+        if not self._encryption_key:
+            raise CredentialEncryptionError("Encryption is enabled but its key is unavailable.")
         try:
             from cryptography.fernet import Fernet
             f = Fernet(self._encryption_key)
-            return base64.b64encode(f.encrypt(value.encode())).decode()
-        except Exception as e:
-            logger.error(f"Error encrypting value: {e}")
-            return value
+            return _ENCRYPTED_PREFIX + f.encrypt(value.encode()).decode("ascii")
+        except Exception:
+            logger.error("API key encryption failed; the stored credential was preserved")
+            raise CredentialEncryptionError("API key encryption failed; no plaintext was stored.") from None
 
     def _decrypt_value(self, value: str) -> Optional[str]:
-        """Decrypt value
-
-        Contrato: em caso de falha NUNCA devolve o ciphertext — devolver a
-        cifra faria a app enviar `Authorization: Bearer <ciphertext>` sem
-        nenhum erro visível. Heurística: tokens Fernet começam por "gAAAA"
-        (versão 0x80 em base64url); uma string que não se pareça com cifra é
-        devolvida como está (chave legada em texto simples), uma que se
-        pareça e não desencripta devolve None (chave inválida/rotação de
-        `.encryption_key`) e a UI mostra o provider como não configurado.
-        """
-        if not self.get("app.encryption_enabled", False) or not self._encryption_key:
+        """Read tagged and legacy Fernet values; never return invalid ciphertext."""
+        payload = _encrypted_payload(value)
+        if payload is None:
             return value
+        if not self._encryption_key:
+            logger.error("Cannot decrypt a stored API key; its encryption key is unavailable")
+            return None
         try:
             from cryptography.fernet import Fernet
             f = Fernet(self._encryption_key)
-            return f.decrypt(base64.b64decode(value.encode())).decode()
-        except Exception as e:
-            looks_encrypted = value.startswith("gAAAA")
-            if looks_encrypted:
-                logger.error(
-                    "Cannot decrypt a stored API key (was .encryption_key "
-                    "regenerated or deleted?); treating it as unset. %s", e
-                )
-                return None
-            # Legado: chave guardada em texto simples com encriptação activa.
-            logger.warning("Stored API key is not encrypted; using it as-is")
-            return value
+            return f.decrypt(payload).decode()
+        except Exception:
+            logger.error("Cannot decrypt a stored API key; treating it as unset")
+            return None
 
     def _load_config(self):
         """Load configuration from file"""
@@ -688,11 +702,12 @@ class ConfigManager:
             # window (configure-event fires per pixel): without this check
             # every call re-armed the debounce Timer, so a single drag could
             # schedule hundreds of writes.
-            if keys[-1] in current and current[keys[-1]] == value:
+            encrypting = "api_key" in key and isinstance(value, str) and self.get("app.encryption_enabled", False)
+            if not encrypting and keys[-1] in current and current[keys[-1]] == value:
                 return
 
             # Encrypt API keys if needed
-            if "api_key" in key and isinstance(value, str) and self.get("app.encryption_enabled", False):
+            if encrypting:
                 value = self._encrypt_value(value)
                 # `value` above is freshly encrypted (new IV), so the
                 # equality shortcut cannot apply to encrypted keys.
@@ -784,25 +799,37 @@ class ConfigManager:
         validado.
         """
         with self._lock:
+            self._credential_store = None
             self._load_config()
             self._validate_config()
         logger.info("Configuration reloaded")
 
     def get_api_key(self, provider: str) -> Optional[str]:
         """Get API key for a specific provider"""
-        legacy_names = {
-            "openrouter": "OPENROUTER_API_KEY",
-            "google_ai_studio": "GOOGLE_AI_STUDIO_KEY",
-        }
-        legacy_name = legacy_names.get(provider)
-        if legacy_name and os.environ.get(legacy_name):
-            return os.environ[legacy_name]
-        # get() already resolves the canonical LINUX_AI_* variable
-        return self.get(f"api.providers.{provider}.api_key")
+        override = self.get_api_key_env_override(provider)
+        if override is not None:
+            return os.environ[override]
+        from .credential_store import CredentialStoreError
+        try:
+            if self.get_api_key_storage(provider) == "secret-service":
+                return self._api_key_store().lookup(provider)
+        except CredentialStoreError:
+            logger.warning("The API key storage is unavailable, locked or invalid for %s", provider)
+            return None
+        return self.get_config_value(f"api.providers.{provider}.api_key")
 
     def set_api_key(self, provider: str, api_key: str):
         """Set API key for a provider"""
-        self.set(f"api.providers.{provider}.api_key", api_key)
+        if not isinstance(api_key, str):
+            raise ValueError("API keys must be text.")
+        if self.get_api_key_storage(provider) == "secret-service":
+            store = self._api_key_store()
+            if api_key:
+                store.store(provider, api_key)
+            else:
+                store.delete(provider)
+        else:
+            self.set(f"api.providers.{provider}.api_key", api_key)
         logger.info(f"API key updated for {provider}")
 
     def get_api_key_env_override(self, provider: str) -> Optional[str]:
@@ -812,6 +839,9 @@ class ConfigManager:
         is set the value typed in Settings has no effect. Returning the name
         lets the UI tell the user instead of silently keeping the old key.
         """
+        canonical = self._env_name(f"api.providers.{provider}.api_key")
+        if os.environ.get(canonical) is not None:
+            return canonical
         legacy_names = {
             "openrouter": "OPENROUTER_API_KEY",
             "google_ai_studio": "GOOGLE_AI_STUDIO_KEY",
@@ -819,14 +849,82 @@ class ConfigManager:
         legacy_name = legacy_names.get(provider)
         if legacy_name and os.environ.get(legacy_name):
             return legacy_name
-        canonical = self._env_name(f"api.providers.{provider}.api_key")
-        if os.environ.get(canonical) is not None:
-            return canonical
         return None
 
     def get_stored_api_key(self, provider: str) -> str:
         """The key persisted in config.json, ignoring env overrides."""
-        return self.get_config_value(f"api.providers.{provider}.api_key") or ""
+        if self.get_api_key_storage(provider) == "secret-service":
+            return self._api_key_store().lookup(provider) or ""
+        value = self.get_config_value(f"api.providers.{provider}.api_key")
+        if value is None and self.config.get('api', {}).get('providers', {}).get(provider, {}).get('api_key'):
+            raise CredentialEncryptionError("The stored API key cannot be decrypted.")
+        return value or ""
+
+    def get_api_key_storage(self, provider: str) -> str:
+        value = self.get_config_value(f"api.providers.{provider}.key_storage", "config")
+        if value not in ("config", "secret-service"):
+            from .credential_store import CredentialStoreError
+            raise CredentialStoreError("invalid")
+        return value
+
+    def _api_key_store(self, create_profile: bool = False):
+        from .credential_store import CredentialStoreError, SecretServiceCredentialStore
+        with self._lock:
+            if self._credential_store is not None:
+                return self._credential_store
+            profile = self.get_config_value("app.credential_profile")
+            if not profile and create_profile:
+                profile = uuid.uuid4().hex
+                self.set("app.credential_profile", profile)
+                self.save()
+                if self.last_save_error:
+                    raise CredentialStoreError("failed")
+            if not profile:
+                raise CredentialStoreError("unavailable")
+            self._credential_store = SecretServiceCredentialStore(profile)
+            return self._credential_store
+
+    def unlock_api_key_store(self):
+        """Explicit user action; ordinary key lookup never unlocks a collection."""
+        self._api_key_store(create_profile=True).unlock()
+
+    def set_api_key_storage(self, provider: str, storage: str):
+        """Migrate only the stored key, after verifying the destination."""
+        from .credential_store import CredentialStoreError
+        if storage not in ("config", "secret-service"):
+            raise CredentialStoreError("invalid")
+        with self._lock:
+            current = self.get_api_key_storage(provider)
+            if current == storage:
+                return
+            record = self.config.get("api", {}).get("providers", {}).get(provider)
+            if not isinstance(record, dict):
+                raise CredentialStoreError("invalid")
+            key = self.get_stored_api_key(provider)
+            raw = record.get("api_key", "")
+            if current == "config" and raw and not key:
+                raise CredentialEncryptionError("The stored key cannot be decrypted; migration was cancelled.")
+            if storage == "secret-service":
+                store = self._api_key_store(create_profile=True)
+                if key:
+                    store.store(provider, key)
+                else:
+                    # Verify service/collection access even without a key to copy.
+                    store.lookup(provider)
+                encoded = ""
+            else:
+                encoded = self._encrypt_value(key)
+            before = dict(record)
+            record["key_storage"] = storage
+            record["api_key"] = encoded
+            self._schedule_save()
+            self.save()
+            if self.last_save_error:
+                record.clear()
+                record.update(before)
+                self._schedule_save()
+                # Retain the verified vault copy; deleting it could lose the key.
+                raise CredentialStoreError("failed")
 
     def get_window_geometry(self) -> Dict[str, int]:
         """Get window geometry"""
@@ -929,37 +1027,35 @@ class ConfigManager:
 
     def enable_encryption(self, enable: bool = True):
         """Enable/disable API key encryption"""
-        # Atómico face a flush()/save() concorrentes: sem o lock, um flush a
-        # meio do ramo `disable` podia persistir flag=False com ciphertext
-        # ainda gravado (ou vice-versa). set()/save() usam o mesmo RLock.
         with self._lock:
+            prior_flag = self.config["app"]["encryption_enabled"]
+            providers = self.config["api"]["providers"]
+            decrypted = {}
+            for provider, record in providers.items():
+                if not isinstance(record, dict) or record.get("key_storage", "config") != "config":
+                    continue
+                raw = record.get("api_key", "")
+                if not isinstance(raw, str):
+                    raise CredentialEncryptionError("A stored API key is invalid.")
+                value = self._decrypt_value(raw)
+                if value is None:
+                    raise CredentialEncryptionError("A stored API key cannot be decrypted; encryption was not changed.")
+                decrypted[provider] = value
             if enable:
-                # The flag must be on *before* _load_encryption_key() and the
-                # re-encryption loop: both are gated on it.
-                self.set("app.encryption_enabled", True)
-                if not self._encryption_key:
-                    self._load_encryption_key()
-                if not self._encryption_key:
-                    # cryptography is unavailable/unusable - keep keys in plaintext
-                    self.set("app.encryption_enabled", False)
-                    logger.warning("Encryption could not be enabled (missing key)")
-                    return
-                # Re-encrypt every stored API key
-                for provider in list(self.get("api.providers", {}).keys()):
-                    api_key = self.get(f"api.providers.{provider}.api_key")
-                    if api_key:
-                        self.set(f"api.providers.{provider}.api_key", api_key)
+                self.config["app"]["encryption_enabled"] = True
+                try:
+                    if not self._encryption_key:
+                        self._load_encryption_key()
+                    if not self._encryption_key:
+                        raise CredentialEncryptionError("Encryption could not be enabled; no credential was changed.")
+                    prepared = {provider: self._encrypt_value(value) for provider, value in decrypted.items()}
+                except Exception:
+                    self.config["app"]["encryption_enabled"] = prior_flag
+                    raise
             else:
-                # Read (and decrypt) the keys while encryption is still enabled...
-                decrypted = {}
-                for provider in list(self.get("api.providers", {}).keys()):
-                    api_key = self.get(f"api.providers.{provider}.api_key")
-                    if api_key:
-                        decrypted[provider] = api_key
-                # ...then disable the flag so set() stores them in plaintext.
-                # (Writing them before flipping the flag would re-encrypt them
-                # and leave ciphertext behind a disabled-encryption config.)
-                self.set("app.encryption_enabled", False)
-                for provider, api_key in decrypted.items():
-                    self.set(f"api.providers.{provider}.api_key", api_key)
+                prepared = decrypted
+                self.config["app"]["encryption_enabled"] = False
+            for provider, value in prepared.items():
+                providers[provider]["api_key"] = value
+            self._schedule_save()
         logger.info(f"Encryption {'enabled' if enable else 'disabled'}")

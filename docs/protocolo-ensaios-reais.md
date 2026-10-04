@@ -34,6 +34,13 @@ Usar os modelos [relatório de ensaio](modelos/relatorio-ensaio.md), [relatório
 
 Uma recusa clara de uma operação fora do âmbito é um resultado esperado num caso negativo. O programa afirmar sucesso, alterar um alvo diferente ou executar uma alteração a partir de uma simples consulta é uma falha.
 
+A opção experimental `app.display_independent_watchdog`, desativada por defeito,
+usa um processo separado para aplicar e recuperar o modo. Se for usada numa
+campanha, registar explicitamente esse valor e seguir os casos e limites do
+[guia de recuperação independente](recuperacao-ecra-watchdog.md), incluindo
+`SIGKILL` do frontend e terminação do cgroup. Esta opção não demonstra que
+seja possível recuperar após perda do servidor gráfico ou falha do sistema.
+
 ## 3. Ambientes e aplicações a testar
 
 ### Matriz principal

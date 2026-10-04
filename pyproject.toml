@@ -29,7 +29,12 @@ dependencies = [
 [project.optional-dependencies]
 # Encriptação de API keys em config.json (app.encryption_enabled)
 encryption = ["cryptography>=42.0.2"]
-dev = ["ruff>=0.5"]
+# Optional desktop keyring support; importing the client must not require it.
+secret-service = ["secretstorage>=3.3,<4"]
+dev = [
+    "ruff>=0.5",
+    "mypy==2.4.0; python_version >= '3.10'",
+]
 
 [project.urls]
 Homepage = "https://github.com/1400015/linux_ai"
@@ -71,3 +76,24 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/app.py" = ["F401"]  #Gtk/Gdk importados condicionalmente
 "src/main_window.py" = ["F401"]
+
+[tool.mypy]
+# A gradual gate, not a claim that the entire application is fully typed.
+# Mypy 2.4 requires Python >=3.10; the runtime's >=3.8 compatibility remains
+# covered by the existing test matrix. This analysis uses the CI's Python 3.12.
+python_version = "3.12"
+platform = "linux"
+files = [
+    "src/render_core.py",
+    "src/build_info.py",
+    "src/system_context.py",
+    "src/credential_store.py",
+]
+# Read the types of imported modules without gating their existing diagnostics.
+# Only the explicitly selected sources above belong to this first increment.
+follow_imports = "silent"
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+show_error_codes = true

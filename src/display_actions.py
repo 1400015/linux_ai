@@ -379,7 +379,8 @@ class DisplayChange:
 
 
 class DisplayService:
-    def __init__(self, runner=None, which=shutil.which, environ=None, *, timer_factory=None, clock=None):
+    def __init__(self, runner=None, which=shutil.which, environ=None, *, timer_factory=None, clock=None,
+                 independent_watchdog=False, watchdog_factory=None):
         self.environ = dict(os.environ if environ is None else environ)
         self._runner = runner or self._run
         self._which = which
@@ -389,6 +390,9 @@ class DisplayService:
         self._pending = None
         self._closed = False
         self._failed_recovery = ""
+        self._independent_watchdog = bool(independent_watchdog)
+        self._watchdog_factory = watchdog_factory
+        self._custom_runner = runner is not None
 
     def _run(self, argv, timeout=8):
         env = dict(self.environ, LC_ALL="C")
@@ -585,9 +589,17 @@ class DisplayService:
             if not self._allowed(is_current):
                 return None, "The display request was cancelled."
             if self._pending is not None:
-                ok, text = self._rollback(self._pending)
+                ok, text = (self._pending.close() if self._independent_watchdog else self._rollback(self._pending))
                 if not ok:
                     return None, text
+                self._pending = None
+            if self._independent_watchdog:
+                if self._custom_runner and self._watchdog_factory is None:
+                    return None, "Independent display recovery cannot use an in-process command runner."
+                from .display_watchdog import launch
+                change, error = (self._watchdog_factory or launch)(self, mode, timeout, is_current)
+                self._pending = change
+                return change, error
             before, error = self._discover()
             if before is None:
                 return None, error
@@ -667,6 +679,10 @@ class DisplayService:
         with self._lock:
             self._closed = True
             if self._pending is not None:
+                if self._independent_watchdog:
+                    result = self._pending.close()
+                    self._pending = None
+                    return result
                 return self._rollback(self._pending)
             if self._failed_recovery:
                 return False, self._failed_recovery

@@ -222,6 +222,14 @@ class AIClient:
         """Get API key for a provider"""
         return self.config.get_api_key(provider)
 
+    def list_remote_models(self, provider: Optional[str] = None, timeout: float = 8.0) -> List[str]:
+        """Explicit discovery only; local/offline policies prohibit remote probes."""
+        from .remote_models import ModelDiscoveryError, discover_remote_models
+        if self.get_assistance_mode() in ('offline', 'local'):
+            raise ModelDiscoveryError('Remote model listing is disabled in offline and local modes.')
+        selected = provider or self.config.get('api.default_provider', 'openrouter')
+        return discover_remote_models(selected, self._get_api_config(selected), self._get_api_key(selected), timeout=timeout)
+
     def get_supported_providers(self) -> List[str]:
         """Get list of supported providers"""
         return self.SUPPORTED_PROVIDERS.copy()
