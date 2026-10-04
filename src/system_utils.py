@@ -27,6 +27,18 @@ def _run_process(argv, timeout=5):
     code, stdout, stderr = run_bounded(argv, timeout, MAX_COMMAND_OUTPUT)
     return subprocess.CompletedProcess(argv, code, stdout, stderr)
 
+
+def _remove_empty_capture_temp(path: Optional[str]) -> None:
+    """Best effort cleanup of an empty temporary created by capture."""
+    if path is None:
+        return
+    try:
+        if os.path.getsize(path) == 0:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
 # grim -g and slurp both speak "x,y WxH". Anything else is not a geometry.
 _CAPTURE_GEOMETRY = re.compile(r"^-?\d+,-?\d+ [1-9]\d*x[1-9]\d*$")
 
@@ -478,7 +490,7 @@ class SystemUtils:
             logger.warning(f"Could not get selection from slurp: {e}")
             return None
 
-    def capture_screen(self, output_path: str = None) -> Tuple[bool, str]:
+    def capture_screen(self, output_path: Optional[str] = None) -> Tuple[bool, str]:
         """
         Capture the screen with support for Wayland and X11.
 
@@ -537,14 +549,9 @@ class SystemUtils:
             # Falha => apagar o temporário (antes, cada captura falhada em
             # Wayland deixava um PNG vazio para trás). No sucesso o ficheiro
             # fica para o chamador (OCR) apagar.
-            if temp_path is not None and os.path.exists(temp_path):
-                if os.path.getsize(temp_path) == 0:
-                    try:
-                        os.unlink(temp_path)
-                    except OSError:
-                        pass
+            _remove_empty_capture_temp(temp_path)
 
-    def capture_active_window(self, output_path: str = None) -> Tuple[bool, str]:
+    def capture_active_window(self, output_path: Optional[str] = None) -> Tuple[bool, str]:
         """
         Capture the active window with support for Wayland and X11.
 
@@ -609,12 +616,7 @@ class SystemUtils:
             logger.error(f"Error capturing active window: {e}")
             return False, f"Error capturing active window: {e}"
         finally:
-            if temp_path is not None and os.path.exists(temp_path):
-                if os.path.getsize(temp_path) == 0:
-                    try:
-                        os.unlink(temp_path)
-                    except OSError:
-                        pass
+            _remove_empty_capture_temp(temp_path)
 
     def get_active_window_info(self) -> Dict[str, str]:
         """Get information about the active window."""
