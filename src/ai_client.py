@@ -28,6 +28,9 @@ from .provider_modes import (
 from requests import Response
 from requests.exceptions import RequestException, Timeout
 from .log_privacy import redact_text
+from .image_attachments import (
+    ImageAttachmentError, MAX_IMAGES_PER_REQUEST, supports_image_input, validate_attachment,
+)
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 try:
@@ -74,6 +77,18 @@ class AIResponseLimitError(AIProviderError):
     """A provider exceeded local response limits; its response is incomplete."""
 
 
+class AIImageRequestError(AIProviderError):
+    """Image requests fail explicitly and must never fall back to text/OCR."""
+
+
+class AIUnsupportedImageProvider(AIImageRequestError):
+    """This mode or provider does not support reviewed image requests."""
+
+
+class AIUnsupportedImageModel(AIImageRequestError):
+    """The model's image-input capability has not been confirmed locally."""
+
+
 _REQUEST_CONTEXT = threading.local()
 
 
@@ -103,6 +118,16 @@ def _request_scope(cancel_event):
     finally:
         _REQUEST_CONTEXT.cancel_event = previous
         _REQUEST_CONTEXT.deadline = previous_deadline
+
+
+@contextmanager
+def _image_request_scope():
+    previous = getattr(_REQUEST_CONTEXT, 'image_request', False)
+    _REQUEST_CONTEXT.image_request = True
+    try:
+        yield
+    finally:
+        _REQUEST_CONTEXT.image_request = previous
 
 
 def _wait_for_retry(seconds, cancel_event=None):
@@ -768,6 +793,7 @@ class AIClient:
         # The decoder bounds both these encodings, including gzip headers.
         merged_headers['Accept-Encoding'] = 'gzip, deflate'
         safe_url = redact_url(url)
+        image_request = getattr(_REQUEST_CONTEXT, 'image_request', False)
 
         response = None
         try:
@@ -778,10 +804,11 @@ class AIClient:
             except LocalModelError:
                 local_base = ""
             def send_request():
-                if local_base and url == local_base + "/chat/completions":
+                if not image_request and local_base and url == local_base + "/chat/completions":
                     return make_local_request(url, payload, merged_headers, timeout, True)
+                image_options = {'allow_redirects': False} if image_request else {}
                 return self.session.post(
-                    url, json=payload, headers=merged_headers, timeout=timeout, stream=True
+                    url, json=payload, headers=merged_headers, timeout=timeout, stream=True, **image_options
                 )
 
             event = _request_event(cancel_event)
@@ -803,6 +830,8 @@ class AIClient:
                 response = send_request()
 
             _check_cancelled(cancel_event)
+            if image_request and 300 <= response.status_code < 400:
+                raise AIImageRequestError("OpenRouter image request refused an HTTP redirect", response=response)
             # Handle rate limiting: honor Retry-After (capped) and let
             # tenacity retry within NETWORK_RETRY's attempt budget.
             if response.status_code == 429:
@@ -830,7 +859,8 @@ class AIClient:
             raise
         except Timeout as e:
             _check_cancelled(cancel_event)
-            logger.error(f"Timeout connecting to {safe_url}: {redact_url(str(e))}")
+            detail = "Image request timed out" if image_request else redact_url(str(e))
+            logger.error(f"Timeout connecting to {safe_url}: {detail}")
             raise
         except RequestException as e:
             if _request_event(cancel_event) is not None and _request_event(cancel_event).is_set():
@@ -840,12 +870,14 @@ class AIClient:
             # requests embeds the full original URL in the exception text,
             # which can carry ?key=<API_KEY> - redact before logging.
             body_snippet = ""
-            if response is not None:
+            if response is not None and not image_request:
                 try:
                     body_snippet = _error_body_snippet(response, cancel_event)
                 finally:
                     close_response(response)
-            safe_error = _safe_provider_error(e)
+            elif response is not None:
+                close_response(response)
+            safe_error = "Image request failed" if image_request else _safe_provider_error(e)
             logger.error(
                 f"Request error for {safe_url}: {safe_error}"
                 + (f" | body: {body_snippet}" if body_snippet else "")
@@ -857,8 +889,9 @@ class AIClient:
         except Exception as e:
             if response is not None:
                 close_response(response)
-            logger.error(f"Unexpected error in request for {safe_url}: {redact_url(str(e))}")
-            raise AIProviderError(redact_url(str(e))) from e
+            detail = "Image request failed" if image_request else redact_url(str(e))
+            logger.error(f"Unexpected error in request for {safe_url}: {detail}")
+            raise AIProviderError(detail) from e
 
     def _parse_retry_after(self, value: Any) -> int:
         """Interpret the Retry-After header (seconds or HTTP date)."""
@@ -875,7 +908,10 @@ class AIClient:
                 # rather than retrying before that second has arrived.
                 seconds = math.ceil(date.timestamp() - time.time())
             except (TypeError, ValueError, OverflowError, OSError):
-                logger.warning(f"Invalid Retry-After: {value!r}. Using {self.RATE_LIMIT_WAIT}s")
+                if getattr(_REQUEST_CONTEXT, 'image_request', False):
+                    logger.warning("Invalid Retry-After for image request; using the default wait")
+                else:
+                    logger.warning(f"Invalid Retry-After: {value!r}. Using {self.RATE_LIMIT_WAIT}s")
                 return self.RATE_LIMIT_WAIT
         # Cap apenas defensivo: um header válido pode pedir mais do que o
         # default de 15 s (antes o cap cortava o valor e as tentativas
@@ -982,12 +1018,103 @@ class AIClient:
 
         return True
 
+    def validate_image_request(self, images, provider=None, model=None):
+        """Resolve and validate an image destination without contacting it.
+
+        An explicit model capability and the official HTTPS endpoint are
+        required. This prevents an approved OpenRouter preview being sent to
+        a configured proxy, another provider, or a text-only model.
+        """
+        if not isinstance(images, (tuple, list)) or not 0 < len(images) <= MAX_IMAGES_PER_REQUEST:
+            raise AIImageRequestError("Attach exactly one reviewed image per request")
+        try:
+            for image in images:
+                validate_attachment(image)
+        except ImageAttachmentError as error:
+            raise AIImageRequestError(str(error)) from None
+        try:
+            selected = self.active_provider(provider)
+        except ProviderNotConfigured:
+            raise AIUnsupportedImageProvider("Image requests are unavailable in this assistance mode") from None
+        if selected != 'openrouter':
+            raise AIUnsupportedImageProvider("Reviewed image requests currently require OpenRouter in remote or automatic mode")
+        options = self._get_api_config(selected)
+        selected_model = model or options.get('model')
+        if not isinstance(selected_model, str) or not supports_image_input(selected, selected_model):
+            raise AIUnsupportedImageModel("Choose a confirmed image-capable OpenRouter model, such as openai/gpt-4o-mini")
+        base_url = options.get('base_url')
+        if not isinstance(base_url, str) or base_url.rstrip('/') != 'https://openrouter.ai/api/v1':
+            raise AIUnsupportedImageProvider("Image requests require the official HTTPS OpenRouter endpoint")
+        if not self._get_api_key(selected):
+            raise AIImageRequestError("Configure the OpenRouter API key before attaching an image")
+        return selected, selected_model
+
+    def _image_payload(self, messages, images, provider, model, temperature, max_tokens, stream=False):
+        selected, selected_model = self.validate_image_request(images, provider, model)
+        if not self._validate_messages(messages) or not messages or messages[-1]['role'] != 'user':
+            raise AIImageRequestError("An image request must end with a user text message")
+        # Copy only the text message contract. Attachments remain transient and
+        # are never added to the caller's conversation/history dictionaries.
+        outgoing = [{'role': message['role'], 'content': message['content']} for message in messages]
+        outgoing[-1]['content'] = [
+            {'type': 'text', 'text': messages[-1]['content']},
+            *[{'type': 'image_url', 'image_url': {'url': image.data_url}} for image in images],
+        ]
+        payload = {'model': selected_model, 'messages': outgoing, 'temperature': temperature,
+                   'max_tokens': max_tokens, 'provider': {'allow_fallbacks': False}}
+        if stream:
+            payload['stream'] = True
+        options = self._get_api_config(selected)
+        headers = {'Authorization': 'Bearer ' + self._get_api_key(selected),
+                   'HTTP-Referer': 'https://github.com/1400015/linux_ai', 'X-Title': 'Linux AI Assistant'}
+        return payload, headers, options.get('timeout', self.DEFAULT_TIMEOUT)
+
+    def _chat_image_response(self, messages, images, provider, model, temperature, max_tokens):
+        with _image_request_scope():
+            payload, headers, timeout = self._image_payload(messages, images, provider, model, temperature, max_tokens)
+            try:
+                result = self._chat_openai_style('openrouter', 'https://openrouter.ai/api/v1/chat/completions',
+                                                 payload, headers, timeout)
+                if not isinstance(result, str) or not result:
+                    raise AIImageRequestError("OpenRouter returned no image response")
+                return result
+            except (AIRequestCancelled, AIResponseLimitError, AIImageRequestError):
+                raise
+            except Exception:
+                # Provider errors can echo a request. Expose neither a local
+                # source path nor the image's base64/content in UI/logs.
+                raise AIImageRequestError("The OpenRouter image request failed; no alternative provider or OCR was used") from None
+
+    def _stream_image_response(self, messages, images, provider, model, temperature, max_tokens):
+        with _image_request_scope():
+            payload, headers, timeout = self._image_payload(messages, images, provider, model,
+                                                           temperature, max_tokens, stream=True)
+            stream = self._stream_openai_style('openrouter', 'https://openrouter.ai/api/v1/chat/completions',
+                                               payload, headers, timeout, messages)
+            try:
+                received = False
+                for chunk in stream:
+                    if chunk:
+                        received = True
+                        yield chunk
+                if not received:
+                    raise AIImageRequestError("OpenRouter returned no image response")
+            except (AIRequestCancelled, AIResponseLimitError, AIImageRequestError):
+                raise
+            except Exception:
+                raise AIImageRequestError("The OpenRouter image request failed; no alternative provider or OCR was used") from None
+            finally:
+                stream.close()
+
     def chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
              temperature: float = 0.7, max_tokens: int = 2000,
-             cancel_event=None) -> Optional[str]:
+             cancel_event=None, images=None) -> Optional[str]:
         """Return one bounded response, optionally cancelling retry waits."""
         with _request_scope(cancel_event):
-            result = self._chat_response(messages, provider, model, temperature, max_tokens)
+            if images:
+                result = self._chat_image_response(messages, images, provider, model, temperature, max_tokens)
+            else:
+                result = self._chat_response(messages, provider, model, temperature, max_tokens)
             _check_cancelled()
             if isinstance(result, str) and len(result) > MAX_RESPONSE_CHARS:
                 raise AIResponseLimitError("AI response exceeds the local limit of 131072 characters")
@@ -1187,7 +1314,7 @@ class AIClient:
                 for event in usage_events:
                     reported.update({key: value for key, value in event.items() if value is not None})
                 self._record_usage(provider, {"usage": reported})
-            elif full_text:
+            elif full_text and not getattr(_REQUEST_CONTEXT, 'image_request', False):
                 input_text = " ".join(
                     m.get("content", "") for m in messages if isinstance(m, dict)
                 )
@@ -1518,10 +1645,13 @@ class AIClient:
 
     def stream_chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
                     temperature: float = 0.7, max_tokens: int = 2000,
-                    cancel_event=None):
+                    cancel_event=None, images=None):
         """Yield bounded text, closing the provider generator on cancel/error."""
         with _request_scope(cancel_event):
-            stream = self._stream_chat_response(messages, provider, model, temperature, max_tokens)
+            if images:
+                stream = self._stream_image_response(messages, images, provider, model, temperature, max_tokens)
+            else:
+                stream = self._stream_chat_response(messages, provider, model, temperature, max_tokens)
             try:
                 yield from _bounded_text(stream)
             finally:

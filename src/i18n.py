@@ -1232,3 +1232,105 @@ TRANSLATIONS["pt"].update({
         "Modelos consultados. Seleciona um modelo e guarda para o aplicar.",
     "Enter a valid model identifier.": "Introduz um identificador de modelo válido.",
 })
+
+TRANSLATIONS["pt"].update({
+    "Preview conversation import": "Pré-visualizar importação da conversa",
+    "Import conversation": "Importar conversa",
+    "Conversation exports (*.md, *.json)": "Conversas exportadas (*.md, *.json)",
+    "Conversation: {title}\nMessages: {count}\nFormat: {format}":
+        "Conversa: {title}\nMensagens: {count}\nFormato: {format}",
+    "Only conversation text is imported into a new conversation. Actions, tasks and diagnostic progress are not restored.":
+        "Só o texto é importado para uma nova conversa. As ações, tarefas e o progresso de diagnóstico não são repostos.",
+    "Review this conversation, then repeat the import with --yes.":
+        "Revê esta conversa e depois repete a importação com --yes.",
+    "Attach an image for the next question": "Anexar uma imagem à próxima pergunta",
+    "Capture an image for AI": "Capturar uma imagem para a IA",
+    "Choose an image": "Escolher uma imagem",
+    "PNG, JPEG and WebP images": "Imagens PNG, JPEG e WebP",
+    "Review image for AI": "Rever imagem para a IA",
+    "Attach to next request": "Anexar ao próximo pedido",
+    "Destination": "Destino",
+    "Model": "Modelo",
+    "Remove image": "Remover imagem",
+    "Describe this image.": "Descreve esta imagem.",
+    "Image ready for the next question: {name} ({width} × {height})":
+        "Imagem pronta para a próxima pergunta: {name} ({width} × {height})",
+    "Could not attach image: {error}": "Não foi possível anexar a imagem: {error}",
+    "This client does not support reviewed images.": "Este cliente não suporta o envio de imagens revistas.",
+    "Configure a usable OpenRouter provider before sending an image.":
+        "Configura um fornecedor OpenRouter disponível antes de enviar uma imagem.",
+    "The image request cannot be answered offline.": "O pedido com imagem precisa de um modelo remoto disponível.",
+    "The model returned no answer for the image.": "O modelo não devolveu uma resposta para a imagem.",
+    "[Image attached for this request; pixels are not stored.]":
+        "[Imagem anexada a este pedido; os pixels não são guardados.]",
+    "Only the next request will include this image. OpenRouter and the selected model's provider will receive its pixels. Check for private information before attaching. Metadata has been removed; visible secrets have not. The image is not saved in conversation history.":
+        "Só o próximo pedido inclui esta imagem. O OpenRouter e o fornecedor do modelo escolhido recebem os pixels. Revê a informação privada antes de anexar. Os metadados foram removidos; os segredos visíveis permanecem. A imagem não é guardada no histórico da conversa.",
+    "Choose an image with --image before using --send-image.": "Escolhe uma imagem com --image antes de usar --send-image.",
+    "Image: {name} ({width} × {height}); destination: {provider}, {model}.":
+        "Imagem: {name} ({width} × {height}); destino: {provider}, {model}.",
+    "Review the original image, then repeat with --send-image to send this normalized snapshot.":
+        "Revê a imagem original e repete com --send-image para enviar esta cópia preparada.",
+    "Enable global shortcut to open the assistant": "Ativar atalho global para abrir o assistente",
+    "Global shortcut disabled": "Atalho global desativado",
+    "Waiting for desktop shortcut approval": "A aguardar a aprovação do atalho no ambiente gráfico",
+    "Global shortcut active through the desktop portal": "Atalho global ativo pelo portal do ambiente gráfico",
+    "Global shortcut active on X11": "Atalho global ativo em X11",
+    "Global shortcut unavailable. Configure your desktop shortcut to run: linux-ai-assistant --show":
+        "Atalho global indisponível. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
+    "Global shortcut unavailable or permission denied. Configure your desktop shortcut to run: linux-ai-assistant --show":
+        "Atalho global indisponível ou não autorizado. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
+    "Global shortcut disconnected. Configure your desktop shortcut to run: linux-ai-assistant --show":
+        "O atalho global foi desligado. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
+    "Global shortcut unavailable. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
+        "Atalho global indisponível. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
+    "Global shortcut unavailable or permission denied. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
+        "Atalho global indisponível ou não autorizado. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
+    "Global shortcut disconnected. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
+        "O atalho global foi desligado. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
+    "Use selected documents": "Consultar documentos escolhidos",
+    "Manage selected documents": "Gerir documentos escolhidos",
+    "Local documents": "Documentos locais",
+    "Review matching excerpts before sending them to the model. Offline mode shows local matches.":
+        "Revê os excertos encontrados antes de os enviar ao modelo. O modo offline mostra resultados locais.",
+    "Could not open documents: {error}": "Não foi possível abrir os documentos: {error}",
+    "No matching passages in the selected documents. Add documents or refine your question.":
+        "Não encontrei excertos relevantes nos documentos escolhidos. Adiciona documentos ou reformula a pergunta.",
+    "No matching passages in the selected documents.": "Não encontrei excertos relevantes nos documentos escolhidos.",
+    "Review document excerpts": "Rever excertos dos documentos",
+    "Use these excerpts": "Usar estes excertos",
+    "These excerpts will be sent with your next question to {provider}.":
+        "Estes excertos serão enviados com a próxima pergunta para {provider}.",
+    "Local document matches (no model request):": "Excertos locais encontrados (sem pedido a um modelo):",
+    "The model is unavailable. Local document matches:": "O modelo está indisponível. Excertos locais encontrados:",
+    "These local excerpts are not saved in conversation history.": "Estes excertos locais não são guardados no histórico da conversa.",
+    "Local document matches were shown. Excerpts remain only in the local document index.":
+        "Foram apresentados excertos locais. Os excertos permanecem apenas no índice local de documentos.",
+    "Only files you choose are indexed. The index contains private snapshots; source changes are read only when you reindex.":
+        "Só são indexados os ficheiros que escolhes. O índice contém cópias privadas; as alterações à origem só são lidas quando atualizas o índice.",
+    "Add documents": "Adicionar documentos",
+    "Choose local documents": "Escolher documentos locais",
+    "UTF-8 text documents": "Documentos de texto UTF-8",
+    "Reindex selected document": "Atualizar o documento escolhido",
+    "Remove selected document": "Remover o documento escolhido",
+    "Clear document index": "Limpar o índice de documentos",
+    "Document ID": "ID do documento",
+    "Lines": "Linhas",
+    "Snapshot imported": "Cópia importada",
+    "No documents indexed.": "Não há documentos indexados.",
+    "Search works locally. Sending excerpts to an AI provider requires enabling documents for the conversation and reviewing the excerpts before sending.":
+        "A pesquisa funciona localmente. Para enviar excertos a um fornecedor de IA, ativa os documentos nesta conversa e revê os excertos antes do envio.",
+    "Document snapshots imported. Sources will not refresh automatically.": "Cópias dos documentos importadas. A origem não será atualizada automaticamente.",
+    "Selected document snapshot refreshed.": "A cópia do documento escolhido foi atualizada.",
+    "Document removed from the local index. The source file was preserved.": "Documento removido do índice local. O ficheiro original foi preservado.",
+    "Delete all document snapshots from the local index?": "Eliminar todas as cópias de documentos do índice local?",
+    "The original files will be preserved.": "Os ficheiros originais serão preservados.",
+    "Document index cleared. Original files were preserved.": "Índice de documentos limpo. Os ficheiros originais foram preservados.",
+    "Document snapshot removed.": "Cópia do documento removida.",
+    "Document snapshot not found.": "Não encontrei a cópia do documento.",
+    "(excerpt truncated)": "(excerto truncado)",
+    "All document snapshots removed.": "Todas as cópias de documentos foram removidas.",
+    "Use documents clear --yes to remove all local snapshots.": "Usa documents clear --yes para remover todas as cópias locais.",
+    "Use --documents before approving document context.": "Usa --documents antes de aprovar o envio dos excertos.",
+    "Review these excerpts, then repeat with --send-document-context to send them to the model.":
+        "Revê estes excertos e repete com --send-document-context para os enviar ao modelo.",
+})

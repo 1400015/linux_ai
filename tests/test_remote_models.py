@@ -3,6 +3,9 @@
 import json
 import multiprocessing
 import os
+from pathlib import Path
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -208,6 +211,22 @@ class TestRemoteModels(unittest.TestCase):
             os.kill(child_pid.value, 0)
 
     def test_repeated_uncooperative_requests_leave_no_children_or_fds(self):
+        # Other tests can leave GTK objects or queue fixtures awaiting GC. Their
+        # cleanup may close descriptors during discovery and hide a real leak,
+        # or fail an equality check by reducing the unrelated baseline. Keep the
+        # strict resource checks in a fresh interpreter with no earlier tests.
+        script = """
+import sys
+sys.path.insert(0, 'tests')
+from test_remote_models import TestRemoteModels
+TestRemoteModels()._assert_repeated_discovery_cleanup()
+"""
+        result = subprocess.run([sys.executable, '-c', script],
+                                cwd=str(Path(__file__).resolve().parents[1]),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def _assert_repeated_discovery_cleanup(self):
         session = Session()
         child_pid = multiprocessing.Value('i', 0, lock=False)
         def get(*args, **kwargs):

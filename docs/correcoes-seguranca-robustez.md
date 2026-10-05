@@ -1,9 +1,8 @@
 # Segurança, cancelamento e recuperação
 
-Estas alterações pertencem à secção **Por publicar** do [registo de alterações](alteracoes.md).
-A versão da aplicação continua a ser **1.3.3**. A referência da build e o estado
-do checkout identificam alterações posteriores ao snapshot publicado; a versão
-isolada não distingue estas árvores.
+Estas alterações estão incluídas na versão **1.4.0**, conforme o
+[registo de alterações](alteracoes.md). A referência da build e o estado do
+checkout identificam o código usado em cada ensaio, incluindo alterações locais.
 
 ## Diagnósticos e ocultação de segredos
 

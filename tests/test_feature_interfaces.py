@@ -109,7 +109,7 @@ class TestFeatureInterfaces(unittest.TestCase):
         destination = self.root / 'conversation.json'
         with patch('sys.stdout', io.StringIO()):
             self.app.handle_sessions(self.args('sessions', 'export', '--format', 'json', '--output', str(destination)))
-            self.app.handle_sessions(self.args('sessions', 'import', str(destination)))
+            self.app.handle_sessions(self.args('sessions', 'import', str(destination), '--yes'))
         self.assertEqual(store.load_messages()[0]['content'], 'conteúdo português')
         self.assertIsInstance(json.loads(destination.read_text(encoding='utf-8')), dict)
 

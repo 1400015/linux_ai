@@ -1,13 +1,21 @@
 # Registo de Alterações — linux_ai
 
-## Por publicar — Credenciais, segurança e robustez
+## v1.4.0 — Conversas, imagens, atalho e documentos locais (2026-10-05)
+
+- Exportação Markdown com formato próprio versionado e mensagens enquadradas por comprimento; importação de Markdown/JSON após pré-visualização e confirmação, sempre para uma nova conversa e sem recuperar ações ou diagnósticos pendentes. Markdown antigo sem enquadramento continua recusado.
+- Uma imagem PNG/JPEG/WebP revista pode acompanhar a próxima pergunta a um modelo OpenRouter explicitamente compatível. O snapshot normalizado remove metadados, tem limites de bytes e dimensões e não é persistido no histórico. Erros de imagem não acionam fallback para outro fornecedor, OCR ou resposta offline.
+- Atalho global opcional, desligado por defeito, para apresentar a janela: X11 via libX11 e Wayland via portal GlobalShortcuts. `linux-ai-assistant --show` permite configurar um binding do próprio desktop e apresenta a instância da mesma sessão através de D-Bus. Não lê texto selecionado nem substitui texto noutras aplicações.
+- Índice privado de snapshots de ficheiros UTF-8 escolhidos, com pesquisa lexical local, referências por documento/linhas e atualização ou remoção explícita. Uso de trechos numa pergunta exige escolha por pedido; o envio remoto tem revisão separada. Não adiciona embeddings, importação de pastas, PDF ou serviços de indexação remotos.
+- Instruções, formatos, limites e verificações manuais no [guia de conversas, imagens e documentos](conversas-imagens-documentos.md).
+
+### Credenciais, segurança e robustez incluídas na v1.4.0
 
 - Encriptação de chaves sem fallback para texto simples, formato Fernet identificado e leitura compatível dos formatos anteriores. Falhas de desencriptação deixam a credencial indisponível; uma chave de encriptação perdida não é regenerada sobre cifras existentes.
 - Definições mostram apenas a chave guardada. Gravar OK só persiste alterações explícitas; copiar uma chave do ambiente ou migrar armazenamento exige o respetivo botão. Variáveis canónicas têm precedência sobre nomes legados, incluindo valores vazios.
 - Cofre Linux Secret Service opcional, sem desbloqueio no arranque, sem backend alternativo, com propriedade exata dos itens e migração após verificação da escrita.
 - Listagem de modelos remotos apenas a pedido, com endpoints específicos, limites e redirecionamentos recusados. Modelos manuais e configurações existentes são preservados; predefinições revistas para novas configurações.
 - Recuperação de ecrã num processo separado disponível como opção experimental, desativada por defeito. Ensaios simulados cobrem morte do frontend; campanhas X11/Sway reais continuam pendentes.
-- CI de tipos gradual em quatro módulos, incluindo o cofre opcional, e documentação reorganizada. Receita XBPS atualizada para o snapshot publicado 1.3.3; as alterações por publicar não pertencem a esse snapshot.
+- CI de tipos gradual em quatro módulos, incluindo o cofre opcional, e documentação reorganizada. A receita XBPS continua a usar o snapshot 1.3.3; as alterações posteriores não pertencem a esse snapshot.
 - Ocultação de segredos reforçada para etiquetas com prefixos como `DB_PASSWORD`, `SECRET_KEY`, `AUTH_TOKEN` e `PGPASSWORD`, JWT, tokens Slack e identificadores de acesso AWS. Diagnósticos e ensaios continuam a exigir revisão antes de partilha.
 - Política dos diagnósticos restringe `ip` a consultas enumeradas, bloqueia destruição de sockets e opções perigosas de `file`, e recusa motores de execução conhecidos mesmo se acrescentados à allowlist.
 - Respostas limitadas a 131072 caracteres, streams com limites de bytes, frames, eventos e duração; cancelamento propagado à leitura e às esperas de retry. Resultados de operações locais já executadas permanecem na conversa original; cancelar não desfaz alterações.
@@ -18,7 +26,7 @@
 - Uma falha ao gravar o recibo do watchdog deixa de suprimir o resultado verificado enviado ao frontend. Falha simultânea da comunicação mantém a incerteza. README esclarece a opção experimental; anotações de informação do sistema e variável de validação corrigidas.
 - Descoberta remota isolada num processo terminável e recolhido, com temporizador próprio se o frontend desaparecer; credenciais circulam apenas pelo pipe privado. Corrupção de YAML desativa a coleção YAML completa sem bloquear o arranque e comunica conhecimento degradado.
 - Respostas JSON dos transportes integrados também têm limite de corpo descomprimido e prazo de leitura. Corpos de erro HTTP limitados passam pela ocultação partilhada; corpos incompletos são omitidos para não expor fragmentos de credenciais.
-- Os comandos, requisitos de instalação e limites desta ronda estão no [guia de segurança e recuperação](correcoes-seguranca-robustez.md). A versão permanece 1.3.3 até uma publicação posterior.
+- Os comandos, requisitos de instalação e limites estão no [guia de segurança e recuperação](correcoes-seguranca-robustez.md).
 
 ## v1.3.3 — Persistência de tokens e correções de robustez (2026-10-04)
 

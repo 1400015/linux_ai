@@ -58,6 +58,7 @@ version = { attr = "src._version.__version__" }
 # <sys.prefix>/share/linux-ai-assistant/themes when the source tree is absent.
 [tool.setuptools.data-files]
 "share/linux-ai-assistant/themes" = ["themes/*.json"]
+"share/applications" = ["scripts/linux-ai-assistant.desktop"]
 
 [tool.ruff]
 line-length = 110

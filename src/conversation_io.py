@@ -2,12 +2,16 @@
 
 import os
 from pathlib import Path
+import stat
 
 MAX_IMPORT_BYTES = 2 * 1024 * 1024
 
 
 def read_conversation(path):
-    with Path(path).open("rb") as stream:
+    fd = os.open(str(Path(path)), os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("Conversation import requires a regular file")
         data = stream.read(MAX_IMPORT_BYTES + 1)
     if len(data) > MAX_IMPORT_BYTES:
         raise ValueError("Conversation file exceeds 2 MiB")

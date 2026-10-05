@@ -9,6 +9,7 @@ screen capture, expert mode and more.
 import sys
 import signal
 import logging
+import argparse
 
 try:
     import gi
@@ -51,6 +52,10 @@ class LinuxAIAssistant:
         # SIGINT/SIGTERM can all ask to quit, sometimes re-entrantly.
         self._quitting = False
         self.float_button_window = None
+        self._show_requested = False
+        self._global_shortcut = None
+        self.global_shortcut_status = 'Global shortcut disabled'
+        self.global_shortcut_status_changed = None
 
         try:
             self.config = ConfigManager()
@@ -71,7 +76,7 @@ class LinuxAIAssistant:
             logger.error(f"Error initializing application: {e}", exc_info=True)
             raise
 
-    def run(self):
+    def run(self, show=False):
         """Start the application"""
         logger.info("Initializing GTK")
 
@@ -99,14 +104,15 @@ class LinuxAIAssistant:
             self._create_float_button()
 
             # Show window if auto_start is active
-            if self.config.get("app.auto_start", False):
-                self.main_window.show_all()
-                # O menu da tray nasce com "Show Window"; sincronizar quando
-                # a janela arranca visível.
-                self.main_window.sync_visibility()
+            if show or self._show_requested or self.config.get("app.auto_start", False):
+                self.show_window()
                 logger.info("Window shown (auto_start active)")
             else:
                 logger.info("Window not shown (auto_start inactive). Use the system tray icon.")
+
+            self.configure_global_shortcut(
+                self.config.get('app.global_shortcut_enabled', False),
+                self.config.get('app.global_shortcut', '<Ctrl><Alt>space'))
 
             # Start main loop
             logger.info("Starting GTK main loop")
@@ -128,6 +134,12 @@ class LinuxAIAssistant:
         logger.info("Terminating application")
 
         try:
+            if self._global_shortcut is not None:
+                try:
+                    self._global_shortcut.close()
+                except Exception as error:
+                    logger.warning('Could not release global shortcut: %s', type(error).__name__)
+
             # O config é debounced 0,5 s e o timer é daemon (morre com o
             # processo): sem este flush, sair pela tray/SIGTERM perdia as
             # alterações dos últimos meio segundo (geometria, tema, keys).
@@ -170,6 +182,30 @@ class LinuxAIAssistant:
                 Gtk.main_quit()
             except Exception as e:
                 logger.error(f"Could not quit GTK main loop: {e}")
+
+    def show_window(self):
+        """Present the existing conversation without toggling it closed."""
+        if self._quitting:
+            return
+        if self.main_window is None:
+            self._show_requested = True
+            return
+        self.main_window.show_all()
+        self.main_window.present()
+        self.main_window.sync_visibility()
+
+    def configure_global_shortcut(self, enabled, accelerator):
+        """Apply the optional shortcut and return its current registration status."""
+        from .global_shortcuts import GlobalShortcut
+        if self._global_shortcut is None:
+            self._global_shortcut = GlobalShortcut(self.show_window, self._shortcut_status_changed)
+        return self._global_shortcut.configure(enabled, accelerator)
+
+    def _shortcut_status_changed(self, status):
+        self.global_shortcut_status = status
+        callback = self.global_shortcut_status_changed
+        if callback is not None:
+            callback(status)
 
     def _create_float_button(self):
         """Permanent floating button to show/hide the main window"""
@@ -224,8 +260,12 @@ class LinuxAIAssistant:
         self.float_button_window = button_window
 
 
-def main():
+def main(argv=None):
     """Main entry point"""
+    parser = argparse.ArgumentParser(description='Linux AI Assistant desktop application')
+    parser.add_argument('--show', action='store_true',
+                        help='Start or focus the existing assistant window (for desktop shortcuts)')
+    args = parser.parse_args(argv)
     logger.info("Linux AI Assistant - Start")
     # File logging só no arranque real (não no import do pacote)
     from . import setup_file_logging
@@ -244,8 +284,26 @@ def main():
         print(f"\nError: {GTK_IMPORT_ERROR}\n\n{message}", file=sys.stderr)
         return 1
 
+    activation = None
     try:
+        from .global_shortcuts import DesktopActivation
+        # Register before loading configuration or creating any window. A second
+        # invocation only sends an activation request to the original process.
+        app_holder = []
+        pending_show = []
+
+        def show_existing():
+            if app_holder:
+                app_holder[0].show_window()
+            else:
+                pending_show.append(True)
+
+        activation = DesktopActivation(show_existing)
+        if not activation.register():
+            activation.activate()
+            return 0
         app = LinuxAIAssistant()
+        app_holder.append(app)
 
         # Handle signals to quit correctly. `signal.signal` handlers only run
         # between Python bytecodes, which never happens while Gtk.main()
@@ -264,11 +322,14 @@ def main():
             signal.signal(signal.SIGTERM, lambda s, f: GLib.idle_add(app.quit))
         logger.info("Signal handlers configured")
 
-        app.run()
+        app.run(show=args.show or bool(pending_show))
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         return 1
+    finally:
+        if activation is not None:
+            activation.close()
     return 0
 
 

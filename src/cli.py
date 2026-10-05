@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from .config_manager import ConfigManager
-from .ai_client import AIClient, AIProviderError
+from .ai_client import AIClient, AIProviderError, AIImageRequestError, AIRequestCancelled, AIResponseLimitError
 from .system_utils import SystemUtils
 from . import offline_assistant
 from .device_actions import (
@@ -37,6 +37,9 @@ from .local_knowledge import PROCEDURE_BY_ID, search_procedures, render_procedur
 from .diagnostics import PROBES, build_report, export_report
 from .change_journal import ChangeJournal
 from .conversation_actions import ConversationActions
+from .document_context import MAX_DOCUMENT_CONTEXT_CHARS, display_document_context, with_document_context
+from .document_store import DocumentStore
+from .image_attachments import prepare_image
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +141,10 @@ Exemplos:
                                     help='Model to use')
 
         for message_parser in (chat_parser, expert_parser):
+            message_parser.add_argument('--image', type=Path, help='Select a PNG, JPEG or WebP image; show metadata and destination before sending')
+            message_parser.add_argument('--send-image', action='store_true', help='Explicitly send the selected image with this question')
+            message_parser.add_argument('--documents', action='store_true', help='Retrieve passages from explicitly indexed local documents')
+            message_parser.add_argument('--send-document-context', action='store_true', help='Explicitly send matching document passages to the configured model')
             selection = message_parser.add_mutually_exclusive_group()
             selection.add_argument('--session', help='Conversation identifier to resume')
             selection.add_argument('--new-session', action='store_true', help='Start a new conversation')
@@ -164,8 +171,24 @@ Exemplos:
         export.add_argument('--session')
         export.add_argument('--format', choices=('markdown', 'json'), default='markdown')
         export.add_argument('--output', type=Path, help='New output file (existing files are never overwritten)')
-        imported = actions.add_parser('import', help='Import a versioned JSON conversation')
+        imported = actions.add_parser('import', help='Import a versioned JSON or application Markdown conversation')
         imported.add_argument('path', type=Path)
+        import_approval = imported.add_mutually_exclusive_group()
+        import_approval.add_argument('--preview', action='store_true', help='Validate and show the conversation without importing')
+        import_approval.add_argument('--yes', action='store_true', help='Approve the reviewed import')
+        documents = subparsers.add_parser('documents', help='Manage selected local document snapshots without a model service')
+        document_actions = documents.add_subparsers(dest='document_action', required=True)
+        add_documents = document_actions.add_parser('add', help='Index only the files explicitly named')
+        add_documents.add_argument('paths', type=Path, nargs='+')
+        document_actions.add_parser('list')
+        search_documents = document_actions.add_parser('search', help='Show local passages with source references')
+        search_documents.add_argument('query', nargs='+')
+        remove_document = document_actions.add_parser('remove')
+        remove_document.add_argument('id')
+        reindex_documents = document_actions.add_parser('reindex', help='Explicitly refresh selected snapshots')
+        reindex_documents.add_argument('ids', nargs='*')
+        clear_documents = document_actions.add_parser('clear')
+        clear_documents.add_argument('--yes', action='store_true', help='Confirm removing all local snapshots')
         mode = subparsers.add_parser('mode', help='Show or select assistance mode')
         mode.add_argument('value', nargs='?', choices=('auto', 'offline', 'local', 'remote'))
         mode.add_argument('--check', action='store_true', help='Test the local model connection')
@@ -327,6 +350,8 @@ Exemplos:
 
         if args.command == 'sessions':
             return self.handle_sessions(args)
+        if args.command == 'documents':
+            return self.handle_documents(args)
         if args.command == 'diagnose':
             return self.handle_diagnose(args)
         if args.command == 'changes':
@@ -593,8 +618,51 @@ Examples:
             else:
                 print(content)
         elif action == 'import':
-            print(store.import_session(read_conversation(args.path))['id'])
+            text = read_conversation(args.path)
+            preview = store.preview_import(text)
+            if getattr(args, 'preview', False):
+                print(preview['preview_text'])
+                return 0
+            if not getattr(args, 'yes', False):
+                print(preview['preview_text'])
+                print(_("Review this conversation, then repeat the import with --yes."))
+                return 1
+            print(store.import_session(text)['id'])
         return 0
+
+    def handle_documents(self, args):
+        store = None
+        try:
+            store = DocumentStore()
+            action = args.document_action
+            if action == 'add':
+                print(json.dumps(store.add(args.paths), ensure_ascii=False, indent=2))
+            elif action == 'list':
+                print(json.dumps(store.list_documents(), ensure_ascii=False, indent=2))
+            elif action == 'search':
+                result = store.context(' '.join(args.query), max_chars=MAX_DOCUMENT_CONTEXT_CHARS)
+                print(display_document_context(result) if result else _("No matching passages in the selected documents."))
+                return 0 if result else 1
+            elif action == 'remove':
+                if not store.remove(args.id):
+                    print(_("Document snapshot not found."), file=sys.stderr)
+                    return 1
+                print(_("Document snapshot removed."))
+            elif action == 'reindex':
+                print(json.dumps(store.reindex(args.ids or None), ensure_ascii=False, indent=2))
+            elif action == 'clear':
+                if not args.yes:
+                    print(_("Use documents clear --yes to remove all local snapshots."))
+                    return 1
+                store.clear()
+                print(_("All document snapshots removed."))
+            return 0
+        except (OSError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        finally:
+            if store is not None:
+                store.close()
 
     def _build_request_messages(self, message: str):
         """Assemble the request context: system prompt + capped history + message."""
@@ -835,58 +903,122 @@ Examples:
 
     def handle_chat(self, args):
         """Process the chat command. Devolve exit code (0 sucesso, 1 falha)."""
-        self._prepare_conversation(args)
+        image_path = getattr(args, 'image', None)
+        use_documents = bool(getattr(args, 'documents', False))
+        if getattr(args, 'send_image', False) and image_path is None:
+            print(_("Choose an image with --image before using --send-image."), file=sys.stderr)
+            return 1
+        if getattr(args, 'send_document_context', False) and not use_documents:
+            print(_("Use --documents before approving document context."), file=sys.stderr)
+            return 1
+        if image_path is not None and not getattr(args, 'message', None) and not getattr(args, 'stdin', False) and not getattr(args, 'input', None):
+            args.message = [_("Describe this image.")]
         message = self._message_from_args(args)
+        images = ()
+        document_context = ''
+        try:
+            if image_path is not None:
+                image = prepare_image(image_path)
+                provider, model = self.ai_client.validate_image_request((image,), args.provider, args.model)
+                print(_("Image: {name} ({width} × {height}); destination: {provider}, {model}.")
+                      .format(name=image.filename, width=image.width, height=image.height, provider=provider, model=model))
+                if not getattr(args, 'send_image', False):
+                    print(_("Review the original image, then repeat with --send-image to send this normalized snapshot."))
+                    return 0
+                images = (image,)
+            if use_documents:
+                store = DocumentStore()
+                try:
+                    document_context = store.context(message, max_chars=MAX_DOCUMENT_CONTEXT_CHARS)
+                finally:
+                    store.close()
+                if not document_context:
+                    print(_("No matching passages in the selected documents."))
+                    return 1
+                if self.ai_client.provider_ready(args.provider) and not getattr(args, 'send_document_context', False):
+                    print(display_document_context(document_context))
+                    print(_("Review these excerpts, then repeat with --send-document-context to send them to the model."))
+                    return 0
+        except (OSError, ValueError, AIProviderError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
+
+        self._prepare_conversation(args)
 
         if args.expert:
             self.expert_mode = True
 
-        action_code = self._run_conversational_action(message, args)
-        if action_code is not None:
-            return action_code
+        if not images and not use_documents:
+            action_code = self._run_conversational_action(message, args)
+            if action_code is not None:
+                return action_code
 
         full_history = self._build_request_messages(message)
+        if document_context:
+            full_history = with_document_context(full_history, document_context)
+        request_options = {'provider': args.provider, 'model': args.model}
+        if images:
+            request_options['images'] = images
 
         # Get the response (or answer offline when the provider is unusable)
         answered_offline = False
         action_result = _ActionResult()
         if not self.ai_client.provider_ready(args.provider):
-            response_text = self._run_offline(message)
-            action_result = response_text
+            if images:
+                print(_("The image request cannot be answered offline."), file=sys.stderr)
+                return 1
+            if document_context:
+                response_text = _("Local document matches (no model request):") + '\n\n' + display_document_context(document_context)
+                print(response_text)
+            else:
+                response_text = self._run_offline(message)
+                action_result = response_text
             answered_offline = True
         elif args.stream:
             print("\n[AI] ", end="", flush=True)
             response_text = ""
             try:
-                for chunk in self.ai_client.stream_chat(
-                    full_history,
-                    provider=args.provider,
-                    model=args.model
-                ):
+                for chunk in self.ai_client.stream_chat(full_history, **request_options):
                     print(chunk, end="", flush=True)
                     response_text += chunk
                 print("\n")
+            except (AIImageRequestError, AIRequestCancelled, AIResponseLimitError) as error:
+                print(str(error), file=sys.stderr)
+                return 1
             except AIProviderError as e:
                 # Falha estruturada (rede/HTTP/config): não é conteúdo do
                 # modelo — não persistir como resposta, cair para offline.
                 print(f"\n[!] {e}\n")
-                response_text = self._run_offline(message)
-                action_result = response_text
+                if images:
+                    return 1
+                if document_context:
+                    response_text = _("The model is unavailable. Local document matches:") + '\n\n' + display_document_context(document_context)
+                    print(response_text)
+                else:
+                    response_text = self._run_offline(message)
+                    action_result = response_text
                 answered_offline = True
         else:
-            response_text = self.ai_client.chat(
-                full_history,
-                provider=args.provider,
-                model=args.model
-            )
+            try:
+                response_text = self.ai_client.chat(full_history, **request_options)
+            except (AIImageRequestError, AIRequestCancelled, AIResponseLimitError) as error:
+                print(str(error), file=sys.stderr)
+                return 1
             if response_text:
                 print(f"\n[AI]\n{response_text}\n")
             else:
-                response_text = self._run_offline(message)
-                action_result = response_text
+                if images:
+                    print(_("The model returned no answer for the image."), file=sys.stderr)
+                    return 1
+                if document_context:
+                    response_text = _("The model is unavailable. Local document matches:") + '\n\n' + display_document_context(document_context)
+                    print(response_text)
+                else:
+                    response_text = self._run_offline(message)
+                    action_result = response_text
                 answered_offline = True
 
-        if response_text and not answered_offline:
+        if response_text and not answered_offline and not images and not use_documents:
             extra = self._offer_model_action(message)
             action_result = extra
             if extra:
@@ -894,7 +1026,14 @@ Examples:
 
         # Save to history
         if not args.no_history:
-            self._record_exchange(message, response_text)
+            history_message = message
+            if images:
+                history_message += '\n\n' + _("[Image attached for this request; pixels are not stored.]")
+            history_response = response_text
+            if document_context and answered_offline:
+                history_response = _("Local document matches were shown. Excerpts remain only in the local document index.")
+                print(_("These local excerpts are not saved in conversation history."))
+            self._record_exchange(history_message, history_response)
             self._save_history()
         return getattr(action_result, "exit_code", 0)
 
