@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Linux AI Assistant</vendor>
+  <vendor_url>https://github.com/1400015/linux_ai</vendor_url>
+  <action id="org.linux_ai_assistant.files">
+    <description>Inspect, write or restore a reviewed configuration file</description>
+    <message>Linux AI Assistant needs authentication for the reviewed file operation.</message>
+    <icon_name>document-edit</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/linux-ai-assistant/files</annotate>
+  </action>
+  <action id="org.linux_ai_assistant.services">
+    <description>Enable or disable an existing runit service</description>
+    <message>Linux AI Assistant needs authentication to change activation of the reviewed runit service.</message>
+    <icon_name>preferences-system</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/linux-ai-assistant/services</annotate>
+  </action>
+</policyconfig>

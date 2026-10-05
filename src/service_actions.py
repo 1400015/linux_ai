@@ -12,7 +12,6 @@ from pathlib import Path
 import re
 import shutil
 import stat
-import sys
 import time
 
 from .action_audit import record_command
@@ -170,12 +169,15 @@ class ServiceService:
         if fresh.manager == 'runit' and verb in {'enable', 'disable'}:
             if self.service_dir != Path('/var/service'):
                 raise ValueError('Runit activation only supports the system runtime directory')
+            from .privileged_helpers import service_helper_command
+            helper_command = service_helper_command()
             if verb == 'disable' and fresh.active == 'active':
-                stopped, _ = self._call([pkexec, tool, '-w', '10', 'stop', str(self.service_dir / fresh.name)], timeout=30)
+                # The helper installation has already validated this fixed
+                # elevation binary; do not switch back to a PATH lookup here.
+                stopped, _ = self._call([helper_command[0], tool, '-w', '10', 'stop', str(self.service_dir / fresh.name)], timeout=30)
                 if not stopped or self.status(fresh.name).active != 'inactive':
                     return ActionResult('failed', 'The service did not stop; its runtime link was preserved.')
-            helper = str(Path(__file__).with_name('privileged_service.py'))
-            argv = [pkexec, os.path.realpath(sys.executable), '-I', helper, verb, fresh.name, fresh.identity]
+            argv = helper_command + [verb, fresh.name, fresh.identity]
         else:
             argv = [pkexec, tool, '--system', verb, '--', fresh.name] if fresh.manager == 'systemd' else [pkexec, tool, '-w', '10', verb, str(self.service_dir / fresh.name)]
         ok, _ = self._call(argv, timeout=90)

@@ -1077,6 +1077,11 @@ TRANSLATIONS["pt"].update({
     "Review the preview before export. Automatic redaction is partial.": "Revê o resultado antes de exportar. A ocultação automática é parcial.",
     "Report exported: {path}": "Relatório exportado: {path}",
     "Show changes from all conversations": "Mostrar alterações de todas as conversas",
+    "Include archived file changes": "Incluir alterações de ficheiros arquivadas",
+    "Archive": "Arquivo",
+    "uncertain": "incerta",
+    "recovery_pending": "recuperação pendente",
+    "recovery_uncertain": "recuperação incerta",
     "Review recovery": "Rever recuperação",
     "Only approved file writes are recorded. Command effects are not automatically reversible.": "Só são registadas escritas de ficheiros aprovadas. Os efeitos de comandos não são automaticamente reversíveis.",
     "No file changes recorded.": "Sem alterações a ficheiros registadas.",
@@ -1197,4 +1202,33 @@ TRANSLATIONS["pt"].update({
     "Trial exported locally: {path}": "Ensaio exportado localmente: {path}",
     "Open": "Abrir",
     "Save": "Guardar",
+})
+
+TRANSLATIONS["pt"].update({
+    "Message exceeds the local history limit. Shorten it before sending.":
+        "A mensagem excede o limite do histórico local. Encurta-a antes de enviar.",
+    "Could not save the message: {error}": "Não foi possível guardar a mensagem: {error}",
+    "Could not save the response: {error}": "Não foi possível guardar a resposta: {error}",
+    "Could not save the operation result: {error}":
+        "Não foi possível guardar o resultado da operação: {error}",
+    "AI response exceeds the local history limit. The incomplete response was not saved; ask for a shorter response.":
+        "A resposta da IA excede o limite do histórico local. A resposta incompleta não foi guardada; pede uma resposta mais curta.",
+    "Running confirmed commands…": "A executar os comandos confirmados…",
+    "Running confirmed commands. Cancellation stops later commands; an operation already started may still finish.":
+        "A executar os comandos confirmados. Cancelar impede os comandos seguintes; uma operação já iniciada pode ainda terminar.",
+    "Cancellation requested. An operation already started may still finish; its result will be shown here.":
+        "Cancelamento pedido. Uma operação já iniciada pode ainda terminar; o resultado será apresentado aqui.",
+    "Operation completed after cancellation. Check its result below; cancellation did not undo it.":
+        "A operação terminou depois do cancelamento. Verifica o resultado abaixo; o cancelamento não a desfez.",
+    "The operation result could not be determined. Check the target before trying again.":
+        "Não foi possível determinar o resultado da operação. Verifica o alvo antes de tentar novamente.",
+    "Remote model": "Modelo remoto",
+    "List models": "Listar modelos",
+    "Listing models…": "A listar os modelos…",
+    "Connection not tested": "Ligação não testada",
+    "Model listing failed. Check the key, mode and endpoint.":
+        "A consulta de modelos falhou. Verifica a chave, o modo e o endereço do fornecedor.",
+    "Models listed. Select a model and save to apply it.":
+        "Modelos consultados. Seleciona um modelo e guarda para o aplicar.",
+    "Enter a valid model identifier.": "Introduz um identificador de modelo válido.",
 })

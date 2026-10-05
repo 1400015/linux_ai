@@ -91,7 +91,11 @@ def analyze(text, distro=None, lang="en", probe_key=""):
         raise ValueError("Diagnostic input exceeds 64 KiB")
     findings = []
     for identifier, pattern, guide_id, pt, en in RULES:
-        guide = PROCEDURE_BY_ID[guide_id]
+        guide = PROCEDURE_BY_ID.get(guide_id)
+        if guide is None:
+            # Corrupt bundled YAML disables dependent diagnostics; no missing
+            # procedure is inferred or replaced by an executable instruction.
+            continue
         if distro is not None and not guide.applies_to(distro):
             continue
         match = re.search(pattern, text, re.I)
@@ -135,7 +139,7 @@ def analyze(text, distro=None, lang="en", probe_key=""):
                          "interpretation": ("Sem rota default nesta tabela; verifica também a outra família IP e rotas específicas." if lang == "pt" else
                                             "No default in this table; also check the other IP family and specific routes."),
                          "guide": "network-route"})
-    return findings
+    return [finding for finding in findings if finding['guide'] in PROCEDURE_BY_ID]
 
 
 def render_findings(findings, lang="en"):

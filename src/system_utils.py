@@ -7,7 +7,7 @@ import shlex
 import subprocess
 import platform
 import time
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Union
 from pathlib import Path
 import logging
 
@@ -152,9 +152,9 @@ class SystemUtils:
         """Validate filename operands and all supported dangerous flag forms."""
         return validate_arguments(cmd_parts, self._validate_path)
 
-    def get_system_info(self) -> Dict[str, str]:
+    def get_system_info(self) -> Dict[str, Union[str, bool]]:
         """Get system information"""
-        info = {}
+        info: Dict[str, Union[str, bool]] = {}
 
         try:
             # Basic information

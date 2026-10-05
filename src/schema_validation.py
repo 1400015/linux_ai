@@ -30,11 +30,11 @@ def validate_schema(value, name):
     except (TypeError, ValueError, OverflowError, RecursionError) as error:
         raise SchemaError('Invalid JSON-compatible contract data') from error
     try:
-        error = next(validator(name).iter_errors(clean), None)
+        validation_error = next(validator(name).iter_errors(clean), None)
     except RecursionError as error:
         raise SchemaError('Contract nesting exceeds the limit') from error
-    if error is not None:
-        location = '.'.join(str(part) for part in error.path) or 'root'
+    if validation_error is not None:
+        location = '.'.join(str(part) for part in validation_error.path) or 'root'
         # Do not interpolate offending values: they may contain a secret.
         raise SchemaError('Invalid {} at {}'.format(name, location))
     return clean

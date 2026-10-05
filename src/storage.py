@@ -5,7 +5,71 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import tempfile
+
+
+class JsonLimitError(ValueError):
+    """A bounded JSON operation was refused without replacing its input."""
+
+
+class _NestingGuard:
+    """Bound structural nesting independently of the interpreter's recursion limit."""
+
+    def __init__(self):
+        self.depth = 0
+        self.in_string = False
+        self.escaped = False
+
+    def feed(self, raw):
+        for character in raw:
+            if self.in_string:
+                if self.escaped:
+                    self.escaped = False
+                elif character == 92:  # Backslash, including escaped quotes.
+                    self.escaped = True
+                elif character == 34:
+                    self.in_string = False
+            elif character == 34:
+                self.in_string = True
+            elif character in (91, 123):
+                self.depth += 1
+                if self.depth > 128:
+                    raise JsonLimitError('JSON nesting limit exceeded; original file preserved')
+            elif character in (93, 125):
+                self.depth -= 1
+
+
+def read_json(path, max_bytes=None):
+    if max_bytes is None:
+        with Path(path).open(encoding='utf-8') as stream:
+            return json.load(stream)
+    descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('Bounded JSON input must be a regular file')
+        raw = stream.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise JsonLimitError('JSON exceeds the {} byte limit; original file preserved'.format(max_bytes))
+    _NestingGuard().feed(raw)
+    try:
+        return json.loads(raw.decode('utf-8'))
+    except RecursionError:
+        raise JsonLimitError('JSON nesting limit exceeded; original file preserved') from None
+
+
+class _LimitedWriter:
+    def __init__(self, stream, limit):
+        self.stream, self.limit, self.written = stream, limit, 0
+        self.nesting = _NestingGuard()
+
+    def write(self, value):
+        encoded = value.encode('utf-8')
+        self.written += len(encoded)
+        if self.written > self.limit:
+            raise JsonLimitError('JSON exceeds the {} byte limit; original file preserved'.format(self.limit))
+        self.nesting.feed(encoded)
+        return self.stream.write(value)
 
 
 class JsonWriteCommittedError(OSError):
@@ -35,7 +99,7 @@ def json_lock(path):
         os.close(fd)
 
 
-def atomic_json_write(path, value):
+def atomic_json_write(path, value, max_bytes=None):
     path = Path(path)
     published = False
     try:
@@ -44,7 +108,8 @@ def atomic_json_write(path, value):
         write_error = None
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                json.dump(value, stream, indent=2, ensure_ascii=False)
+                target = _LimitedWriter(stream, max_bytes) if max_bytes is not None else stream
+                json.dump(value, target, indent=2, ensure_ascii=False)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
@@ -75,7 +140,7 @@ def atomic_json_write(path, value):
         raise
 
 
-def update_json(path, update, default):
+def update_json(path, update, default, max_bytes=None):
     """Read/modify/replace under one inter-process lock; preserve corrupt input."""
     path = Path(path)
     published = False
@@ -83,18 +148,40 @@ def update_json(path, update, default):
     try:
         with json_lock(path):
             try:
-                with path.open(encoding='utf-8') as stream:
-                    previous = json.load(stream)
+                previous = read_json(path, max_bytes)
             except FileNotFoundError:
                 previous = default
             except (json.JSONDecodeError, UnicodeError):
                 fd, backup = tempfile.mkstemp(prefix=path.name + '.corrupt-', dir=str(path.parent))
-                with os.fdopen(fd, 'wb') as target, path.open('rb') as source:
-                    shutil.copyfileobj(source, target)
+                try:
+                    with os.fdopen(fd, 'wb') as target, path.open('rb') as source:
+                        if max_bytes is None:
+                            shutil.copyfileobj(source, target)
+                        else:
+                            original = source.read(max_bytes + 1)
+                            if len(original) > max_bytes:
+                                raise JsonLimitError('JSON grew beyond its byte limit; original file preserved')
+                            target.write(original)
+                        target.flush()
+                        os.fsync(target.fileno())
+                    directory_fd = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                except BaseException:
+                    try:
+                        os.unlink(backup)
+                    except OSError:
+                        pass
+                    raise
                 previous = default
             result = update(previous)
             try:
-                atomic_json_write(path, result)
+                if max_bytes is None:
+                    atomic_json_write(path, result)
+                else:
+                    atomic_json_write(path, result, max_bytes=max_bytes)
             except JsonWriteCommittedError as error:
                 # Record publication before the lock's finally block: a close
                 # failure there can replace this exception during unwinding.

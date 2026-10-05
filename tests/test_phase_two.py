@@ -633,6 +633,27 @@ class TestPhaseTwoGTK(unittest.TestCase):
         self.assertEqual(next(iter(dialog.records.values()))['status'], 'restored')
         self.assertFalse(dialog.restore_button.get_sensitive())
 
+    def test_archived_change_can_be_reviewed_and_restored_from_dialog(self):
+        source, target = self.root / 'input', self.root / 'target'
+        source.write_text('new')
+        target.write_text('old')
+        with patch('src.file_actions.is_privileged_path', return_value=False):
+            record = self.window.change_journal.apply(
+                str(source), str(target), file_digest(target), [str(self.root)], 'original')
+            archive = self.window.change_journal.archive()
+            dialog = self.ChangeDialog(self.window)
+            self.addCleanup(dialog.destroy)
+            self.assertFalse(dialog.records)
+            dialog.archived.set_active(True)
+            self.assertEqual(dialog.records[record['id']]['archive_id'], archive['archive_id'])
+            confirmation = Mock()
+            confirmation.run.return_value = self.Gtk.ResponseType.OK
+            with patch.object(self.Gtk, 'Dialog', return_value=confirmation):
+                dialog._restore(None)
+        self.assertEqual(target.read_text(), 'old')
+        self.assertEqual(dialog.records[record['id']]['status'], 'restored')
+        self.assertFalse(dialog.restore_button.get_sensitive())
+
 
 class RedactionMultiWordSecretsTest(unittest.TestCase):
     """Regression: a multi-word flag value must be redacted entirely."""

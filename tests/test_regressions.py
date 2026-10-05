@@ -680,7 +680,8 @@ class TestGoogleStreaming(unittest.TestCase):
 class TestFileBlockSandbox(unittest.TestCase):
     def test_allowed_path_helpers(self):
         from src import file_actions
-        self.assertTrue(file_actions.is_allowed_path("/etc/passwd", ["/etc"]))
+        self.assertTrue(file_actions.is_allowed_path("/etc/hostname", ["/etc"]))
+        self.assertFalse(file_actions.is_allowed_path("/etc/passwd", ["/etc"]))
         self.assertFalse(file_actions.is_allowed_path("/root/.bashrc", ["/etc"]))
         self.assertFalse(file_actions.is_allowed_path("/etcfoo/x", ["/etc"]))
 
@@ -1143,13 +1144,15 @@ class TestPkexecTimeouts(unittest.TestCase):
 
     def test_privileged_helpers_have_timeout(self):
         import src.file_actions as fa
-        with patch.object(fa, "run_bounded", return_value=(0, "{}", "")) as run:
+        with patch.object(fa, "run_bounded", return_value=(0, '{"published":true}', "")) as run, \
+                patch.object(fa, "file_helper_command", return_value=[
+                    "/usr/bin/pkexec", "/usr/libexec/linux-ai-assistant/files"]):
             fa._write_privileged("/tmp/src", "/tmp/dst", parent_identity=(1, 2))
             fa._remove_privileged("/tmp/dst", "digest" * 8, (1, 2))
             fa._inspect_privileged("/tmp/dst", "digest" * 8, (1, 2))
         self.assertEqual(run.call_count, 3)
         for call in run.call_args_list:
-            self.assertEqual(call.args[0][0], "pkexec")
+            self.assertEqual(call.args[0][0], "/usr/bin/pkexec")
             self.assertEqual(call.args[1], fa.PRIVILEGED_TIMEOUT)
 
 

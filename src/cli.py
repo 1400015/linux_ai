@@ -85,7 +85,8 @@ class CLIApp:
         self.actions = ConversationActions(self._store(), self.offline.distro.pkg_manager, context=self.system_context,
                                            independent_display_watchdog=self.config.get('app.display_independent_watchdog', False))
 
-    def parse_args(self):
+    @staticmethod
+    def parse_args(argv=None):
         """Parse the command-line arguments."""
         parser = argparse.ArgumentParser(
             description='Linux AI Assistant - Interface de Linha de Comandos',
@@ -228,7 +229,10 @@ Exemplos:
         diagnose.add_argument('--output', type=Path, help='New private export file; existing files are never replaced')
         changes = subparsers.add_parser('changes', help='Review approved file writes and recover their contents')
         change_actions = changes.add_subparsers(dest='change_action', required=True)
-        change_actions.add_parser('list')
+        change_list = change_actions.add_parser('list')
+        change_list.add_argument('--archived', action='store_true', help='Also list archived changes')
+        change_archive = change_actions.add_parser('archive', help='Preserve completed changes and free journal capacity')
+        change_archive.add_argument('--yes', action='store_true', help='Approve moving completed records to a private archive')
         for action in ('show', 'restore'):
             change_parser = change_actions.add_parser(action)
             change_parser.add_argument('id')
@@ -258,6 +262,10 @@ Exemplos:
 
         # Command: history
         history_parser = subparsers.add_parser('history', help='View conversation history')
+        history_parser.add_argument('history_action', nargs='?', choices=('recover',),
+                                    help='Back up the complete history file privately and start fresh')
+        history_parser.add_argument('--yes', action='store_true',
+                                    help='Approve history recover after reading the error and preserving the original')
         history_parser.add_argument('--limit', '-n', type=int, default=20,
                                      help='Number of messages to show')
         history_parser.add_argument('--clear', action='store_true',
@@ -293,25 +301,25 @@ Exemplos:
         tokens_subparsers.add_parser('usage', help='Show token usage')
         tokens_subparsers.add_parser('reset', help='Reset the token count')
 
-        return parser.parse_args()
+        return parser.parse_args(argv)
 
-    def run(self):
+    def run(self, args=None):
         try:
-            return self._run_command()
+            return self._run_command(args) if args is not None else self._run_command()
         finally:
             if self.history_store is not None:
                 self.history_store.close()
             self.config.flush()
             self.ai_client.flush_usage()
 
-    def _run_command(self):
+    def _run_command(self, args=None):
         """Run the CLI application.
 
         Devolve o exit code do comando (0 = sucesso): scripts que encadeiam
         o CLI (`capture --ocr && ...`) precisam de detetar falhas — antes,
         TODAS as falhas esperadas saíam com 0.
         """
-        args = self.parse_args()
+        args = self.parse_args() if args is None else args
 
         if not args.command:
             self.print_help()
@@ -537,10 +545,16 @@ Examples:
         def allowed():
             return self.config.get('permissions.allowed_edit_dirs', [])
         if args.change_action == 'list':
-            print(json.dumps(journal.list_changes(), ensure_ascii=False, indent=2))
+            print(json.dumps(journal.list_changes(include_archived=getattr(args, 'archived', False)), ensure_ascii=False, indent=2))
+            return 0
+        if args.change_action == 'archive':
+            if not args.yes:
+                print('--yes is required to preserve completed changes in a private archive.', file=sys.stderr)
+                return 1
+            print(json.dumps(journal.archive(), ensure_ascii=False, indent=2))
             return 0
         if args.change_action == 'show':
-            record = next((item for item in journal.list_changes() if item['id'] == args.id), None)
+            record = next((item for item in journal.list_changes(include_archived=True) if item['id'] == args.id), None)
             if record is None:
                 raise KeyError('Unknown change')
             print(json.dumps(record, ensure_ascii=False, indent=2))
@@ -1014,6 +1028,14 @@ Examples:
 
     def handle_history(self, args):
         """View or clear only the current conversation."""
+        if getattr(args, 'history_action', None) == 'recover':
+            if not args.yes:
+                print('history recover --yes is required. The complete original file will be preserved privately.', file=sys.stderr)
+                return 1
+            print(str(self._store().recover(confirmed=True)))
+            self.conversation_history = self._store().load_entries()
+            self.offline.reset_conversation()
+            return 0
         store = self._store()
         if args.clear:
             store.clear_session()
@@ -1173,14 +1195,27 @@ def main():
     setup_file_logging()
     app = None
     try:
+        args = CLIApp.parse_args()
+        # Recovery must remain available when normal initialization cannot read
+        # a large, damaged or newer-format history. Do not load configuration,
+        # instantiate a provider or interpret the unknown document first.
+        if args.command == 'history' and args.history_action == 'recover':
+            if not args.yes:
+                print('history recover --yes is required. The complete original file will be preserved privately.', file=sys.stderr)
+                sys.exit(1)
+            backup = HistoryStore.recover_file(CLIApp._history_file(), confirmed=True)
+            print(str(backup))
+            sys.exit(0)
         app = CLIApp()
-        code = app.run()
+        code = app.run(args)
         sys.exit(code if isinstance(code, int) else 0)
     except KeyboardInterrupt:
         print("\n\n✓ Exiting...")
         sys.exit(0)
     except Exception as e:
         print(f"\n✗ Error: {e}")
+        if getattr(e, 'recovery_backup', None) is not None:
+            print('Original history preserved at: {}'.format(e.recovery_backup))
         sys.exit(1)
     finally:
         if app is not None and getattr(app, 'actions', None) is not None:

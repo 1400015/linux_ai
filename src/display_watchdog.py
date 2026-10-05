@@ -190,6 +190,12 @@ def _worker(command_fd, reply_fd, directory_fd):
         try:
             if operation:
                 _receipt(directory_fd, operation, status)
+        except (OSError, ValueError):
+            pass
+        # Receipt persistence and the live control channel are independent.
+        # A storage failure does not change a verified display outcome; when
+        # this channel also fails, the parent retains its uncertainty.
+        try:
             _send(reply_fd, {"event": "finished", "token": operation, "status": status})
         except (OSError, ValueError):
             pass
