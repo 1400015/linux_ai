@@ -9,6 +9,44 @@ from .conversation_io import read_conversation, write_conversation
 from .i18n import _
 
 
+def confirm_import(parent, preview):
+    """Render untrusted conversation text as plain text before approval."""
+    dialog = Gtk.Dialog(title=_("Preview conversation import"), transient_for=parent, modal=True)
+    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                       _("Import conversation"), Gtk.ResponseType.OK)
+    dialog.set_default_size(680, 500)
+    box = dialog.get_content_area()
+    box.set_spacing(8)
+    box.set_border_width(10)
+    metadata = Gtk.Label(xalign=0, wrap=True)
+    metadata.set_text(_("Conversation: {title}\nMessages: {count}\nFormat: {format}").format(
+        title=preview["display_title"], count=preview["message_count"], format=preview["format"]))
+    box.pack_start(metadata, False, False, 0)
+    explanation = Gtk.Label(xalign=0, wrap=True)
+    explanation.set_text(_("Only conversation text is imported into a new conversation. "
+                           "Actions, tasks and diagnostic progress are not restored."))
+    box.pack_start(explanation, False, False, 0)
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    view = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD)
+    view.get_buffer().set_text(preview["preview_text"])
+    scroll.add(view)
+    box.pack_start(scroll, True, True, 0)
+    try:
+        dialog.show_all()
+        return dialog.run() == Gtk.ResponseType.OK
+    finally:
+        dialog.destroy()
+
+
+def import_with_preview(parent, store, text):
+    """Validation and explicit approval precede the first persistence operation."""
+    preview = store.preview_import(text)
+    if not confirm_import(parent, preview):
+        return None
+    return store.import_session(text, select=False)
+
+
 def show_conversations(window):
     store = window.history_store
     dialog = Gtk.Dialog(title=_("Conversations"), transient_for=window,
@@ -112,22 +150,31 @@ def show_conversations(window):
             chooser.destroy()
 
     def imported():
-        chooser = Gtk.FileChooserDialog(title=_("Import JSON conversation"), transient_for=dialog,
+        chooser = Gtk.FileChooserDialog(title=_("Import conversation"), transient_for=dialog,
                                         action=Gtk.FileChooserAction.OPEN,
                                         buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                                                  Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
+        file_filter = Gtk.FileFilter()
+        file_filter.set_name(_("Conversation exports (*.md, *.json)"))
+        file_filter.add_pattern("*.md")
+        file_filter.add_pattern("*.json")
+        chooser.add_filter(file_filter)
+        text = None
         try:
             if chooser.run() == Gtk.ResponseType.OK:
-                session = store.import_session(read_conversation(chooser.get_filename()), select=False)
-                refresh(session['id'])
+                text = read_conversation(chooser.get_filename())
         finally:
             chooser.destroy()
+        if text is not None:
+            session = import_with_preview(dialog, store, text)
+            if session is not None:
+                refresh(session['id'])
 
     actions = [
         (_("New conversation"), create), (_("Resume"), activate), (_("Rename"), rename),
         (_("Archive / restore"), archive), (_("Delete"), delete),
         (_("Export Markdown"), lambda: export('markdown')),
-        (_("Export JSON"), lambda: export('json')), (_("Import JSON"), imported),
+        (_("Export JSON"), lambda: export('json')), (_("Import conversation"), imported),
     ]
     for index, (label, callback) in enumerate(actions):
         button = Gtk.Button(label=label)

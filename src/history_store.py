@@ -6,7 +6,6 @@ session operations use the same locked, atomic JSON transaction.
 """
 
 import atexit
-from datetime import datetime, timezone
 import json
 import logging
 import math
@@ -22,6 +21,7 @@ import uuid
 
 from .storage import JsonLimitError, atomic_json_write, json_lock, read_json, update_json
 from .task_state import validate_task_state
+from .conversation_markdown import PREFIX as MARKDOWN_PREFIX, export_markdown, import_markdown
 
 MAX_HISTORY_MESSAGES = 1000
 MAX_SESSIONS = 100
@@ -45,6 +45,16 @@ def _timestamp(value, default=None):
         if 0 <= value < 253402300800 and math.isfinite(value):
             return value
     return time.time() if default is None else default
+
+
+def _preview_display(value):
+    """Make control characters visible in GTK and terminal import previews."""
+    return "".join("\\u{:04x}".format(ord(character))
+                   if (ord(character) < 32 and character not in "\n\t")
+                   or 0x7f <= ord(character) <= 0x9f
+                   or ord(character) in (0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+                                          0x2066, 0x2067, 0x2068, 0x2069)
+                   else character for character in value)
 
 
 def _file_identity(info):
@@ -71,7 +81,7 @@ def _entries(items, session_id=None):
         if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
             continue
         content = item.get("content")
-        if not isinstance(content, str) or not content or len(content) > MAX_MESSAGE_CHARS:
+        if not isinstance(content, str) or len(content) > MAX_MESSAGE_CHARS:
             continue
         if session_id is not None and item.get("session_id", LEGACY_SESSION_ID) != session_id:
             continue
@@ -492,25 +502,32 @@ class HistoryStore:
                               indent=2, ensure_ascii=False)
         if format != "markdown":
             raise ValueError("Export format must be markdown or json")
-        lines = ["# " + session["title"].replace("\n", " "), ""]
-        for entry in session["messages"]:
-            lines.extend(["## " + ("User" if entry["role"] == "user" else "Assistant"), ""])
-            if entry.get("timestamp"):
-                lines.extend([datetime.fromtimestamp(entry["timestamp"], timezone.utc).isoformat(), ""])
-            lines.extend([entry["content"], ""])
-        return "\n".join(lines)
+        return export_markdown(session["title"], session["messages"])
 
-    def import_session(self, text, select=True):
+    def preview_import(self, text):
+        """Validate text and return a plain preview without touching history.
+
+        Only roles, text and optional timestamps are eligible for import. A new
+        identity is created after approval; exported diagnostic/task state and
+        archive status never become authority in the destination conversation.
+        """
         if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_IMPORT_BYTES:
             raise ValueError("Conversation import exceeds the 2 MiB limit")
-        try:
-            payload = json.loads(text)
-        except (ValueError, RecursionError) as error:
-            raise ValueError("Invalid conversation JSON") from error
-        if (not isinstance(payload, dict) or payload.get("format") != EXPORT_FORMAT
-                or type(payload.get("version")) is not int or payload["version"] != 1):
-            raise ValueError("Unsupported conversation export format")
-        source = payload.get("session")
+        if text.startswith(MARKDOWN_PREFIX):
+            source = import_markdown(text, self.max_messages, MAX_MESSAGE_CHARS)
+            format_name = "markdown"
+        else:
+            if text.lstrip().startswith(("#", "<!--")):
+                raise ValueError("Unsupported Markdown export; import versioned Markdown exported by Linux AI")
+            try:
+                payload = json.loads(text)
+            except (ValueError, RecursionError) as error:
+                raise ValueError("Invalid conversation JSON or versioned Markdown") from error
+            if (not isinstance(payload, dict) or payload.get("format") != EXPORT_FORMAT
+                    or type(payload.get("version")) is not int or payload["version"] != 1):
+                raise ValueError("Unsupported conversation export format")
+            source = payload.get("session")
+            format_name = "json"
         if not isinstance(source, dict) or not isinstance(source.get("messages"), list):
             raise ValueError("Invalid conversation export")
         title = _title(source.get("title"))
@@ -523,6 +540,23 @@ class HistoryStore:
         for entry in messages:
             if "timestamp" in entry and _timestamp(entry["timestamp"], -1) == -1:
                 raise ValueError("Conversation import contains an invalid timestamp")
+        try:
+            title.encode("utf-8")
+            for entry in clean:
+                entry["content"].encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError("Conversation import contains invalid Unicode text") from error
+        display_title = _preview_display(title)
+        preview = [display_title, "{} messages".format(len(clean)), ""]
+        for entry in clean:
+            role = "User" if entry["role"] == "user" else "Assistant"
+            preview.extend([role + ":", _preview_display(entry["content"]), ""])
+        return {"format": format_name, "version": 1, "title": title, "message_count": len(clean),
+                "display_title": display_title, "messages": clean, "preview_text": "\n".join(preview)}
+
+    def import_session(self, text, select=True):
+        preview = self.preview_import(text)
+        title, clean = preview["title"], preview["messages"]
 
         def import_current(document):
             if len(document["sessions"]) >= MAX_SESSIONS:

@@ -2,7 +2,7 @@
 Type=Application
 Name=Linux AI Assistant
 Comment=Floating Linux AI assistant
-Exec=linux-ai-assistant
+Exec=linux-ai-assistant --show
 Icon=system-run
 Terminal=false
 Categories=Utility;System;

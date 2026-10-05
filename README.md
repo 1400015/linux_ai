@@ -16,7 +16,10 @@ A permanent AI assistant for Linux with a floating interface, integration with s
 - ✅ **Expert Mode** - Assistant specialized in Linux systems
 - ✅ **File editing** - Edit configuration files with authorization
 - ✅ **Command execution** - Run system commands with controlled permissions
-- ✅ **Conversation sessions** - Independent context, resume, archive, search and Markdown/JSON export
+- ✅ **Conversation sessions** - Independent context, resume, archive, search, Markdown/JSON export and reviewed import
+- ✅ **Image questions** - Review an image before sending it with one question to a supported OpenRouter model
+- ✅ **Global shortcut** - Optional desktop shortcut to show or focus the assistant
+- ✅ **Local document search** - Search explicitly selected text files and use reviewed excerpts in a model request
 - ✅ **Code highlighting** - Fenced blocks and inline `code` are highlighted in the chat
 - ✅ **System tray icon** - Quick access through the taskbar icon
 - ✅ **Automatic startup** - Configurable to start with the system
@@ -36,7 +39,7 @@ In Settings → Assistance, select the mode:
 - **Remote AI provider:** use the remote provider selected in the API tab.
 - **Automatic:** preserve the selected provider and use local guides when it is unavailable.
 
-Provider failure falls back to bundled guides, never to another AI provider. Explicit local mode rejects non-loopback URLs, redirects, environment proxies and known cloud models; Ollama's advertised remote aliases are checked before inference. An arbitrary local server remains trusted software: the client cannot audit whether a custom OpenAI-compatible server forwards requests elsewhere. Model downloads are not part of connection testing. Installing or updating Linux packages can still require Internet access.
+Text-only provider failure falls back to bundled guides, never to another AI provider. Image requests report failures explicitly. Explicit local mode rejects non-loopback URLs, redirects, environment proxies and known cloud models; Ollama's advertised remote aliases are checked before inference. An arbitrary local server remains trusted software: the client cannot audit whether a custom OpenAI-compatible server forwards requests elsewhere. Model downloads are not part of connection testing. Installing or updating Linux packages can still require Internet access.
 
 The bundled procedures cover network links, IP addresses, routes, DNS, Wi-Fi, disk space/inodes, memory, permissions, mounts, services and APT/XBPS errors. Search only retrieves documentation. Starting a guide may run a separately allowlisted local read probe; source examples never authorize execution. Service/log access remains manual where the existing policy does not allow it. Sources have review dates and applicability metadata; documentation review is not a claim of on-device validation for every distribution version. Portuguese and English guide content is included; other guide languages currently fall back to English.
 
@@ -49,7 +52,7 @@ e depois?
 cancelar
 ```
 
-The conversation selector and New conversation button isolate context. The History menu opens conversation management, including rename, archive/restore, search, export and JSON import. Existing flat history is retained in one legacy conversation. Diagnostic progress is scoped to a session, including CLI restarts; imported conversations never restore an active diagnostic. Exports do not replace existing files, and imports accept only a bounded, versioned user/assistant message format.
+The conversation selector and New conversation button isolate context. The History menu opens conversation management, including rename, archive/restore, search, export and reviewed JSON/Markdown import. Existing flat history is retained in one legacy conversation. Diagnostic progress is scoped to a session, including CLI restarts; imported conversations never restore an active diagnostic. Exports do not replace existing files, and imports accept only a bounded, versioned user/assistant message format. Markdown import reads the application's framed export format, rather than guessing message roles from an arbitrary Markdown document.
 
 CLI examples:
 
@@ -63,7 +66,9 @@ python -m src.cli sessions list
 python -m src.cli chat --session SESSION_ID 'continue this conversation'
 python -m src.cli sessions export --format markdown --output conversation.md
 python -m src.cli sessions export --format json --output conversation.json
-python -m src.cli sessions import conversation.json
+python -m src.cli sessions import conversation.json --preview
+python -m src.cli sessions import conversation.md --preview
+python -m src.cli sessions import conversation.md --yes
 dmesg | python -m src.cli chat --stdin 'Explain this error'
 python -m src.cli chat --input error.log 'Explain this error'
 python -m src.cli mode local --check
@@ -73,6 +78,8 @@ python -m src.cli local-models
 Text-file/stdin input is limited to 64 KiB. `--no-history` avoids saving the new exchange; `history --clear` clears only the selected conversation. Relevant bundled guides and detected distribution facts also inform model responses, with the response language following the application language.
 
 Model responses have a local limit of 131072 characters. Cancel interrupts supported response reads and retry waits; it does not guarantee the provider stops computing or undo a local operation already started. A completed local operation is retained in its original conversation even when cancellation arrives during execution.
+
+Images and document excerpts require a separate, explicit choice for each request. Local document search needs neither a model nor Internet access; using its excerpts with a remote model sends those excerpts to that provider. See the [conversation, image and document guide](docs/conversas-imagens-documentos.md) for import review, attachment limits, source citations and the optional desktop shortcut.
 
 Explicit Wi-Fi, printer and scanner setup requests can open a device chooser or offer missing support packages, both offline and after a model answer. Hypothetical questions and refusals do not start setup. Printer confirmation shows the command for the edited queue name; changing Wi-Fi networks clears the password. Scanner support installs the package providing `scanimage` explicitly, alongside the AirScan backend when the tool is missing.
 
@@ -319,6 +326,7 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 - **Expert mode state** (`app.expert_mode`; `features.expert_mode` only shows/hides the button)
 - **Context budget** (`context.max_messages`, `context.max_chars`) - how much of the conversation is sent on each request
 - **Language** (`app.language`; empty = system locale, `en` = English)
+- **Optional global shortcut** (`app.global_shortcut_enabled`, `app.global_shortcut`; disabled by default)
 
 ### Supported Providers
 
@@ -417,6 +425,15 @@ python -m src.app
 | Expert Mode | Ctrl+E (or the 🧠 button) |
 | Clear input | Esc |
 | Quit | Ctrl+Q (or the X button) |
+| Show or focus from another application | Ctrl+Alt+Space when the optional global shortcut is enabled |
+
+The global shortcut uses X11 or the Wayland GlobalShortcuts portal, depending on
+the graphical session. A desktop without a compatible portal can bind
+`linux-ai-assistant --show` itself. Desktop activation requires a session D-Bus;
+the command shows the existing window instead of starting a second instance.
+For Flatpak, bind `flatpak run io.github.linux_ai_assistant --show`.
+See the [shortcut guide](docs/conversas-imagens-documentos.md#abrir-o-assistente-com-um-atalho-global)
+for approval, conflicts and session limitations.
 
 ### Expert Mode
 
@@ -433,6 +450,13 @@ When expert mode is active:
 2. The screen will be captured automatically
 3. Text will be extracted using OCR
 4. The text will be added to the conversation
+
+For an image question, use **Capture an image for AI** or choose an image file.
+Review the normalized image and the selected OpenRouter model, then attach it
+to the next question. PNG, JPEG and WebP are supported; pixels are sent only for
+that request and are not stored in conversation history. See the
+[image guide](docs/conversas-imagens-documentos.md#enviar-uma-imagem-com-uma-pergunta)
+for supported models, limits and disclosure.
 
 ### File Editing
 
@@ -493,10 +517,14 @@ linux_ai_assistant/
 │   ├── remote_models.py    # Explicit bounded remote model discovery
 │   ├── action_contract.py  # Structured action requests and results
 │   ├── conversation_actions.py # Session-scoped task choices
+│   ├── conversation_markdown.py # Versioned, framed conversation export/import
+│   ├── document_store.py    # Private snapshots and local lexical document search
 │   ├── display_watchdog.py # Experimental separate-process display recovery
 │   ├── dock.py             # Docked mode (struts/layer-shell)
 │   ├── file_actions.py     # File writing with diff confirmation
+│   ├── global_shortcuts.py # Desktop activation and optional global shortcut
 │   ├── i18n.py             # Translations (English fallback)
+│   ├── image_attachments.py # Bounded, immutable image normalization
 │   ├── main_window.py      # Main window
 │   ├── offline_assistant.py # Offline answers and local tasks
 │   ├── render_core.py      # Markup rendering (GTK-free)
@@ -710,6 +738,7 @@ and origin without printing values. The
 describes the current Python/GTK support and the limited mypy CI gate.
 
 For native Void packaging, see [xbps-src/README.md](xbps-src/README.md).
+For reviewed conversation imports, one-request images, desktop activation and chosen local documents, see [the conversation, image and document guide](docs/conversas-imagens-documentos.md).
 For structured actions, service control, private operation events, offline checksums and validated YAML knowledge, see [the infrastructure guide](docs/infraestrutura-acoes-conhecimento.md). Existing virtual environments need the updated `requirements.txt`.
 For local diagnostic reports, offline log interpretation and recovery of approved file writes, see [the second-phase guide](docs/segunda-fase-2026-10-02.md).
 For real-world test environments, scenarios, result and bug reports, see [the real-world testing protocol](docs/protocolo-ensaios-reais.md), with reusable report and CSV templates. The integrated Trials / Debug panel and CLI recorder are described in [the test recorder guide](docs/ferramenta-ensaios.md).

@@ -20,7 +20,7 @@ import logging
 
 from . import device_dialogs, dock, file_actions, offline_assistant
 from .device_actions import split_offer
-from .ai_client import AIClient, AIProviderError, AIRequestCancelled, AIResponseLimitError
+from .ai_client import AIClient, AIProviderError, AIRequestCancelled, AIResponseLimitError, AIImageRequestError
 from .chat_view import ChatView
 from .history_store import HistoryStore, MAX_HISTORY_MESSAGES, MAX_MESSAGE_CHARS
 from .i18n import _, get_language
@@ -34,6 +34,11 @@ from .trial_dialog import show_trials
 from .provider_settings import ProviderSettings, MODE_LABELS, STATUS_LABELS
 from .credential_settings import APIKeySettings
 from .remote_model_settings import RemoteModelSettings
+from .document_context import MAX_DOCUMENT_CONTEXT_CHARS, display_document_context, with_document_context
+from .document_store import DocumentStore
+from .document_review import review_document_context
+from .image_dialog import pick_image, review_image
+from .image_attachments import prepare_image
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -162,6 +167,9 @@ class MainWindow(Gtk.Window):
         self._request_seq = 0
         self._active_request = 0
         self._cancel_event = threading.Event()
+        self._pending_image = None
+        self._pending_image_destination = None
+        self._document_store = None
         # Settings dialog currently open (or None); lets the "Manage Themes"
         # button switch tabs instead of opening a second dialog.
         self._settings_notebook = None
@@ -253,6 +261,9 @@ class MainWindow(Gtk.Window):
         actions = getattr(self, 'actions', None)
         if actions is not None:
             actions.close()
+        document_store = getattr(self, '_document_store', None)
+        if document_store is not None:
+            document_store.close()
         if not self.history_store.close(timeout):
             logger.error("History writer did not finish successfully: %s", self.history_store.last_error)
 
@@ -549,6 +560,23 @@ class MainWindow(Gtk.Window):
         self.chat_textview = self.chat_view.textview
         chat_area.pack_start(self.chat_scrolled, True, True, 0)
 
+        references = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        main_box.pack_start(references, False, False, 0)
+        self.documents_check = Gtk.CheckButton(label=_("Use selected documents"))
+        self.documents_check.set_tooltip_text(_("Review matching excerpts before sending them to the model. Offline mode shows local matches."))
+        references.pack_start(self.documents_check, True, True, 0)
+        documents_button = Gtk.Button.new_from_icon_name('folder-documents-symbolic', Gtk.IconSize.MENU)
+        documents_button.set_tooltip_text(_("Manage selected documents"))
+        documents_button.connect('clicked', self.on_documents_clicked)
+        references.pack_start(documents_button, False, False, 0)
+        self.attachment_label = Gtk.Label(xalign=0, wrap=True)
+        main_box.pack_start(self.attachment_label, False, False, 0)
+        self.remove_image_button = Gtk.Button(label=_("Remove image"))
+        self.remove_image_button.connect('clicked', lambda button: self._clear_pending_image())
+        self.remove_image_button.set_no_show_all(True)
+        self.remove_image_button.hide()
+        references.pack_start(self.remove_image_button, False, False, 0)
+
         # Input area
         input_area = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         input_area.set_property("name", "input-area")
@@ -580,6 +608,11 @@ class MainWindow(Gtk.Window):
         capture_btn.set_tooltip_text(_("Capture screen (Ctrl+S)"))
         button_box.pack_start(capture_btn, False, False, 0)
         self.capture_btn = capture_btn
+
+        image_btn = Gtk.Button.new_from_icon_name('insert-image-symbolic', Gtk.IconSize.MENU)
+        image_btn.connect('clicked', self.on_attach_image_clicked)
+        image_btn.set_tooltip_text(_("Attach an image for the next question"))
+        button_box.pack_start(image_btn, False, False, 0)
 
         # Expert mode button (hidden when features.expert_mode is off)
         self.expert_btn = Gtk.Button.new_from_icon_name("system-run", Gtk.IconSize.MENU)
@@ -636,6 +669,12 @@ class MainWindow(Gtk.Window):
         changes_item = Gtk.MenuItem(label=_("File changes"))
         changes_item.connect('activate', lambda item: show_file_changes(self))
         menu.append(changes_item)
+        image_item = Gtk.MenuItem(label=_("Capture an image for AI"))
+        image_item.connect('activate', lambda item: self.on_capture_screen_clicked(None, for_ai=True))
+        menu.append(image_item)
+        documents_item = Gtk.MenuItem(label=_("Manage selected documents"))
+        documents_item.connect('activate', self.on_documents_clicked)
+        menu.append(documents_item)
 
         # Separador
         menu.append(Gtk.SeparatorMenuItem())
@@ -651,6 +690,58 @@ class MainWindow(Gtk.Window):
     def on_config_clicked(self, item):
         """Open settings window"""
         self._show_config_dialog()
+
+    def _get_document_store(self):
+        if self._document_store is None:
+            self._document_store = DocumentStore()
+        return self._document_store
+
+    def on_documents_clicked(self, button=None):
+        from .document_dialog import DocumentDialog
+        try:
+            dialog = DocumentDialog(self, self._get_document_store())
+            try:
+                dialog.run()
+            finally:
+                dialog.destroy()
+        except (OSError, ValueError) as error:
+            self._add_system_message(_("Could not open documents: {error}").format(error=error))
+
+    def _clear_pending_image(self):
+        self._pending_image = None
+        self._pending_image_destination = None
+        label = getattr(self, 'attachment_label', None)
+        if label is not None:
+            label.set_text('')
+        button = getattr(self, 'remove_image_button', None)
+        if button is not None:
+            button.hide()
+
+    def _review_and_attach_image(self, image):
+        try:
+            if not isinstance(self.ai_client, AIClient):
+                raise AIImageRequestError(_("This client does not support reviewed images."))
+            provider, model = self.ai_client.validate_image_request((image,))
+            if review_image(self, image, provider, model):
+                self._pending_image = image
+                self._pending_image_destination = (provider, model)
+                self.attachment_label.set_text(_("Image ready for the next question: {name} ({width} × {height})")
+                                               .format(name=image.filename, width=image.width, height=image.height))
+                self.remove_image_button.show()
+        except (OSError, ValueError, AIProviderError) as error:
+            self._add_system_message(_("Could not attach image: {error}").format(error=error))
+        return False
+
+    def on_attach_image_clicked(self, button=None):
+        if self.is_loading:
+            self._add_system_message(_("Wait for the current message to be processed"))
+            return
+        try:
+            image = pick_image(self)
+            if image is not None:
+                self._review_and_attach_image(image)
+        except (OSError, ValueError) as error:
+            self._add_system_message(_("Could not attach image: {error}").format(error=error))
 
     def on_themes_clicked(self, button):
         """Open the settings dialog on the Themes tab.
@@ -995,6 +1086,27 @@ class MainWindow(Gtk.Window):
         always_on_top_check.set_active(self.config.get("app.always_on_top", True))
         ui_box.pack_start(always_on_top_check, False, False, 0)
 
+        global_shortcut_check = Gtk.CheckButton(label=_("Enable global shortcut to open the assistant"))
+        global_shortcut_check.set_active(self.config.get('app.global_shortcut_enabled', False))
+        ui_box.pack_start(global_shortcut_check, False, False, 0)
+        global_shortcut_entry = Gtk.Entry()
+        global_shortcut_entry.set_max_length(100)
+        global_shortcut_entry.set_text(self.config.get('app.global_shortcut', '<Ctrl><Alt>space'))
+        global_shortcut_entry.set_placeholder_text('<Ctrl><Alt>space')
+        ui_box.pack_start(global_shortcut_entry, False, False, 0)
+        global_shortcut_status = Gtk.Label(label=_(getattr(self.app, 'global_shortcut_status', 'Global shortcut disabled')),
+                                          wrap=True, xalign=0)
+        ui_box.pack_start(global_shortcut_status, False, False, 0)
+        previous_shortcut_callback = getattr(self.app, 'global_shortcut_status_changed', None)
+
+        def update_shortcut_status(status):
+            global_shortcut_status.set_text(_(status))
+            if callable(previous_shortcut_callback):
+                previous_shortcut_callback(status)
+
+        self.app.global_shortcut_status_changed = update_shortcut_status
+        dialog.connect('destroy', lambda widget: setattr(self.app, 'global_shortcut_status_changed', previous_shortcut_callback))
+
         # Theme
         theme_label = Gtk.Label(label=_("Theme:"))
         ui_box.pack_start(theme_label, False, False, 0)
@@ -1143,6 +1255,13 @@ class MainWindow(Gtk.Window):
             always_on_top = always_on_top_check.get_active()
             self.config.set("app.always_on_top", always_on_top)
             self.set_keep_above(always_on_top)
+            shortcut = global_shortcut_entry.get_text().strip()
+            self.config.set('app.global_shortcut_enabled', global_shortcut_check.get_active())
+            self.config.set('app.global_shortcut', shortcut)
+            configure_shortcut = getattr(self.app, 'configure_global_shortcut', None)
+            if configure_shortcut is not None:
+                status = configure_shortcut(global_shortcut_check.get_active(), shortcut)
+                self._add_system_message(_(status))
 
             # Save theme
             theme = theme_combo.get_active_id()
@@ -1302,6 +1421,10 @@ class MainWindow(Gtk.Window):
         self.cancel_btn.set_sensitive(False)
         self.chat_view.abort_stream()
         self.chat_view.clear_loading()
+        self._clear_pending_image()
+        documents_check = getattr(self, 'documents_check', None)
+        if documents_check is not None:
+            documents_check.set_active(False)
         self.status_icon.set_from_icon_name('emblem-ok', Gtk.IconSize.MENU)
         self._renew_offline_assistant()
         self._refresh_mode_status()
@@ -1422,7 +1545,10 @@ class MainWindow(Gtk.Window):
             logger.warning("A message is already being processed")
             return
 
+        image = getattr(self, '_pending_image', None)
         text = self.input_entry.get_text().strip()
+        if not text and image is not None:
+            text = _("Describe this image.")
         if not text:
             return
 
@@ -1431,15 +1557,48 @@ class MainWindow(Gtk.Window):
             return
 
         try:
-            self._remember("user", text)
+            provider = self.ai_client.active_provider()
+            route = {'provider': provider, 'ready': self.ai_client.provider_ready(provider)}
+        except AIProviderError:
+            route = {'provider': None, 'ready': False}
+        images = ()
+        document_context = ''
+        try:
+            if image is not None:
+                provider, model = self.ai_client.validate_image_request((image,))
+                if not route['ready']:
+                    raise AIImageRequestError(_("Configure a usable OpenRouter provider before sending an image."))
+                if ((provider, model) != getattr(self, '_pending_image_destination', None)
+                        and not review_image(self, image, provider, model)):
+                    return
+                route.update(provider=provider, model=model)
+                images = (image,)
+            documents_check = getattr(self, 'documents_check', None)
+            if documents_check is not None and documents_check.get_active():
+                document_context = self._get_document_store().context(text, max_chars=MAX_DOCUMENT_CONTEXT_CHARS)
+                if not document_context:
+                    self._add_system_message(_("No matching passages in the selected documents. Add documents or refine your question."))
+                    return
+                if route['ready'] and not review_document_context(self, document_context, route['provider']):
+                    return
+        except (OSError, ValueError, AIProviderError) as error:
+            self._add_system_message(str(error))
+            return
+
+        try:
+            history_text = text
+            if image is not None:
+                history_text += '\n\n' + _("[Image attached for this request; pixels are not stored.]")
+            self._remember("user", history_text)
         except (OSError, ValueError, RuntimeError) as error:
             self._add_system_message(_("Could not save the message: {error}").format(error=error))
             return
 
         self.input_entry.set_text("")
+        self._clear_pending_image()
 
         # Add the user message to the chat...
-        self._add_user_message(text)
+        self._add_user_message(history_text)
 
         # ...and to the context + history.json (ponto único de persistência)
 
@@ -1448,11 +1607,8 @@ class MainWindow(Gtk.Window):
         context = self._get_context_message()
         messages = self._build_request_messages()
         full_history = ([context] + messages) if context else messages
-        try:
-            provider = self.ai_client.active_provider()
-            route = {'provider': provider, 'ready': self.ai_client.provider_ready(provider)}
-        except AIProviderError:
-            route = {'provider': None, 'ready': False}
+        if document_context:
+            full_history = with_document_context(full_history, document_context)
 
         # Per-request state: fresh id + cancel event. A worker that is
         # still draining after a cancel can no longer touch this request.
@@ -1474,13 +1630,13 @@ class MainWindow(Gtk.Window):
         threading.Thread(
             target=self._process_message,
             args=(text, full_history, request_id, cancel_event, self.offline, route,
-                  self.history_store.active_session_id),
+                  self.history_store.active_session_id, images, document_context),
             daemon=True,
         ).start()
 
     def _process_message(self, message: str, full_history: list,
                          request_id: int, cancel_event: threading.Event, offline=None, route=None,
-                         session_id=None):
+                         session_id=None, images=(), document_context=''):
         """Process the message and get the AI response.
 
         All UI/history mutations are queued to the main loop with
@@ -1500,7 +1656,7 @@ class MainWindow(Gtk.Window):
 
         try:
             actions = getattr(self, 'actions', None)
-            if actions is not None and session_id is not None:
+            if actions is not None and session_id is not None and not images and not document_context:
                 reply = actions.handle(
                     message, session_id, get_language(),
                     is_current=lambda: request_id == self._active_request and not cancel_event.is_set(),
@@ -1511,6 +1667,12 @@ class MainWindow(Gtk.Window):
             offline_reply = None
 
             ready = route['ready'] if route is not None else self.ai_client.provider_ready()
+            if not ready and images:
+                raise AIImageRequestError(_("The image request cannot be answered offline."))
+            if not ready and document_context:
+                GLib.idle_add(self._finish_local_document_reply, request_id, cancel_event,
+                              _("Local document matches (no model request):") + '\n\n' + display_document_context(document_context))
+                return
             if not ready:
                 # No key for the selected provider: answer from local knowledge
                 # instead of failing with "API key not configured".
@@ -1521,6 +1683,10 @@ class MainWindow(Gtk.Window):
                     if cancel_event.is_set():
                         return
                     options = {'provider': route['provider']} if route is not None else {}
+                    if images:
+                        options['images'] = images
+                        if route is not None:
+                            options['model'] = route['model']
                     # Keep old third-party clients/test shims callable, while
                     # the built-in client propagates this request's event.
                     if isinstance(self.ai_client, AIClient):
@@ -1549,11 +1715,18 @@ class MainWindow(Gtk.Window):
                 except AIRequestCancelled:
                     GLib.idle_add(self._finalize_response, request_id, "", True)
                     return
-                except AIResponseLimitError:
+                except (AIResponseLimitError, AIImageRequestError):
                     # A local limit is an incomplete answer, not a reason to
                     # silently replace it with an unrelated offline answer.
                     raise
                 except AIProviderError as e:
+                    if images:
+                        raise
+                    if document_context and not cancel_event.is_set():
+                        GLib.idle_add(self._finish_local_document_reply, request_id, cancel_event,
+                                      _("The model is unavailable. Local document matches:") + '\n\n' + display_document_context(document_context),
+                                      )
+                        return
                     # Falha ESTRUTURADA do provider (rede/HTTP/config) — não
                     # é conteúdo do modelo. O fallback offline dispara tanto
                     # para falha antes do primeiro chunk como a meio do
@@ -1569,6 +1742,12 @@ class MainWindow(Gtk.Window):
                         offline_reply = offline.handle(message, get_language())
 
                 if offline_reply is None and not response_text and not cancel_event.is_set():
+                    if images:
+                        raise AIImageRequestError(_("The model returned no answer for the image."))
+                    if document_context:
+                        GLib.idle_add(self._finish_local_document_reply, request_id, cancel_event,
+                                      _("The model is unavailable. Local document matches:") + '\n\n' + display_document_context(document_context))
+                        return
                     offline_reply = offline.handle(message, get_language())
                 if pending_chunks and offline_reply is None and not cancel_event.is_set():
                     GLib.idle_add(self._update_ai_message, request_id,
@@ -1581,7 +1760,7 @@ class MainWindow(Gtk.Window):
                 response_text = offline_reply.text
                 GLib.idle_add(self._replace_ai_reply, request_id, cancel_event, response_text)
                 action = offline_reply
-            elif response_text and not cancel_event.is_set():
+            elif response_text and not cancel_event.is_set() and not images and not document_context:
                 # The model may explain the step. The command, if any, comes
                 # from the user's sentence and the local catalog.
                 propose = getattr(offline, "propose", None)
@@ -1592,7 +1771,10 @@ class MainWindow(Gtk.Window):
                         logger.error("Could not prepare a confirmed action: %s", exc, exc_info=True)
 
             cancelled = cancel_event.is_set()
-            GLib.idle_add(self._finalize_response, request_id, response_text, cancelled)
+            if images or document_context:
+                GLib.idle_add(self._finalize_response, request_id, response_text, cancelled, False)
+            else:
+                GLib.idle_add(self._finalize_response, request_id, response_text, cancelled)
             interaction, commands = split_offer(action)
             if (interaction or commands) and not cancelled:
                 GLib.idle_add(self._offer_confirmed_action, interaction, commands,
@@ -1885,7 +2067,7 @@ class MainWindow(Gtk.Window):
         return False
 
     def _finalize_response(self, request_id: int, response_text: str,
-                           cancelled: bool):
+                           cancelled: bool, allow_file_actions=True, history_text=None):
         """Persist the response and settle the UI (main loop only)."""
         if request_id != self._active_request:
             # A newer request replaced this one; its output is stale.
@@ -1911,7 +2093,7 @@ class MainWindow(Gtk.Window):
                 self.chat_view.close_streamed_message(response_text)
 
                 # Ponto único de persistência do turno (memória + history.json)
-                self._remember("assistant", response_text)
+                self._remember("assistant", response_text if history_text is None else history_text)
                 store = getattr(self, 'history_store', None)
                 if store is not None:
                     try:
@@ -1923,7 +2105,7 @@ class MainWindow(Gtk.Window):
                 # Offer file writes in expert mode. We are already on the main
                 # loop, so the dialogs can be created directly (GTK is not
                 # thread-safe).
-                if self.expert_mode:
+                if self.expert_mode and allow_file_actions:
                     file_actions.offer_file_blocks(
                         self, response_text,
                         lambda msg: GLib.idle_add(self._add_system_message, msg),
@@ -1937,6 +2119,18 @@ class MainWindow(Gtk.Window):
         finally:
             self._on_message_processed(request_id, cancelled)
         return False
+
+    def _finish_local_document_reply(self, request_id, cancel_event, text):
+        if request_id != self._active_request or cancel_event.is_set():
+            self._on_message_processed(request_id, True)
+            return False
+        # Replace any partial provider output with the actual local excerpts.
+        # Unapproved local source text must not travel later via chat history.
+        visible = text + '\n\n' + _("These local excerpts are not saved in conversation history.")
+        self.chat_view.abort_stream()
+        self._add_ai_message(visible, False)
+        summary = _("Local document matches were shown. Excerpts remain only in the local document index.")
+        return self._finalize_response(request_id, visible, False, False, summary)
 
     def _update_ai_message(self, request_id: int, chunk: str, streaming: bool):
         """Update the AI message, ignoring output from stale requests."""
@@ -1991,7 +2185,7 @@ class MainWindow(Gtk.Window):
             self._add_system_message(_("Streaming cancelled"))
         logger.info("Streaming cancelled by the user")
 
-    def on_capture_screen_clicked(self, button):
+    def on_capture_screen_clicked(self, button, for_ai=False):
         """Handler for screen capture"""
         # The button/shortcut stays available even if the feature was
         # disabled after startup, so enforce the setting here too.
@@ -2002,23 +2196,69 @@ class MainWindow(Gtk.Window):
             self.show_notification("Linux AI Assistant", _("Wait for the current message to be processed"))
             return
 
+        # A capture is its own request. Reusing a cancelled chat's event would
+        # discard a new capture, and reusing its ID lets old callbacks alter it.
+        previous_event = getattr(self, '_cancel_event', None)
+        if previous_event is not None:
+            previous_event.set()
+        capture_request = max(getattr(self, '_request_seq', 0) or 0,
+                              getattr(self, '_active_request', 0) or 0) + 1
+        self._request_seq = self._active_request = capture_request
+        capture_event = threading.Event()
+        self._cancel_event = capture_event
+        capture_session = getattr(getattr(self, 'history_store', None), 'active_session_id', None)
+        ocr_enabled = self.config.get("features.ocr_enabled", True)
+
+        def current():
+            return (not capture_event.is_set() and not getattr(self, '_audit_closed', False)
+                    and capture_request == getattr(self, '_active_request', None)
+                    and capture_session == getattr(getattr(self, 'history_store', None), 'active_session_id', None))
+
+        def dispatch(callback, *args):
+            if current():
+                callback(*args)
+            return False
+
+        def queue(callback, *args):
+            GLib.idle_add(dispatch, callback, *args)
+
+        def remember_ocr(text):
+            # Keep one guarded main-loop callback for persistence and display;
+            # a rejected entry must not appear to have been saved successfully.
+            try:
+                self._remember('user', text)
+                self._add_user_message(text)
+            except (OSError, ValueError, RuntimeError) as error:
+                self._add_system_message(_("Could not save the message: {error}").format(error=error))
+
         self._add_system_message(_("Capturing screen..."))
         self.is_loading = True
+        self.streaming = False
+        cancel_button = getattr(self, 'cancel_btn', None)
+        if cancel_button is not None:
+            cancel_button.set_sensitive(True)
         self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text(_("Capturing screen..."))
 
         def capture_and_process():
+            temporary_image = None
             try:
                 # Capture screen
                 success, image_path = self.system_utils.capture_screen()
 
                 if success:
-                    GLib.idle_add(self._add_system_message,
-                                  _("Screen captured: {path}").format(path=image_path))
+                    temporary_image = image_path
+                    if not current():
+                        return
+                    if for_ai:
+                        image = prepare_image(image_path)
+                        queue(self._review_captured_image, image, capture_request, capture_session, capture_event)
+                        return
+                    queue(self._add_system_message, _("Screen captured: {path}").format(path=image_path))
 
                     # Extract text
-                    if self.config.get("features.ocr_enabled", True):
-                        GLib.idle_add(self._add_system_message,
-                                      _("Extracting text from the image..."))
+                    if ocr_enabled:
+                        queue(self._add_system_message, _("Extracting text from the image..."))
                         success, text = self.system_utils.extract_text_from_image(image_path)
 
                         if success and text:
@@ -2027,38 +2267,68 @@ class MainWindow(Gtk.Window):
                             if len(text) > max_length:
                                 text = text[:max_length] + "\n\n... " + _("(text truncated)")
 
-                            GLib.idle_add(self._add_user_message,
-                                          f"[{_('Screen capture')}]\n{text}")
-                            GLib.idle_add(self._remember, "user",
-                                          f"[{_('Screen capture')}]\n{text}")
+                            queue(remember_ocr, f"[{_('Screen capture')}]\n{text}")
                         else:
-                            GLib.idle_add(self._add_system_message,
-                                          _("Could not extract text from the image."))
+                            queue(self._add_system_message, _("Could not extract text from the image."))
                     else:
-                        GLib.idle_add(self._add_system_message,
-                                      _("OCR disabled in settings."))
+                        queue(self._add_system_message, _("OCR disabled in settings."))
 
-                    # Remove temporary image
-                    try:
-                        os.unlink(image_path)
-                    except OSError:
-                        pass
                 else:
-                    GLib.idle_add(self._add_system_message,
-                                  _("Error capturing screen: {detail}").format(detail=image_path))
+                    queue(self._add_system_message, _("Error capturing screen: {detail}").format(detail=image_path))
 
             except Exception as e:
                 logger.error(f"Error in screen capture: {e}", exc_info=True)
-                GLib.idle_add(self._add_system_message,
-                              _("Error: {error}").format(error=e))
+                queue(self._add_system_message, _("Error: {error}").format(error=e))
             finally:
-                GLib.idle_add(self._on_capture_complete)
+                if temporary_image is not None:
+                    try:
+                        os.unlink(temporary_image)
+                    except OSError:
+                        pass
+                queue(self._on_capture_complete, capture_request, capture_session, capture_event)
 
         threading.Thread(target=capture_and_process, daemon=True).start()
 
-    def _on_capture_complete(self):
+    def _review_captured_image(self, image, request_id, session_id, cancel_event=None):
+        event = cancel_event if cancel_event is not None else getattr(self, '_cancel_event', None)
+
+        def current():
+            return (not getattr(self, '_audit_closed', False)
+                    and (event is None or not event.is_set())
+                    and request_id == getattr(self, '_active_request', None)
+                    and session_id == getattr(getattr(self, 'history_store', None), 'active_session_id', None))
+
+        if not current():
+            return False
+        try:
+            if not isinstance(self.ai_client, AIClient):
+                raise AIImageRequestError(_("This client does not support reviewed images."))
+            provider, model = self.ai_client.validate_image_request((image,))
+            # A modal dialog runs a nested main loop: cancellation or a session
+            # change can happen while the reviewed image is on screen.
+            if review_image(self, image, provider, model) and current():
+                self._pending_image = image
+                self._pending_image_destination = (provider, model)
+                self.attachment_label.set_text(_("Image ready for the next question: {name} ({width} × {height})")
+                                               .format(name=image.filename, width=image.width, height=image.height))
+                self.remove_image_button.show()
+        except (OSError, ValueError, AIProviderError) as error:
+            if current():
+                self._add_system_message(_("Could not attach image: {error}").format(error=error))
+        return False
+
+    def _on_capture_complete(self, request_id=None, session_id=None, cancel_event=None):
         """Callback when the capture is completed."""
+        if (getattr(self, '_audit_closed', False)
+                or (cancel_event is not None and cancel_event.is_set())
+                or (request_id is not None and request_id != getattr(self, '_active_request', None))
+                or (session_id is not None and session_id != getattr(getattr(self, 'history_store', None), 'active_session_id', None))):
+            return False
         self.is_loading = False
+        self.streaming = False
+        cancel_button = getattr(self, 'cancel_btn', None)
+        if cancel_button is not None:
+            cancel_button.set_sensitive(False)
         self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
         return False
