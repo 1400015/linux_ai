@@ -51,6 +51,8 @@ class LinuxAIAssistant:
         # Idempotency flag for quit(): delete-event, the tray menu and
         # SIGINT/SIGTERM can all ask to quit, sometimes re-entrantly.
         self._quitting = False
+        self._shutdown_pending = False
+        self._history_shutdown_source = None
         self.float_button_window = None
         self._show_requested = False
         self._global_shortcut = None
@@ -77,8 +79,9 @@ class LinuxAIAssistant:
             raise
 
     def run(self, show=False):
-        """Start the application"""
+        """Start the application; failed or cancelled startup returns nonzero."""
         logger.info("Initializing GTK")
+        startup_history = None
 
         try:
             # Initialize GTK. init_check() reports failure (e.g. no
@@ -89,12 +92,29 @@ class LinuxAIAssistant:
                 initialized = initialized[0]
             if not initialized:
                 logger.error("GTK could not be initialized (no display?)")
-                return
+                return 1
             logger.info("GTK initialized")
+
+            from .history_recovery import open_history_store
+            history = open_history_store()
+            if self._quitting or getattr(self, '_shutdown_pending', False):
+                if history.store is not None:
+                    history.store.close()
+                self.quit()
+                return 1
+            if history.status not in ("ready", "recovered"):
+                logger.error("Conversation history startup %s", history.status)
+                self.quit()
+                return 1
+            startup_history = history.store
 
             # Create main window
             logger.info("Creating main window")
-            self.main_window = MainWindow(self, self.config, self.ai_client, self.system_utils)
+            self.main_window = MainWindow(self, self.config, self.ai_client, self.system_utils,
+                                          history_store=startup_history)
+            if history.backup is not None:
+                self.main_window._add_system_message(
+                    i18n._("The original history was preserved at: {path}").format(path=history.backup))
 
             # Create system tray icon
             logger.info("Creating system tray icon")
@@ -117,19 +137,39 @@ class LinuxAIAssistant:
             # Start main loop
             logger.info("Starting GTK main loop")
             Gtk.main()
+            return 0
 
         except KeyboardInterrupt:
             logger.info("Received KeyboardInterrupt. Shutting down...")
             self.quit()
+            return 1
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)
             self.quit()
+            return 1
+        finally:
+            # A failed MainWindow constructor never transfers writer ownership
+            # to self.main_window; do not leave its worker alive on startup exit.
+            if startup_history is not None and self.main_window is None:
+                startup_history.close()
 
     def quit(self):
         """Quit the application (safe to call more than once)"""
         if self._quitting:
             logger.debug("quit() already in progress; ignoring")
             return
+        from .history_recovery import cancel_history_recovery_dialogs
+        # Gtk.Dialog.run owns a nested event loop. Let its caller return before
+        # closing the writer it may still be using for approved recovery.
+        if (cancel_history_recovery_dialogs()
+                or getattr(self.main_window, '_history_recovering', False)):
+            self._shutdown_pending = True
+            if getattr(self, '_history_shutdown_source', None) is None:
+                self._history_shutdown_source = GLib.timeout_add(20, self._finish_history_shutdown)
+            return
+        if getattr(self, '_history_shutdown_source', None) is not None:
+            GLib.source_remove(self._history_shutdown_source)
+            self._history_shutdown_source = None
         self._quitting = True
         logger.info("Terminating application")
 
@@ -179,9 +219,19 @@ class LinuxAIAssistant:
             # o processo vivo sem janela nem tray visíveis.
             try:
                 logger.info("GTK main quit")
-                Gtk.main_quit()
+                if Gtk.main_level() > 0:
+                    Gtk.main_quit()
             except Exception as e:
                 logger.error(f"Could not quit GTK main loop: {e}")
+
+    def _finish_history_shutdown(self):
+        from .history_recovery import history_recovery_active
+        if (history_recovery_active()
+                or getattr(self.main_window, '_history_recovering', False)):
+            return GLib.SOURCE_CONTINUE
+        self._history_shutdown_source = None
+        self.quit()
+        return GLib.SOURCE_REMOVE
 
     def show_window(self):
         """Present the existing conversation without toggling it closed."""
@@ -322,7 +372,7 @@ def main(argv=None):
             signal.signal(signal.SIGTERM, lambda s, f: GLib.idle_add(app.quit))
         logger.info("Signal handlers configured")
 
-        app.run(show=args.show or bool(pending_show))
+        return app.run(show=args.show or bool(pending_show))
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)

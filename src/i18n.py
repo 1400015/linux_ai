@@ -1334,3 +1334,34 @@ TRANSLATIONS["pt"].update({
     "Review these excerpts, then repeat with --send-document-context to send them to the model.":
         "Revê estes excertos e repete com --send-document-context para os enviar ao modelo.",
 })
+
+
+TRANSLATIONS["pt"].update({
+    "Recover history": "Recuperar histórico",
+    "Recover conversation history": "Recuperar histórico de conversas",
+    "Conversation history could not be saved. Recover it before continuing; pending messages have not been discarded.":
+        "Não foi possível guardar o histórico. Recupere-o antes de continuar; as mensagens pendentes não foram descartadas.",
+    "History recovered. Original backup: {path}": "Histórico recuperado. Cópia do original: {path}",
+    "Could not recover history: {error}": "Não foi possível recuperar o histórico: {error}",
+    "The conversation history exceeds the size or nesting limit (16 MiB / 128 levels).":
+        "O histórico excede o limite de tamanho ou profundidade (16 MiB / 128 níveis).",
+    "The conversation history has an invalid or unsupported format.":
+        "O histórico de conversas tem um formato inválido ou não suportado.",
+    "The conversation history could not be read or saved.": "Não foi possível ler ou guardar o histórico de conversas.",
+    "Opening conversation history…": "A abrir o histórico de conversas…",
+    "Back up and start new history": "Fazer backup e iniciar novo histórico",
+    "The original file will be preserved in a private backup before a new history is created. Unknown formats are not converted. Cancelling keeps the original file unchanged.":
+        "O ficheiro original será preservado numa cópia privada antes de criar um novo histórico. Formatos desconhecidos não são convertidos. Cancelar mantém o ficheiro original intacto.",
+    "Preserving the original history and starting a new one…": "A preservar o histórico original e a iniciar um novo…",
+    "Conversation history recovery failed.": "A recuperação do histórico de conversas falhou.",
+    "The original history was preserved at: {path}": "O histórico original foi preservado em: {path}",
+    "The history could not be backed up. It was not reset.": "Não foi possível criar a cópia do histórico. O histórico não foi reposto.",
+    "File operation completed in another conversation: {message}": "Operação de ficheiro concluída noutra conversa: {message}",
+    "Wait for the approved file operation to finish before recovering history.":
+        "Aguarde a conclusão da operação de ficheiro aprovada antes de recuperar o histórico.",
+    "Writing approved file…": "A escrever o ficheiro aprovado…",
+    "Loading file changes…": "A carregar as alterações de ficheiros…",
+    "Preparing recovery review…": "A preparar a revisão da recuperação…",
+    "Recovering approved file…": "A recuperar o ficheiro aprovado…",
+    "Recovery failed: {detail}": "A recuperação falhou: {detail}",
+})

@@ -1,5 +1,14 @@
 # Registo de Alterações — linux_ai
 
+## v1.4.1 — Recuperação gráfica e operações de ficheiros responsivas (2026-10-05)
+
+- Histórico inválido, desconhecido, demasiado grande ou profundo apresenta recuperação explícita no arranque. O original é copiado integralmente para um backup privado antes de criar um novo histórico; cancelar preserva-o e termina com código de erro.
+- Falhas de gravação numa sessão apresentam aviso persistente e opção de recuperação. Mensagens pendentes são conservadas, incluindo respostas da IA; novos pedidos aguardam a recuperação. O encerramento respeita as operações de recuperação já aprovadas.
+- Previews, escritas e recuperação de ficheiros correm fora da thread GTK, mantendo revisão, consentimento, revalidação e o lock da transação do journal. Resultados tardios pertencem à conversa de origem; cancelar não desfaz uma escrita iniciada. A inspeção privilegiada conserva o supervisor do prazo durante o encerramento.
+- Cliente e helper recusam variantes conhecidas de backups sensíveis, incluindo `/etc/shadow-`, `/etc/sudoers.tmp` e ficheiros de editor. Instalações com helpers privilegiados devem reinstalá-los para atualizar código e manifesto.
+- Template de configuração inclui os defaults dos atalhos globais. Uma instalação sem PyYAML mantém as referências incorporadas e apresenta aviso de conhecimento degradado; PyYAML continua a ser uma dependência obrigatória.
+- Regressões GTK cobrem recuperação, cancelamento, mudanças de conversa e encerramento; o [guia de segurança e recuperação](correcoes-seguranca-robustez.md) descreve os fluxos e limites.
+
 ## v1.4.0 — Conversas, imagens, atalho e documentos locais (2026-10-05)
 
 - Exportação Markdown com formato próprio versionado e mensagens enquadradas por comprimento; importação de Markdown/JSON após pré-visualização e confirmação, sempre para uma nova conversa e sem recuperar ações ou diagnósticos pendentes. Markdown antigo sem enquadramento continua recusado.
