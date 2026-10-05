@@ -126,13 +126,17 @@ Package search uses existing indexes without refreshing them silently and return
 
 ## History and file recovery
 
-If an unsupported, oversized or excessively nested history file prevents startup, preserve it and start a new history with the explicit recovery command. It prints the path of a private backup containing all original bytes; it does not convert an unknown format:
+Version 1.4.1 validates history before opening the main window. An invalid, unsupported, oversized or excessively nested history shows a recovery dialog. **Back up and start new history** preserves all original bytes in a private adjacent backup before creating a fresh history. Cancelling leaves the original unchanged and stops startup. Unknown formats are not converted.
+
+If saving fails during a session, a persistent warning and **Recover history** in the application menu offer the same explicit recovery. New chat requests wait until recovery succeeds; messages already queued for saving are retained in the new history. Keep the backup path shown after recovery for manual inspection. The CLI recovery command remains available when the GUI cannot start:
 
 ```bash
 python -m src.cli history recover --yes
 ```
 
-Approved file changes keep a journal and adjacent backups. Archive completed records to free journal capacity, then review a change before approving recovery:
+Approved file changes keep a journal and adjacent backups. In version 1.4.1, file previews, writes, change listing and recovery run in workers so GTK remains responsive while waiting for authentication. Review and confirmation still happen in the interface, and the journal transaction lock remains held during each write. Closing a window or cancelling further offers does not undo an approved write already started; its actual outcome remains in the journal.
+
+Archive completed records to free journal capacity, then review a change before approving recovery:
 
 ```bash
 python -m src.cli changes archive --yes
@@ -327,6 +331,9 @@ Edit the file `~/.config/linux_ai_assistant/config.json` to customize:
 - **Context budget** (`context.max_messages`, `context.max_chars`) - how much of the conversation is sent on each request
 - **Language** (`app.language`; empty = system locale, `en` = English)
 - **Optional global shortcut** (`app.global_shortcut_enabled`, `app.global_shortcut`; disabled by default)
+
+The shipped configuration template includes both shortcut settings, with
+`false` and `<Ctrl><Alt>space` as their defaults.
 
 ### Supported Providers
 
@@ -665,7 +672,10 @@ here or in Settings. Existing configurations keep their list.
 Expert file blocks still require a preview and confirmation. Privileged writes
 use one `pkexec` invocation, exclusive temporary files and backups, and reject
 changes to the destination since preview. Existing ownership and mode are
-preserved; a new privileged configuration is created with mode `0600`.
+preserved; a new privileged configuration is created with mode `0600`. Sensitive
+account and authorization files also include known adjacent backup variants,
+such as `/etc/shadow-`, `/etc/sudoers.tmp` and editor backup names. Both the
+client and the privileged helper refuse these targets.
 
 GUI and CLI history and token statistics use shared locks and atomic JSON
 transactions. Shutdown drains queued history writes. Failed, cancelled or empty
@@ -673,6 +683,11 @@ streams do not leave a partial GUI answer saved as a completed response; provide
 failures use the offline assistant. Cohere uses its v1 NDJSON chat contract.
 Local OpenAI-compatible servers receive no `stream_options` by default; set
 `api.providers.local_llm.stream_include_usage` to `true` if the server supports it.
+
+PyYAML remains a required dependency. If it is missing or bundled YAML knowledge
+cannot be validated, the application starts with built-in Python references and
+an explicit degraded-knowledge warning. Reinstall the dependencies to restore
+the bundled procedures.
 
 ## Troubleshooting
 

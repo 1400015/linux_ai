@@ -546,6 +546,16 @@ class TestPhaseTwoGTK(unittest.TestCase):
         self.window.change_journal = ChangeJournal(self.root / 'changes.json')
         self.window.config = Config({'permissions.allowed_edit_dirs': [str(self.root)]})
 
+    def wait_for_file_dialog(self, dialog):
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            while self.GLib.MainContext.default().iteration(False):
+                pass
+            if not dialog._busy:
+                return
+            time.sleep(0.002)
+        self.fail('The asynchronous file dialog did not finish')
+
     def test_report_default_collects_nothing_and_preserves_original_session(self):
         dialog = self.DiagnosticDialog(self.window)
         self.addCleanup(dialog.destroy)
@@ -610,10 +620,12 @@ class TestPhaseTwoGTK(unittest.TestCase):
         self.assertEqual(status, 'written')
         dialog = self.ChangeDialog(self.window)
         self.addCleanup(dialog.destroy)
+        self.wait_for_file_dialog(dialog)
         self.assertEqual(len(dialog.records), 1)
         confirmation.run.return_value = self.Gtk.ResponseType.CANCEL
         with patch.object(self.Gtk, 'Dialog', return_value=confirmation):
             dialog._restore(None)
+            self.wait_for_file_dialog(dialog)
         self.assertEqual(source.read_text(), 'new')
         self.assertEqual(self.window.change_journal.list_changes()[0]['status'], 'applied')
 
@@ -625,10 +637,12 @@ class TestPhaseTwoGTK(unittest.TestCase):
             self.window.change_journal.apply(str(source), str(target), file_digest(target), [str(self.root)], 'original')
             dialog = self.ChangeDialog(self.window)
             self.addCleanup(dialog.destroy)
+            self.wait_for_file_dialog(dialog)
             confirmation = Mock()
             confirmation.run.return_value = self.Gtk.ResponseType.OK
             with patch.object(self.Gtk, 'Dialog', return_value=confirmation):
                 dialog._restore(None)
+                self.wait_for_file_dialog(dialog)
         self.assertEqual(target.read_text(), 'old')
         self.assertEqual(next(iter(dialog.records.values()))['status'], 'restored')
         self.assertFalse(dialog.restore_button.get_sensitive())
@@ -643,13 +657,16 @@ class TestPhaseTwoGTK(unittest.TestCase):
             archive = self.window.change_journal.archive()
             dialog = self.ChangeDialog(self.window)
             self.addCleanup(dialog.destroy)
+            self.wait_for_file_dialog(dialog)
             self.assertFalse(dialog.records)
             dialog.archived.set_active(True)
+            self.wait_for_file_dialog(dialog)
             self.assertEqual(dialog.records[record['id']]['archive_id'], archive['archive_id'])
             confirmation = Mock()
             confirmation.run.return_value = self.Gtk.ResponseType.OK
             with patch.object(self.Gtk, 'Dialog', return_value=confirmation):
                 dialog._restore(None)
+                self.wait_for_file_dialog(dialog)
         self.assertEqual(target.read_text(), 'old')
         self.assertEqual(dialog.records[record['id']]['status'], 'restored')
         self.assertFalse(dialog.restore_button.get_sensitive())

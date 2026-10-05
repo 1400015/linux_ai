@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from xml.sax.saxutils import escape
@@ -29,7 +30,7 @@ except ImportError:
 try:
     import gi
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gtk
+    from gi.repository import GLib, Gtk
     HAS_GTK = True
 except (ImportError, ValueError):
     HAS_GTK = False
@@ -229,6 +230,34 @@ def _inspect_privileged(path, expected_digest, parent_identity, backup=None, bac
     return json.loads(result.stdout)
 
 
+def _show_write_confirmation(parent, path, content, is_new):
+    """Ask on the GTK thread; preparation and writing may run elsewhere."""
+    title = _("New file") if is_new else _("Proposed changes")
+    dialog = Gtk.Dialog(title=title, transient_for=parent, modal=True)
+    dialog.set_destroy_with_parent(True)
+    dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+    dialog.add_button(_("Write file"), Gtk.ResponseType.OK)
+    dialog.set_default_response(Gtk.ResponseType.CANCEL)
+    box = dialog.get_content_area()
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_min_content_height(240)
+    scroll.set_min_content_width(560)
+    header = Gtk.Label(label=f"<b>{escape(path)}</b>")
+    header.set_use_markup(True)
+    header.set_selectable(True)
+    box.pack_start(header, False, False, 4)
+    box.pack_start(scroll, True, True, 4)
+    textview = Gtk.TextView()
+    textview.get_buffer().set_text(content)
+    textview.set_editable(False)
+    textview.set_monospace(True)
+    scroll.add(textview)
+    dialog.show_all()
+    response = dialog.run()
+    dialog.destroy()
+    return response
+
+
 def confirm_and_write(parent, block, allowed_dirs=None, journal=None, session_id=''):
     """Show confirmation dialog with diff and write the file.
 
@@ -267,35 +296,7 @@ def confirm_and_write(parent, block, allowed_dirs=None, journal=None, session_id
         return ("error", "GTK unavailable")
 
     content = diff if diff is not None else block.content
-    title = _("New file") if diff is None else _("Proposed changes")
-
-    dialog = Gtk.Dialog(
-        title=title, transient_for=parent, modal=True
-    )
-    dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-    dialog.add_button(_("Write file"), Gtk.ResponseType.OK)
-    dialog.set_default_response(Gtk.ResponseType.CANCEL)
-
-    box = dialog.get_content_area()
-    scroll = Gtk.ScrolledWindow()
-    scroll.set_min_content_height(240)
-    scroll.set_min_content_width(560)
-    header = Gtk.Label(label=f"<b>{escape(path)}</b>")
-    # Without use_markup=True the label shows the literal <b> tags.
-    header.set_use_markup(True)
-    header.set_selectable(True)
-    box.pack_start(header, False, False, 4)
-    box.pack_start(scroll, True, True, 4)
-
-    textview = Gtk.TextView()
-    textview.get_buffer().set_text(content)
-    textview.set_editable(False)
-    textview.set_monospace(True)
-    scroll.add(textview)
-
-    dialog.show_all()
-    response = dialog.run()
-    dialog.destroy()
+    response = _show_write_confirmation(parent, path, content, diff is None)
 
     if response != Gtk.ResponseType.OK:
         return ("cancelled", path)
@@ -350,3 +351,151 @@ def offer_file_blocks(parent, reply_text, notify, allowed_dirs=None, journal=Non
             notify(_("File written: {path}").format(path=msg))
         elif status == "error":
             notify(_("Error writing file: {detail}").format(detail=msg))
+
+
+class FileOffer:
+    """Review sequentially on GTK and perform file I/O in workers.
+
+    Cancellation stops further offers. An approved write already dispatched
+    retains its real outcome and journal record, including after a switch of
+    conversation. Its worker is not a daemon: quitting must not abandon journal
+    finalization halfway through a privileged operation.
+    """
+
+    def __init__(self, parent, blocks, notify, allowed_dirs, journal, session_id, is_current):
+        self.parent = parent
+        self.blocks = iter(blocks)
+        self.notify = notify
+        self.allowed_dirs = allowed_dirs
+        self.journal = journal
+        self.session_id = session_id
+        self.is_current = is_current or (lambda: True)
+        self.cancelled = False
+        self.finished = False
+        self.active = False
+        self._parent_alive = True
+        self._destroy_handler = parent.connect('destroy', self._parent_destroyed) if parent is not None else None
+
+    def _parent_destroyed(self, parent):
+        self._parent_alive = False
+        self.cancel()
+
+    def cancel(self):
+        self.cancelled = True
+
+    def _current(self):
+        return not self.cancelled and self._parent_alive and self.is_current()
+
+    def _finish(self):
+        self.finished = True
+        if self._destroy_handler is not None and self._parent_alive:
+            self.parent.disconnect(self._destroy_handler)
+        self._destroy_handler = None
+
+    def _next(self):
+        if not self._current():
+            self._finish()
+            return False
+        block = next(self.blocks, None)
+        if block is None:
+            self._finish()
+            return False
+        threading.Thread(target=self._prepare, args=(block,), name='file-review', daemon=True).start()
+        return False
+
+    def _prepare(self, block):
+        from .change_journal import file_digest
+        try:
+            path = os.path.realpath(os.path.expanduser(block.path))
+            current_dirs = self.allowed_dirs() if callable(self.allowed_dirs) else self.allowed_dirs
+            if not is_allowed_path(path, current_dirs):
+                raise PermissionError(_("Path not allowed: {path}").format(path=path))
+            digest = file_digest(path)
+            identity = None
+            if os.path.isdir(os.path.dirname(path)):
+                info = os.stat(os.path.dirname(path))
+                identity = (info.st_dev, info.st_ino)
+            diff = preview_diff(path, block.content)
+            prepared = (block, path, digest, identity, diff)
+            error = None
+        except Exception as exception:
+            prepared, error = None, str(exception)
+        GLib.idle_add(self._prepared, prepared, error)
+
+    def _prepared(self, prepared, error):
+        if not self._current():
+            self._finish()
+            return False
+        if error is not None:
+            self.notify('error', _("Error writing file: {detail}").format(detail=error))
+            self._next()
+            return False
+        block, path, digest, identity, diff = prepared
+        response = _show_write_confirmation(self.parent, path,
+                                            block.content if diff is None else diff, diff is None)
+        # The dialog uses a nested GTK loop; cancellation/session change may
+        # have arrived while it was visible. Consent alone cannot revive it.
+        if response != Gtk.ResponseType.OK or not self._current():
+            self._finish()
+            return False
+        self.active = True
+        self.notify('writing', _("Writing approved file…"))
+        try:
+            threading.Thread(target=self._apply, args=(block, path, digest, identity),
+                             name='approved-file-write', daemon=False).start()
+        except RuntimeError as exception:
+            self._applied('error', str(exception))
+        return False
+
+    def _apply(self, block, path, digest, identity):
+        from .change_journal import ChangeJournal, file_digest
+        try:
+            if file_digest(path) != digest:
+                raise PermissionError(_("File changed since the preview was shown; review it again: {path}")
+                                      .format(path=path))
+            current_dirs = self.allowed_dirs() if callable(self.allowed_dirs) else self.allowed_dirs
+            if not is_allowed_path(path, current_dirs):
+                raise PermissionError('Path no longer allowed: ' + path)
+            if not is_privileged_path(path):
+                os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(text=True)
+            try:
+                with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                    stream.write(block.content)
+                (self.journal or ChangeJournal()).apply(temporary, path, digest,
+                                                      self.allowed_dirs, self.session_id, identity)
+            finally:
+                os.unlink(temporary)
+            status, message = 'written', path
+        except Exception as exception:
+            status, message = 'error', str(exception)
+        GLib.idle_add(self._applied, status, message)
+
+    def _applied(self, status, message):
+        self.active = False
+        # This belongs to the originating conversation regardless of the
+        # current request, cancellation, or whether its window still exists.
+        try:
+            formatted = (_("File written: {path}").format(path=message) if status == 'written'
+                         else _("Error writing file: {detail}").format(detail=message))
+            self.notify(status, formatted)
+        finally:
+            self._next()
+        return False
+
+
+def offer_file_blocks_async(parent, reply_text, notify, allowed_dirs=None, journal=None,
+                            session_id='', is_current=None):
+    """Offer at most three blocks without blocking GTK on filesystem/polkit I/O.
+
+    ``notify(status, message)`` runs on GTK; completed approved operations must
+    be saved to ``session_id`` by the caller even when ``is_current`` is false.
+    The ``writing`` status is progress only and should not enter the history.
+    ``is_current`` is only consulted for offers which have not started writing.
+    """
+    blocks = FileBlock.parse_all(reply_text)
+    if not HAS_GTK or not blocks or len(blocks) > 3:
+        return None
+    offer = FileOffer(parent, blocks, notify, allowed_dirs, journal, session_id, is_current)
+    GLib.idle_add(offer._next)
+    return offer

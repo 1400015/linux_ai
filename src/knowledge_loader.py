@@ -15,8 +15,15 @@ KNOWN_PROBES = frozenset(('', 'links', 'addresses', 'routes', 'routes6', 'disk',
 _bundled_unavailable = False
 
 
+class _YamlUnavailable(ImportError):
+    """The YAML dependency could not be imported by the strict loader."""
+
+
 def load_module(source):
-    import yaml
+    try:
+        import yaml
+    except ImportError as error:
+        raise _YamlUnavailable('PyYAML is unavailable') from error
 
     class StrictLoader(yaml.SafeLoader):
         def compose_node(self, parent, index):
@@ -108,7 +115,7 @@ def bundled_modules():
 
 
 def available_bundled_modules():
-    """Disable the entire YAML collection on corruption without blocking startup.
+    """Disable unavailable YAML references without blocking startup.
 
     The strict loader remains available to validation tools. No invalid or
     partially validated module gains authority; built-in Python references can
@@ -117,7 +124,7 @@ def available_bundled_modules():
     global _bundled_unavailable
     try:
         modules = bundled_modules()
-    except (OSError, ValueError, UnicodeError, RecursionError):
+    except (_YamlUnavailable, OSError, ValueError, UnicodeError, RecursionError):
         if not _bundled_unavailable:
             logging.getLogger(__name__).warning(
                 'Bundled YAML knowledge is unavailable; reinstall the application. '

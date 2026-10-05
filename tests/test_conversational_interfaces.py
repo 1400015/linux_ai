@@ -131,7 +131,7 @@ class TestConversationalGTK(unittest.TestCase):
     def test_local_completion_records_once_without_model_file_actions(self):
         window = self.window()
         reply = ActionReply('Available modes', 'needs_choice')
-        with patch.object(self.module.file_actions, 'offer_file_blocks') as files:
+        with patch.object(self.module.file_actions, 'offer_file_blocks_async') as files:
             self.module.MainWindow._complete_action_reply(window, 3, window._cancel_event, reply, 'owning-session')
         window._remember.assert_called_once_with('assistant', reply.text)
         window._add_ai_message.assert_called_once_with(reply.text, False)

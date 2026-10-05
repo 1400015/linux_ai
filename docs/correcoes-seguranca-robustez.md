@@ -1,8 +1,10 @@
 # Segurança, cancelamento e recuperação
 
-Estas alterações estão incluídas na versão **1.4.0**, conforme o
-[registo de alterações](alteracoes.md). A referência da build e o estado do
-checkout identificam o código usado em cada ensaio, incluindo alterações locais.
+A versão **1.4.1** inclui recuperação gráfica do histórico, operações de
+ficheiros em segundo plano e proteção de backups sensíveis, conforme o
+[registo de alterações](alteracoes.md). A referência da
+build e o estado do checkout identificam o código usado em cada ensaio,
+incluindo alterações locais.
 
 ## Diagnósticos e ocultação de segredos
 
@@ -97,9 +99,10 @@ respeitar também os contratos próprios.
 
 ## Conhecimento local degradado
 
-Um módulo YAML inválido, ausente ou ilegível desativa a coleção YAML completa,
-sem impedir o arranque da CLI ou da interface. O carregador estrito continua
-a recusar conteúdo inválido; não se usa uma coleção parcialmente validada.
+Um módulo YAML inválido, ausente ou ilegível, ou a ausência de PyYAML, desativa
+a coleção YAML completa sem impedir o arranque da CLI ou da interface. PyYAML
+continua a ser uma dependência exigida pela instalação. O carregador estrito
+continua a recusar conteúdo inválido; não se usa uma coleção parcialmente validada.
 As referências incorporadas em Python permanecem disponíveis, e os diagnósticos
 dependentes de procedimentos ausentes são desativados. As respostas offline
 e o contexto do modelo indicam explicitamente esta limitação. Reinstala a
@@ -114,7 +117,22 @@ de estrutura JSON. Mensagens aceitam até 131072 caracteres; os limites de
 a aplicar-se. Dados que ultrapassam limites e formatos de versão desconhecida
 são preservados, sem conversão automática.
 
-Para preservar o ficheiro completo e começar um histórico novo:
+Desde a versão 1.4.1, a interface valida o histórico antes de abrir a
+janela principal. Um documento inválido, uma versão desconhecida ou um limite
+excedido abre um diálogo com **Fazer backup e iniciar novo histórico** e
+**Cancelar**. A recuperação só começa após essa escolha; cancelar conserva o
+original e termina o arranque. A validação e a cópia correm fora da thread GTK.
+
+Se uma escrita falhar durante uma sessão, um aviso persistente indica que as
+mensagens não estão a ser guardadas. O aviso e a opção **Recuperar histórico**
+no menu da aplicação permitem rever e autorizar a recuperação. Novos pedidos de
+chat ficam bloqueados até ela terminar com sucesso. Uma escrita ou recuperação
+de ficheiro já aprovada tem de terminar antes de recuperar o histórico, para
+conservar o resultado na conversa de origem. Mensagens que o escritor
+já tinha em espera são conservadas no novo histórico; não se importam os dados
+inválidos ou de versão desconhecida do ficheiro preservado.
+
+Na CLI, para preservar o ficheiro completo e começar um histórico novo:
 
 ```bash
 python -m src.cli history recover --yes
@@ -131,6 +149,10 @@ o estado incerto e a localização do backup quando disponível.
 O backup pode conter informação privada. A recuperação não o envia a serviços
 remotos nem o converte em evidência de um ensaio. O lock existente serializa
 estas operações com os escritores de histórico da aplicação.
+
+O tratamento existente de JSON sintaticamente inválido continua a conservar
+uma cópia `.corrupt-*` antes da substituição automática. Um JSON válido com
+estrutura inválida ou versão desconhecida exige a recuperação explícita acima.
 
 ## Arquivar e recuperar alterações de ficheiros
 
@@ -165,6 +187,17 @@ A recuperação volta a verificar os caminhos autorizados, a identidade do
 diretório e os hashes do alvo e do backup. Um ficheiro alterado entretanto ou
 um backup ausente/modificado impede a reposição. O conteúdo que a reposição
 substitui também é conservado num backup de recuperação.
+
+Na interface da versão 1.4.1, a preparação dos previews, a
+escrita, a listagem do journal e a inspeção/reposição correm em trabalhadores.
+A revisão e a confirmação permanecem na thread GTK, que continua a processar
+eventos durante a autenticação. O lock da transação do journal mantém-se durante
+a operação de ficheiros para conservar a reserva do registo e dos backups.
+
+Cancelar ofertas seguintes ou fechar a janela não desfaz uma escrita já
+aprovada e iniciada. Essa operação termina e conserva o resultado efetivo no
+journal, incluindo falhas e estados incertos. Um resultado tardio pertence à
+conversa que autorizou a escrita.
 
 As falhas distinguem uma operação sem publicação de uma alteração já publicada
 com durabilidade incerta. Um erro posterior à substituição do ficheiro não é
@@ -209,7 +242,11 @@ DESTDIR=/caminho/absoluto/staging bash scripts/install-privileged-helpers.sh
 
 O helper recusa ficheiros de contas, autenticação e autorização, como
 `/etc/passwd`, `/etc/shadow`, `/etc/sudoers` e `sudoers.d`, políticas polkit/PAM
-e chaves privadas sensíveis. Também valida o conteúdo fonte pelo SHA-256 aprovado;
+e chaves privadas sensíveis. A versão 1.4.1 aplica a mesma recusa
+no cliente e no helper a variantes conhecidas de backup desses ficheiros em
+`/etc`, como `/etc/shadow-`, `/etc/passwd.bak`, `/etc/sudoers.tmp` e
+`/etc/.sudoers.swp`. Estes nomes de backup exigem a mesma administração manual
+que os ficheiros originais. Também valida o conteúdo fonte pelo SHA-256 aprovado;
 a autenticação não elimina a revalidação do alvo e do backup. O prazo de
 **120 segundos** dos helpers de ficheiros inclui autenticação polkit e execução,
 na escrita, inspeção e recuperação. Uma caixa de autenticação demorada não

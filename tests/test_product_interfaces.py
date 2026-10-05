@@ -455,7 +455,7 @@ class TestProductGtk(ProductFixtures):
         answer = 'Reviewed answer\n```bash\nsudo reboot\n```\n```file:/tmp/unsafe.conf\nchanged\n```'
         self.window.ai_client.stream_chat.side_effect = lambda messages, **options: iter([answer])
         with patch('src.main_window.review_document_context', return_value=True) as review, \
-                patch('src.main_window.file_actions.offer_file_blocks') as files:
+                patch('src.main_window.file_actions.offer_file_blocks_async') as files:
             self.send()
         reviewed = review.call_args.args[1]
         messages = self.window.ai_client.stream_chat.call_args.args[0]
@@ -473,7 +473,7 @@ class TestProductGtk(ProductFixtures):
             self.window._review_and_attach_image(self.image)
         answer = 'Screen analysis\n```bash\nsudo reboot\n```'
         self.window.ai_client.stream_chat.side_effect = lambda messages, **options: iter([answer])
-        with patch('src.main_window.file_actions.offer_file_blocks') as files:
+        with patch('src.main_window.file_actions.offer_file_blocks_async') as files:
             self.send()
         options = self.window.ai_client.stream_chat.call_args.kwargs
         self.assertEqual(options['images'], (self.image,))
@@ -494,7 +494,7 @@ class TestProductGtk(ProductFixtures):
         self.window.input_entry.set_text('Describe')
         with patch('src.main_window.review_image', return_value=True):
             self.window._review_and_attach_image(self.image)
-        with patch('src.main_window.file_actions.offer_file_blocks') as files:
+        with patch('src.main_window.file_actions.offer_file_blocks_async') as files:
             self.send()
         self.assertNotIn('PARTIAL IMAGE ANSWER', self.text())
         self.assertNotIn('PARTIAL IMAGE ANSWER', self.history.path.read_text())
@@ -509,7 +509,7 @@ class TestProductGtk(ProductFixtures):
         self.window.input_entry.set_text('network')
         self.window.documents_check.set_active(True)
         with patch('src.main_window.review_document_context') as review, \
-                patch('src.main_window.file_actions.offer_file_blocks') as files:
+                patch('src.main_window.file_actions.offer_file_blocks_async') as files:
             self.send()
         review.assert_not_called()
         self.window.ai_client.stream_chat.assert_not_called()
@@ -524,7 +524,7 @@ class TestProductGtk(ProductFixtures):
         self.window.actions.handle.return_value = None
         self.window.offline.propose.return_value = None
         self.window.input_entry.set_text('Ordinary next question')
-        with patch('src.main_window.file_actions.offer_file_blocks'):
+        with patch('src.main_window.file_actions.offer_file_blocks_async'):
             self.send()
         self.assertNotIn('unique-local-excerpt-314159', repr(self.window.ai_client.stream_chat.call_args.args[0]))
         self.assert_settled()
@@ -537,7 +537,7 @@ class TestProductGtk(ProductFixtures):
         self.window.input_entry.set_text('network')
         self.window.documents_check.set_active(True)
         with patch('src.main_window.review_document_context', return_value=True), \
-                patch('src.main_window.file_actions.offer_file_blocks') as files:
+                patch('src.main_window.file_actions.offer_file_blocks_async') as files:
             self.send()
         self.assertNotIn('PARTIAL DOCUMENT ANSWER', self.text())
         self.assertIn('The model is unavailable. Local document matches', self.text())
@@ -563,7 +563,7 @@ class TestProductGtk(ProductFixtures):
         self.window.actions.handle.return_value = None
         self.window.offline.propose.return_value = None
         self.window.input_entry.set_text('New question')
-        with patch('src.main_window.file_actions.offer_file_blocks'):
+        with patch('src.main_window.file_actions.offer_file_blocks_async'):
             self.send()
         self.assertNotIn('images', self.window.ai_client.stream_chat.call_args.kwargs)
         messages = self.window.ai_client.stream_chat.call_args.args[0]

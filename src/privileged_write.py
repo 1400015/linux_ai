@@ -21,13 +21,47 @@ SENSITIVE_FILES = frozenset({
 SENSITIVE_DIRECTORIES = ('/etc/sudoers.d', '/etc/polkit-1', '/etc/pam.d', '/etc/security',
                          '/etc/ssl/private', '/usr/libexec/linux-ai-assistant',
                          '/usr/share/polkit-1', '/usr/local/share/polkit-1')
+_ACCOUNT_FILES = frozenset(os.path.basename(path) for path in SENSITIVE_FILES
+                           if os.path.dirname(path) == '/etc')
+_BACKUP_EXTENSIONS = ('.bak', '.old', '.orig', '.save', '.tmp', '.undo',
+                      '.swp', '.swo', '.swx', '.dpkg-old', '.dpkg-new',
+                      '.dpkg-dist', '.rpmnew', '.rpmsave')
+
+
+def _is_account_backup(path):
+    """Recognize adjacent account-file backups without denying unrelated prefixes."""
+    parent, name = os.path.split(path)
+    if parent != '/etc':
+        return False
+    # Editors may wrap the original name (#sudoers#), hide the backup
+    # (.sudoers.swp), or create an Emacs lock file (.#sudoers).
+    if name.startswith('#') and name.endswith('#'):
+        name = name[1:-1]
+    elif name.startswith('.#'):
+        name = name[2:]
+    elif name.startswith('.'):
+        name = name[1:]
+    for original in _ACCOUNT_FILES:
+        if not name.startswith(original):
+            continue
+        suffix = name[len(original):]
+        if not suffix or suffix in ('-', '~'):
+            return True
+        if suffix.startswith('.~') and suffix.endswith('~') and suffix[2:-1].isdigit():
+            return True
+        for extension in _BACKUP_EXTENSIONS:
+            if suffix.startswith(extension):
+                remainder = suffix[len(extension):]
+                if not remainder or remainder[0] in '-.~' or remainder.isdigit():
+                    return True
+    return False
 
 
 def is_sensitive_path(path):
     """Account, authorization and system private-key files require manual administration."""
     resolved = os.path.realpath(os.path.expanduser(path))
     components = resolved.split(os.sep)
-    return (resolved in SENSITIVE_FILES
+    return (resolved in SENSITIVE_FILES or _is_account_backup(resolved)
             or resolved in (os.path.realpath('/usr/bin/pkexec'), os.path.realpath('/usr/bin/python3'))
             or any(resolved == directory or resolved.startswith(directory + os.sep)
                    for directory in SENSITIVE_DIRECTORIES)

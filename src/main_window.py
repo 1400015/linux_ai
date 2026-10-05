@@ -92,7 +92,7 @@ def safe_number(value, fallback, cast, minimum=None, maximum=None):
 class MainWindow(Gtk.Window):
     """Application main window"""
 
-    def __init__(self, app, config_manager, ai_client, system_utils):
+    def __init__(self, app, config_manager, ai_client, system_utils, history_store=None):
         super().__init__(title="Linux AI Assistant")
 
         self.app = app
@@ -178,8 +178,10 @@ class MainWindow(Gtk.Window):
         # History is persisted from a single background writer (FIFO) owned
         # by HistoryStore (GTK-free), so the GTK main loop never blocks on a
         # full file rewrite per message.
-        self.history_store = HistoryStore()
+        self.history_store = history_store if history_store is not None else HistoryStore()
         self.history_store.list_sessions()
+        self._history_recovering = False
+        self._file_action_controllers = []
         from .system_context import detect_system_context
         self.system_context = detect_system_context(self.offline.distro)
         self.offline.set_system_context(self.system_context)
@@ -205,6 +207,8 @@ class MainWindow(Gtk.Window):
         self._load_conversation_history()
         self._refresh_session_controls()
         self._refresh_mode_status()
+        self._history_watch_source = GLib.timeout_add_seconds(1, self._check_history_writer)
+        self.connect('destroy', self._stop_history_watch)
 
         logger.info("Main window initialized")
 
@@ -256,6 +260,10 @@ class MainWindow(Gtk.Window):
         """Flush pending history writes and stop the writer thread."""
         event = getattr(self, '_cancel_event', None)
         self._audit_closed = True
+        if getattr(self, '_history_watch_source', None) is not None:
+            self._stop_history_watch()
+        for controller in getattr(self, '_file_action_controllers', ()):
+            controller.cancel()
         if event is not None:
             event.set()
         actions = getattr(self, 'actions', None)
@@ -546,6 +554,17 @@ class MainWindow(Gtk.Window):
         self.mode_label = Gtk.Label(xalign=0, wrap=True)
         main_box.pack_start(self.mode_label, False, False, 0)
 
+        self.history_warning = Gtk.InfoBar()
+        self.history_warning.set_message_type(Gtk.MessageType.WARNING)
+        self.history_warning.set_no_show_all(True)
+        warning = Gtk.Label(label=_("Conversation history could not be saved. Recover it before continuing; pending messages have not been discarded."),
+                            xalign=0, wrap=True)
+        self.history_warning.get_content_area().pack_start(warning, True, True, 0)
+        warning.show()
+        self.history_warning.add_button(_("Recover history"), Gtk.ResponseType.OK)
+        self.history_warning.connect('response', self._recover_history)
+        main_box.pack_start(self.history_warning, False, False, 0)
+
         # Chat area
         chat_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         chat_area.set_property("name", "chat-area")
@@ -654,6 +673,10 @@ class MainWindow(Gtk.Window):
         history_item = Gtk.MenuItem(label=_("Conversation History"))
         history_item.connect("activate", self.on_history_clicked)
         menu.append(history_item)
+
+        recover_item = Gtk.MenuItem(label=_("Recover history"))
+        recover_item.connect('activate', self._recover_history)
+        menu.append(recover_item)
 
         # Statistics option
         stats_item = Gtk.MenuItem(label=_("Statistics"))
@@ -1403,8 +1426,60 @@ class MainWindow(Gtk.Window):
             for session in self.history_store.list_sessions():
                 self.session_combo.append(session['id'], session['title'])
             self.session_combo.set_active_id(self.history_store.active_session_id)
+        except (OSError, ValueError) as error:
+            self._show_history_warning(error)
         finally:
             self._refreshing_sessions = False
+
+    def _show_history_warning(self, error=None):
+        if error is not None:
+            logger.error("Conversation history needs attention: %s", error)
+        warning = getattr(self, 'history_warning', None)
+        if warning is not None:
+            warning.show()
+
+    def _check_history_writer(self):
+        if getattr(self, '_audit_closed', False):
+            return False
+        if self.history_store.last_error is not None:
+            self._show_history_warning()
+        return True
+
+    def _stop_history_watch(self, *args):
+        source = getattr(self, '_history_watch_source', None)
+        if source is not None:
+            GLib.source_remove(source)
+            self._history_watch_source = None
+
+    def _recover_history(self, *args):
+        if getattr(self, '_history_recovering', False):
+            return
+        if (any(controller.active for controller in getattr(self, '_file_action_controllers', ()))
+                or getattr(self, '_file_recovery_active', 0)):
+            self._add_system_message(_("Wait for the approved file operation to finish before recovering history."))
+            return
+        from .history_recovery import recover_history
+        self._history_recovering = True
+        try:
+            # A reply already in flight must not append after the replacement
+            # history has become a new conversation.
+            self._cancel_for_session_change()
+            result = recover_history(self, self.history_store, self.history_store.last_error)
+            if getattr(getattr(self, 'app', None), '_shutdown_pending', False):
+                return
+            if result.status == 'recovered':
+                self._renew_offline_assistant()
+                self._load_conversation_history()
+                self._refresh_session_controls()
+                self.history_warning.hide()
+                self._add_system_message(_("History recovered. Original backup: {path}").format(path=result.backup))
+            elif result.status == 'failed':
+                self._show_history_warning(result.error)
+        except (OSError, ValueError, RuntimeError) as error:
+            self._show_history_warning(error)
+            self._add_system_message(_("Could not recover history: {error}").format(error=error))
+        finally:
+            self._history_recovering = False
 
     def _refresh_mode_status(self):
         status = self.ai_client.provider_status()
@@ -1417,6 +1492,9 @@ class MainWindow(Gtk.Window):
         self._cancel_event.set()
         self._request_seq += 1
         self._active_request = self._request_seq
+        # Workers retain the cancelled event they were given. A fresh event
+        # lets the selected/recovered conversation render its stored replies.
+        self._cancel_event = threading.Event()
         self.is_loading = self.streaming = False
         self.cancel_btn.set_sensitive(False)
         self.chat_view.abort_stream()
@@ -1431,7 +1509,10 @@ class MainWindow(Gtk.Window):
 
     def _renew_offline_assistant(self):
         self.offline = offline_assistant.OfflineAssistant(self.system_utils, self.config)
-        self.offline.restore_diagnostic(self.history_store.get_diagnostic_state())
+        try:
+            self.offline.restore_diagnostic(self.history_store.get_diagnostic_state())
+        except (OSError, ValueError) as error:
+            self._show_history_warning(error)
 
     def _switch_session(self, identifier):
         self._cancel_for_session_change()
@@ -1541,6 +1622,10 @@ class MainWindow(Gtk.Window):
 
     def on_send_clicked(self):
         """Handler for send button click"""
+        if (getattr(self, '_history_recovering', False)
+                or getattr(getattr(self, 'history_store', None), 'last_error', None) is not None):
+            self._show_history_warning()
+            return
         if self.is_loading:
             logger.warning("A message is already being processed")
             return
@@ -2066,6 +2151,32 @@ class MainWindow(Gtk.Window):
             self._add_system_message(_("Could not save the operation result: {error}").format(error=error))
         return False
 
+    def _record_file_action_result(self, session_id, status, message):
+        """Retain the outcome of an approved operation in its own conversation."""
+        if status == 'writing':
+            if not getattr(self, '_audit_closed', False) and session_id == self.history_store.active_session_id:
+                self._add_system_message(message)
+            return False
+        if status not in ('written', 'restored', 'error'):
+            return False
+        store = self.history_store
+        current = session_id == store.active_session_id
+        if not getattr(self, '_audit_closed', False):
+            if current:
+                self._add_system_message(message)
+            else:
+                self._add_system_message(_("File operation completed in another conversation: {message}").format(message=message))
+        try:
+            if current and not getattr(self, '_audit_closed', False):
+                self._remember('assistant', message)
+            else:
+                store.append('assistant', message, session_id=session_id)
+        except (OSError, ValueError, RuntimeError) as error:
+            logger.error("Could not save the file operation result: %s", error)
+            if not getattr(self, '_audit_closed', False):
+                self._show_history_warning(error)
+        return False
+
     def _finalize_response(self, request_id: int, response_text: str,
                            cancelled: bool, allow_file_actions=True, history_text=None):
         """Persist the response and settle the UI (main loop only)."""
@@ -2102,20 +2213,32 @@ class MainWindow(Gtk.Window):
                         logger.error("Could not persist diagnostic progress: %s", error)
                         self._add_system_message(str(error))
 
-                # Offer file writes in expert mode. We are already on the main
-                # loop, so the dialogs can be created directly (GTK is not
-                # thread-safe).
+                # GTK owns the consent dialog; digest/preview and the approved
+                # transaction run in workers, including any polkit wait.
                 if self.expert_mode and allow_file_actions:
-                    file_actions.offer_file_blocks(
+                    session_id = self.history_store.active_session_id
+                    cancel_event = self._cancel_event
+                    controller = file_actions.offer_file_blocks_async(
                         self, response_text,
-                        lambda msg: GLib.idle_add(self._add_system_message, msg),
+                        lambda status, msg: self._record_file_action_result(session_id, status, msg),
                         lambda: self.config.get("permissions.allowed_edit_dirs", []),
-                        self.change_journal, self.history_store.active_session_id,
+                        self.change_journal, session_id,
+                        is_current=lambda: (not getattr(self, '_audit_closed', False)
+                                            and not getattr(self, '_history_recovering', False)
+                                            and request_id == self._active_request
+                                            and not cancel_event.is_set()
+                                            and session_id == self.history_store.active_session_id),
                     )
+                    controllers = getattr(self, '_file_action_controllers', None)
+                    if controllers is not None and controller is not None:
+                        controllers[:] = [item for item in controllers if not item.finished]
+                        controllers.append(controller)
 
         except (OSError, ValueError, RuntimeError) as error:
             logger.error("Could not finish or persist the response: %s", error)
             self._add_system_message(_("Could not save the response: {error}").format(error=error))
+            if getattr(getattr(self, 'history_store', None), 'last_error', None) is not None:
+                self._show_history_warning(error)
         finally:
             self._on_message_processed(request_id, cancelled)
         return False

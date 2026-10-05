@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Linux AI Assistant",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "width": 400,
     "height": 500,
     "x_position": 100,
@@ -9,6 +9,8 @@
     "opacity": 0.9,
     "always_on_top": true,
     "auto_start": false,
+    "global_shortcut_enabled": false,
+    "global_shortcut": "<Ctrl><Alt>space",
     "theme": "dark",
     "encryption_enabled": false,
     "display_independent_watchdog": false,
