@@ -10,18 +10,23 @@ from datetime import datetime, timezone
 import json
 import logging
 import math
+import os
 from pathlib import Path
 import queue
+import shutil
+import stat
+import tempfile
 import threading
 import time
 import uuid
 
-from .storage import update_json
+from .storage import JsonLimitError, atomic_json_write, json_lock, read_json, update_json
 from .task_state import validate_task_state
 
 MAX_HISTORY_MESSAGES = 1000
 MAX_SESSIONS = 100
 MAX_IMPORT_BYTES = 2 * 1024 * 1024
+MAX_HISTORY_BYTES = 16 * 1024 * 1024
 MAX_MESSAGE_CHARS = 128 * 1024
 MAX_SEARCH_RESULTS = 200
 HISTORY_VERSION = 1
@@ -40,6 +45,10 @@ def _timestamp(value, default=None):
         if 0 <= value < 253402300800 and math.isfinite(value):
             return value
     return time.time() if default is None else default
+
+
+def _file_identity(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
 def _diagnostic_state(value):
@@ -124,7 +133,8 @@ def _document(loaded):
         if dates:
             session["created_at"], session["updated_at"] = min(dates), max(dates)
         return {"version": HISTORY_VERSION, "active_session_id": session["id"], "sessions": [session]}
-    raise ValueError("Unsupported conversation history format")
+    raise ValueError("Unsupported conversation history format; original file preserved. "
+                     "Use history recover --yes to back it up and start a new history.")
 
 
 def _find(document, session_id):
@@ -169,6 +179,7 @@ class HistoryStore:
         self.last_error = None
         loaded = self._read()
         self._session_id = loaded.get("active_session_id", LEGACY_SESSION_ID) if isinstance(loaded, dict) else LEGACY_SESSION_ID
+        self._generation = loaded.get("recovery_generation") if isinstance(loaded, dict) else None
         self._writer = threading.Thread(target=self._loop, name="history-writer", daemon=True)
         self._writer.start()
         atexit.register(self.close)
@@ -179,13 +190,90 @@ class HistoryStore:
 
     def _read(self):
         try:
-            with self.path.open(encoding="utf-8") as stream:
-                return json.load(stream)
+            loaded = read_json(self.path, MAX_HISTORY_BYTES)
+            self._adopt_recovery(loaded)
+            return loaded
         except FileNotFoundError:
             return []
+        except JsonLimitError as error:
+            raise JsonLimitError(str(error) + ". Use history recover --yes to back it up and start a new history.") from None
         except (OSError, ValueError) as error:
             logging.getLogger(__name__).error("Error loading history: %s", error)
             return []
+
+    def _adopt_recovery(self, document):
+        if not isinstance(document, dict) or not hasattr(self, "_generation"):
+            return
+        generation = document.get("recovery_generation")
+        if (type(document.get("version")) is int and document["version"] == HISTORY_VERSION
+                and isinstance(generation, str) and generation != self._generation):
+            _document(document)
+            # Queued entries keep their old generation, so a reset cannot
+            # silently discard them as messages for a deleted conversation.
+            with self._state_lock:
+                self._generation = generation
+                self._session_id = document["active_session_id"]
+
+    @staticmethod
+    def recover_file(path=None, confirmed=False):
+        """Explicitly preserve all bytes privately before starting fresh.
+
+        Unknown versions are never interpreted or downgraded. The stable lock
+        serializes backup/reset with every cooperating history writer.
+        """
+        if confirmed is not True:
+            raise PermissionError("Explicit approval is required to recover history")
+        path = Path(path) if path is not None else Path.home() / ".config/linux_ai_assistant/history.json"
+        generation = uuid.uuid4().hex
+        session = _new_session("Recovered conversation")
+        document = {"version": HISTORY_VERSION, "active_session_id": session["id"],
+                    "sessions": [session], "recovery_generation": generation}
+        backup = None
+        complete = False
+        try:
+            with json_lock(path):
+                source_fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(source_fd, "rb") as source:
+                    original = os.fstat(source.fileno())
+                    if not stat.S_ISREG(original.st_mode):
+                        raise ValueError("History recovery requires a regular file")
+                    backup_fd, name = tempfile.mkstemp(prefix=path.name + ".recovered-", dir=str(path.parent))
+                    backup = Path(name)
+                    with os.fdopen(backup_fd, "wb") as target:
+                        shutil.copyfileobj(source, target, 65536)
+                        target.flush()
+                        os.fsync(target.fileno())
+                    current = os.stat(str(path), follow_symlinks=False)
+                    if (_file_identity(original) != _file_identity(current)
+                            or _file_identity(original) != _file_identity(os.fstat(source.fileno()))):
+                        raise OSError("History changed during recovery; original file preserved")
+                    directory_fd = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                    complete = True
+                    atomic_json_write(path, document, max_bytes=MAX_HISTORY_BYTES)
+        except BaseException as error:
+            if backup is not None:
+                if complete:
+                    error.recovery_backup = backup
+                else:
+                    try:
+                        backup.unlink()
+                    except OSError:
+                        pass
+            raise
+        return backup
+
+    def recover(self, confirmed=False):
+        backup = self.recover_file(self.path, confirmed=confirmed)
+        self._read()
+        if not self.flush():
+            error = OSError("History was backed up and reset, but pending messages could not be saved")
+            error.recovery_backup = backup
+            raise error from self.last_error
+        return backup
 
     def load_entries(self, session_id=None):
         """Read only the selected conversation, preserving message timestamps."""
@@ -210,9 +298,10 @@ class HistoryStore:
             raise ValueError("Conversation message is too large")
         with self._state_lock:
             if self._closed:
-                return
+                raise RuntimeError("Conversation history is closed")
             self._queue.put({"timestamp": _timestamp(timestamp), "role": role, "content": content,
-                             "session_id": session_id or self._session_id})
+                             "session_id": session_id or self._session_id,
+                             "_history_generation": self._generation})
 
     def flush(self, timeout=None):
         """Wait for all already queued messages; return False after a write failure."""
@@ -233,7 +322,7 @@ class HistoryStore:
             result.append(action(document))
             return document
 
-        update_json(self.path, update, [])
+        update_json(self.path, update, [], max_bytes=MAX_HISTORY_BYTES)
         return result[0]
 
     def _snapshot(self):
@@ -479,24 +568,36 @@ class HistoryStore:
             if isinstance(loaded, list) and targets <= {LEGACY_SESSION_ID}:
                 return merge_messages(loaded, incoming)
             document = _document(loaded)
+            groups = {}
             for target in targets:
+                messages = [item for item in incoming if isinstance(item, dict)
+                            and (session_id or item.get("session_id", LEGACY_SESSION_ID)) == target]
                 try:
                     session = _find(document, target)
                 except ValueError:
                     if session_id is not None:
                         raise
+                    generation = document.get("recovery_generation")
+                    recovered = [item for item in messages if generation is not None
+                                 and item.get("_history_generation") != generation]
+                    if recovered:
+                        groups.setdefault(document["active_session_id"], []).extend(recovered)
+                    messages = [item for item in messages if item not in recovered]
+                    if not messages:
+                        continue
                     # A delayed command/stream can finish after another process
                     # deletes its captured session. Do not recreate that session
                     # or retain this batch forever and poison unrelated writes.
                     logging.getLogger(__name__).warning(
                         "Discarding queued messages for deleted conversation %r", target)
                     continue
-                messages = [item for item in incoming if isinstance(item, dict)
-                            and (session_id or item.get("session_id", LEGACY_SESSION_ID)) == target]
+                groups.setdefault(target, []).extend(messages)
+            for target, messages in groups.items():
+                session = _find(document, target)
                 session["messages"] = merge_messages(session["messages"], messages)
                 session["updated_at"] = time.time()
             return document
-        return update_json(path, merge, [])
+        return update_json(path, merge, [], max_bytes=MAX_HISTORY_BYTES)
 
     def _loop(self):
         pending = []
@@ -518,7 +619,8 @@ class HistoryStore:
                     break
             if pending:
                 try:
-                    self.save_entries(self.path, pending, self.max_messages)
+                    saved = self.save_entries(self.path, pending, self.max_messages)
+                    self._adopt_recovery(saved)
                     pending = []
                     self.last_error = None
                 except Exception as error:

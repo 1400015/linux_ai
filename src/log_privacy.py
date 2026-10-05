@@ -12,19 +12,30 @@ import re
 _SECRET_LABEL = (r'(?:password|passwd|pwd|passphrase|token|secret|api[_-]?key|'
                  r'access[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|'
                  r'(?:http|ftp|proxy)[_-]?password|authorization|proxy[_-]?authorization|'
-                 r'cookie|set[_-]?cookie|oauth2[_-]?bearer|session[_-]?key)')
-_SECRET_OPTION = re.compile(r'(?i)^' + _SECRET_LABEL + r'$')
-_SECRET_ASSIGNMENT = re.compile(r'(?i)(?:^|[_-])' + _SECRET_LABEL + r'$')
+                 r'cookie|set[_-]?cookie|oauth2[_-]?bearer|session[_-]?key|'
+                 r'secret[_-]?key|encryption[_-]?key|pgpassword)')
+# Match the whole label, including environment-variable or option prefixes.
+# Starting at the suffix alone loses DB_PASSWORD at the word boundary. Keep
+# each prefix segment separate from its delimiter to avoid ambiguous nesting.
+_SECRET_NAME = r'_*(?:[a-z0-9]+[_-]+)*' + _SECRET_LABEL
+_SECRET_OPTION = re.compile(r'(?i)^' + _SECRET_NAME + r'$')
+_SECRET_ASSIGNMENT = re.compile(r'(?i)^' + _SECRET_NAME + r'$')
 _QUOTED = r'''(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*')'''
 _CREDENTIAL = re.compile(
-    r'(?i)(?P<prefix>(?<![\w-])(?:(?:--?)?' + _SECRET_LABEL
-    + r'''["']?[ \t]*[:=,][ \t]*|--?''' + _SECRET_LABEL + r'[ \t]+))'
+    r'(?i)(?P<prefix>(?<![\w-])(?:(?:--?)?' + _SECRET_NAME
+    + r'''["']?[ \t]*[:=,][ \t]*|--?''' + _SECRET_NAME + r'[ \t]+))'
     + r'(?P<value>' + _QUOTED + r'|[^\r\n]*)')
 _COMMAND_CREDENTIAL = re.compile(
-    r'(?i)(?P<prefix>(?<![\w-])(?:--?)?' + _SECRET_LABEL
+    r'(?i)(?P<prefix>(?<![\w-])(?:--?)?' + _SECRET_NAME
     + r'''["']?[ \t]*(?:[:=,][ \t]*|[ \t]+))'''
     + r'(?P<value>' + _QUOTED + r'|[^\r\n]*)')
 _COMMAND_CONTEXT = re.compile(r'(?i)\b(?:(?:running|executing)\s+)?command\s*:')
+_JWT = re.compile(
+    r'(?<![\w.-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.'
+    r'[A-Za-z0-9_-]{8,}(?![\w-]|\.[A-Za-z0-9_-])')
+_SLACK_TOKEN = re.compile(
+    r'(?<![\w-])xox(?:[baprs]-|e[.-]xox[baprs]-)[A-Za-z0-9-]{8,}(?![\w-])')
+_AWS_ACCESS_KEY_ID = re.compile(r'(?<![\w])(?:AKIA|ASIA)[A-Z0-9]{16}(?![\w])')
 
 
 def secret_option(value):
@@ -52,6 +63,11 @@ def redact_text(text):
         for line in text.split('\n'))
     text = re.sub(r'(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]+)\b',
                   '[token]', text)
+    text = _JWT.sub('[JWT removed]', text)
+    text = _SLACK_TOKEN.sub('[Slack token removed]', text)
+    # An AWS access-key ID identifies the account credential; it is not the
+    # corresponding secret access key, but should not travel in public reports.
+    text = _AWS_ACCESS_KEY_ID.sub('[AWS access key ID removed]', text)
     text = re.sub(r'(?i)\b(Bearer\s+)\S+', r'\1[redacted]', text)
     text = re.sub(r'(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@', r'\1[credentials]@', text)
     text = re.sub(r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b', '[email]', text)

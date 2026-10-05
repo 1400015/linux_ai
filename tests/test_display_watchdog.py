@@ -197,6 +197,60 @@ class TestDisplayWatchdog(unittest.TestCase):
         self.assertEqual(change.status, "reverted")
         self.assertEqual(self.read_state()["width"], 1920)
 
+    def _apply_with_receipt_failure(self, fail_reply=False):
+        # Inject only storage/channel faults into a real isolated worker. The
+        # existing fake native tool still applies and verifies the display.
+        root = str(Path(__file__).resolve().parents[1])
+        code = """import sys
+sys.path.insert(0, %r)
+from src import display_watchdog as worker
+def failed_receipt(*args):
+    raise OSError("synthetic receipt storage failure")
+worker._receipt = failed_receipt
+""" % root
+        if fail_reply:
+            code += """original_send = worker._send
+def failed_finish(fd, value):
+    if value.get("event") == "finished":
+        raise OSError("synthetic finished channel failure")
+    return original_send(fd, value)
+worker._send = failed_finish
+"""
+        code += "worker._worker(*(int(value) for value in sys.argv[1:]))\n"
+        real_popen = subprocess.Popen
+
+        def faulted_worker(argv, **kwargs):
+            self.assertEqual(argv[1], "-I")
+            self.assertEqual(Path(argv[2]).name, "display_watchdog.py")
+            return real_popen([argv[0], "-I", "-c", code] + argv[3:], **kwargs)
+
+        with patch("src.display_watchdog.subprocess.Popen", side_effect=faulted_worker):
+            return self.apply(timeout=5)
+
+    def test_receipt_failure_still_reports_verified_recovery(self):
+        change = self._apply_with_receipt_failure()
+        self.assertTrue(change.revert()[0])
+        self.assertEqual(change.status, "reverted")
+        self.assertEqual(self.read_state()["width"], 1920)
+        self.assertEqual(len(self.read_state()["commands"]), 2)
+        self.assertFalse(self.service._failed_recovery)
+
+    def test_receipt_failure_still_reports_confirmation(self):
+        change = self._apply_with_receipt_failure()
+        self.assertTrue(change.confirm()[0])
+        self.assertEqual(change.status, "kept")
+        self.assertEqual(self.read_state()["width"], 1280)
+        self.assertFalse(self.service._failed_recovery)
+
+    def test_receipt_and_reply_failure_preserve_uncertainty(self):
+        change = self._apply_with_receipt_failure(fail_reply=True)
+        self.assertFalse(change.revert()[0])
+        self.assertEqual(change.status, "failed")
+        self.assertEqual(self.read_state()["width"], 1920)
+        self.assertTrue(self.service._failed_recovery)
+        self.assertIsNone(self.service.apply_mode(
+            DisplayMode("screen", 1280, 720, 60, "1280x720@60Hz"))[0])
+
     def test_parent_sigkill_survivor_restores_and_leaves_private_receipt(self):
         self._exercise_parent_sigkill(delay=0)
 

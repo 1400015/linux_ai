@@ -9,6 +9,7 @@ LANGUAGE_NAMES = {
 
 
 def build_system_message(expert=False, distro=None, query="", lang="en", context=None):
+    from .knowledge_loader import knowledge_warning
     language = LANGUAGE_NAMES.get(lang, "English")
     instructions = [
         "You are a helpful Linux assistant. Explain clearly and concisely.",
@@ -39,4 +40,7 @@ def build_system_message(expert=False, distro=None, query="", lang="en", context
             "Check its applicability against the actual system and cite procedure identifiers when useful.",
             reference,
         ])
+    warning = knowledge_warning(lang)
+    if warning:
+        instructions.append(warning)
     return {"role": "system", "content": "\n\n".join(instructions)}

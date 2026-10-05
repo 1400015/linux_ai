@@ -1,0 +1,42 @@
+#!/usr/bin/python3 -IS
+"""Fixed entry point for the existing restricted runit activation helper."""
+
+import os
+import stat
+import sys
+
+if os.geteuid() != 0:
+    print('Authorize this installed helper through polkit.', file=sys.stderr)
+    sys.exit(1)
+
+directory = '/usr/libexec/linux-ai-assistant'
+
+
+def protected_path(path):
+    current = '/'
+    root = os.lstat(current)
+    if root.st_uid != 0 or root.st_mode & 0o022 or not stat.S_ISDIR(root.st_mode):
+        raise PermissionError('The filesystem root is unsafe.')
+    for component in path.split('/')[1:]:
+        current = os.path.join(current, component)
+        info = os.lstat(current)
+        if (info.st_uid != 0 or info.st_mode & 0o022
+                or not (stat.S_ISDIR(info.st_mode) or
+                        (current == path and stat.S_ISREG(info.st_mode)))):
+            raise PermissionError('The installed privileged helper path is unsafe.')
+
+
+try:
+    for path in (directory, directory + '/services', directory + '/privileged_service.py'):
+        protected_path(path)
+    for path in sys.path:
+        if path and os.path.exists(path):
+            protected_path(path)
+except OSError as error:
+    print(str(error), file=sys.stderr)
+    sys.exit(1)
+
+sys.path.insert(0, directory)
+from privileged_service import main
+
+sys.exit(main(sys.argv[1:]))

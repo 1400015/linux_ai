@@ -6,18 +6,28 @@ import logging
 import math
 import re
 import threading
+from contextlib import contextmanager
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from .storage import JsonWriteCommittedError, update_json
-from .stream_events import iter_sse_json
+from .bounded_http import (
+    close_response, bounded_request, iter_chunks,
+    HTTPReadCancelled, HTTPReadLimitError, HTTPReadError,
+)
+from .stream_events import (
+    iter_sse_json, iter_bounded_lines, StreamLimitError, StreamReadCancelled,
+    MAX_RESPONSE_CHARS, MAX_STREAM_EVENTS, MAX_STREAM_SECONDS, MAX_STREAM_BYTES,
+)
 from .provider_modes import (
     ASSISTANCE_MODES, LocalModelError, ProviderStatus, discover_local_models,
     make_local_request, model_is_installed, validate_local_url, validate_model_name,
 )
+from requests import Response
 from requests.exceptions import RequestException, Timeout
+from .log_privacy import redact_text
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 try:
@@ -56,6 +66,121 @@ class ProviderNotConfigured(AIProviderError):
     """Provider sem chave/base_url configurados — permanente, sem retry."""
 
 
+class AIRequestCancelled(AIProviderError):
+    """The user cancelled this request; do not retry or fall back offline."""
+
+
+class AIResponseLimitError(AIProviderError):
+    """A provider exceeded local response limits; its response is incomplete."""
+
+
+_REQUEST_CONTEXT = threading.local()
+
+
+def _request_event(explicit=None):
+    return explicit if explicit is not None else getattr(_REQUEST_CONTEXT, 'cancel_event', None)
+
+
+def _check_cancelled(event=None):
+    event = _request_event(event)
+    if event is not None and event.is_set():
+        raise AIRequestCancelled("AI request cancelled")
+    deadline = getattr(_REQUEST_CONTEXT, 'deadline', None)
+    if deadline is not None and time.monotonic() >= deadline:
+        raise AIResponseLimitError("AI request exceeded the total time limit")
+
+
+@contextmanager
+def _request_scope(cancel_event):
+    previous = getattr(_REQUEST_CONTEXT, 'cancel_event', None)
+    previous_deadline = getattr(_REQUEST_CONTEXT, 'deadline', None)
+    _REQUEST_CONTEXT.cancel_event = _request_event(cancel_event)
+    deadline = time.monotonic() + MAX_STREAM_SECONDS
+    _REQUEST_CONTEXT.deadline = min(previous_deadline, deadline) if previous_deadline is not None else deadline
+    try:
+        _check_cancelled()
+        yield
+    finally:
+        _REQUEST_CONTEXT.cancel_event = previous
+        _REQUEST_CONTEXT.deadline = previous_deadline
+
+
+def _wait_for_retry(seconds, cancel_event=None):
+    event = _request_event(cancel_event)
+    _check_cancelled(event)
+    deadline = getattr(_REQUEST_CONTEXT, 'deadline', None)
+    if deadline is not None:
+        seconds = min(seconds, max(0, deadline - time.monotonic()))
+    if event is None:
+        time.sleep(seconds)
+    elif event.wait(float(seconds)):
+        raise AIRequestCancelled("AI request cancelled during retry wait")
+    _check_cancelled(event)
+
+
+def _before_retry_sleep(state):
+    _REQUEST_CONTEXT.retry_event = _request_event(state.kwargs.get('cancel_event'))
+
+
+def _retry_sleep(seconds):
+    event = getattr(_REQUEST_CONTEXT, 'retry_event', None)
+    try:
+        _wait_for_retry(seconds, event)
+    finally:
+        _REQUEST_CONTEXT.retry_event = None
+
+
+def _bounded_provider_events(response, cancel_event=None):
+    try:
+        yield from iter_sse_json(response, _request_event(cancel_event),
+                                 max_seconds=_remaining_stream_seconds())
+    except StreamReadCancelled as error:
+        raise AIRequestCancelled(str(error)) from error
+    except StreamLimitError as error:
+        raise AIResponseLimitError(str(error)) from error
+
+
+def _bounded_provider_lines(response, cancel_event=None):
+    try:
+        yield from iter_bounded_lines(response, _request_event(cancel_event),
+                                      max_seconds=_remaining_stream_seconds())
+    except StreamReadCancelled as error:
+        raise AIRequestCancelled(str(error)) from error
+    except StreamLimitError as error:
+        raise AIResponseLimitError(str(error)) from error
+
+
+def _remaining_stream_seconds():
+    _check_cancelled()
+    deadline = getattr(_REQUEST_CONTEXT, 'deadline', None)
+    if deadline is None:
+        return MAX_STREAM_SECONDS
+    return min(MAX_STREAM_SECONDS, max(0.001, deadline - time.monotonic()))
+
+
+def _bounded_text(chunks):
+    total = 0
+    deadline = time.monotonic() + _remaining_stream_seconds()
+    try:
+        for chunk in chunks:
+            _check_cancelled()
+            if time.monotonic() >= deadline:
+                raise AIResponseLimitError("Provider response exceeded the total time limit")
+            if not isinstance(chunk, str):
+                raise AIProviderError("Provider stream returned invalid text")
+            total += len(chunk)
+            if total > MAX_RESPONSE_CHARS:
+                raise AIResponseLimitError(
+                    "AI response exceeds the local limit of 131072 characters; "
+                    "the incomplete response was not saved. Ask for a shorter response."
+                )
+            yield chunk
+    finally:
+        close = getattr(chunks, 'close', None)
+        if callable(close):
+            close()
+
+
 class _RetryAfterRateLimit(RequestException):
     """Sinaliza um 429 que deve ser repetido depois de `Retry-After`.
 
@@ -87,6 +212,8 @@ NETWORK_RETRY = dict(
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception(_is_transient),
     reraise=True,
+    before_sleep=_before_retry_sleep,
+    sleep=_retry_sleep,
 )
 
 
@@ -95,6 +222,65 @@ def redact_url(url: str) -> str:
     if not url:
         return url
     return _SECRET_QUERY_RE.sub(r"\1***", url)
+
+
+MAX_ERROR_BODY_BYTES = 16 * 1024
+MAX_ERROR_BODY_SECONDS = 1.0
+
+
+def _safe_provider_error(value):
+    # Redact before truncating: cutting a quoted secret or a token first can
+    # prevent recognizing it. This is shared with diagnostics/trial reports.
+    return redact_text(redact_url(str(value)))[:500]
+
+
+def _error_body_snippet(response, cancel_event=None):
+    """Read a complete bounded diagnostic without downloading response.text."""
+    event = _request_event(cancel_event)
+    if not callable(getattr(response, 'iter_content', None)):
+        # Third-party shims own their diagnostic-reading contract. Do not
+        # invoke arbitrary .text properties merely to log an HTTP failure.
+        return ''
+    body = bytearray()
+    chunks = iter_chunks(response, MAX_ERROR_BODY_BYTES,
+                         min(MAX_ERROR_BODY_SECONDS, _remaining_stream_seconds()),
+                         event, chunk_size=1024)
+    try:
+        for chunk in chunks:
+            body.extend(chunk)
+    except HTTPReadCancelled:
+        raise AIRequestCancelled('AI request cancelled') from None
+    except (HTTPReadError, ValueError):
+        # An incomplete token may evade redaction after truncation. Omit the
+        # entire incomplete body; the HTTP status still explains the failure.
+        # A diagnostic timeout never initiates a second read.
+        body.clear()
+    finally:
+        chunks.close()
+    _check_cancelled(event)
+    return _safe_provider_error(body.decode('utf-8', errors='replace'))
+
+
+def _cache_bounded_json_response(response, timeout, cancel_event=None):
+    """Keep existing response.json adapters while bounding real HTTP bodies."""
+    if not isinstance(response, Response):
+        return  # Explicit response shims/plugins retain their own contract.
+    chunks = iter_chunks(response, MAX_STREAM_BYTES,
+                         min(float(timeout), _remaining_stream_seconds()),
+                         _request_event(cancel_event))
+    try:
+        body = b''.join(chunks)
+    except HTTPReadCancelled:
+        raise AIRequestCancelled('AI request cancelled') from None
+    except HTTPReadLimitError:
+        raise AIResponseLimitError('Provider JSON response exceeded its local byte, time or reader limit') from None
+    except HTTPReadError:
+        raise AIProviderError('Provider JSON response could not be read') from None
+    finally:
+        chunks.close()
+    _check_cancelled(cancel_event)
+    response._content = body
+    response._content_consumed = True
 
 
 class AIClient:
@@ -222,13 +408,17 @@ class AIClient:
         """Get API key for a provider"""
         return self.config.get_api_key(provider)
 
-    def list_remote_models(self, provider: Optional[str] = None, timeout: float = 8.0) -> List[str]:
+    def list_remote_models(self, provider: Optional[str] = None, timeout: float = 8.0,
+                           cancel_event=None) -> List[str]:
         """Explicit discovery only; local/offline policies prohibit remote probes."""
         from .remote_models import ModelDiscoveryError, discover_remote_models
         if self.get_assistance_mode() in ('offline', 'local'):
             raise ModelDiscoveryError('Remote model listing is disabled in offline and local modes.')
         selected = provider or self.config.get('api.default_provider', 'openrouter')
-        return discover_remote_models(selected, self._get_api_config(selected), self._get_api_key(selected), timeout=timeout)
+        options = {'timeout': timeout}
+        if cancel_event is not None:
+            options['cancel_event'] = cancel_event
+        return discover_remote_models(selected, self._get_api_config(selected), self._get_api_key(selected), **options)
 
     def get_supported_providers(self) -> List[str]:
         """Get list of supported providers"""
@@ -565,78 +755,108 @@ class AIClient:
 
     @retry(**NETWORK_RETRY)
     def _make_request(self, url: str, payload: Dict, headers: Optional[Dict] = None,
-                     timeout: Optional[int] = None, stream: bool = False):
+                     timeout: Optional[int] = None, stream: bool = False,
+                     cancel_event=None):
         """Make request with retry and error handling"""
         timeout = timeout or self.DEFAULT_TIMEOUT
+        deadline = getattr(_REQUEST_CONTEXT, 'deadline', None)
+        if deadline is not None:
+            timeout = min(timeout, max(0.001, deadline - time.monotonic()))
         merged_headers = {**self.session.headers, **(headers or {})}
+        # Stream the transport even for JSON calls: Requests must not eagerly
+        # download an unlimited success/error body before our readers run.
+        # The decoder bounds both these encodings, including gzip headers.
+        merged_headers['Accept-Encoding'] = 'gzip, deflate'
         safe_url = redact_url(url)
 
         response = None
         try:
+            _check_cancelled(cancel_event)
             local_settings = self._local_settings()
             try:
                 local_base = validate_local_url(local_settings["base_url"], self._strict_local(local_settings))
             except LocalModelError:
                 local_base = ""
-            if local_base and url == local_base + "/chat/completions":
-                response = make_local_request(url, payload, merged_headers, timeout, stream)
-            elif stream:
-                response = self.session.post(
+            def send_request():
+                if local_base and url == local_base + "/chat/completions":
+                    return make_local_request(url, payload, merged_headers, timeout, True)
+                return self.session.post(
                     url, json=payload, headers=merged_headers, timeout=timeout, stream=True
                 )
-            else:
-                response = self.session.post(
-                    url, json=payload, headers=merged_headers, timeout=timeout
-                )
 
+            event = _request_event(cancel_event)
+            if event is not None:
+                try:
+                    response = bounded_request(send_request, timeout, event)
+                except HTTPReadCancelled as error:
+                    raise AIRequestCancelled("AI request cancelled") from error
+                except HTTPReadLimitError as error:
+                    raise AIResponseLimitError("HTTP request exceeded its local time or reader limit") from error
+                except HTTPReadError as error:
+                    category = error.retryable_network_failure
+                    if category == 'timeout':
+                        raise Timeout("HTTP request timed out") from None
+                    if category == 'connection':
+                        raise RequestsConnectionError("HTTP connection failed") from None
+                    raise AIProviderError("HTTP request failed") from None
+            else:
+                response = send_request()
+
+            _check_cancelled(cancel_event)
             # Handle rate limiting: honor Retry-After (capped) and let
             # tenacity retry within NETWORK_RETRY's attempt budget.
             if response.status_code == 429:
                 retry_after = self._parse_retry_after(response.headers.get('Retry-After'))
-                response.close()
+                close_response(response)
+                response = None
                 logger.warning(
                     f"Rate limit hit for {safe_url}. "
                     f"Waiting {retry_after} seconds..."
                 )
-                time.sleep(retry_after)
+                _wait_for_retry(retry_after, cancel_event)
                 raise _RetryAfterRateLimit()
 
             response.raise_for_status()
+            if not stream:
+                _cache_bounded_json_response(response, timeout, cancel_event)
             return response
 
+        except (AIRequestCancelled, AIResponseLimitError):
+            if response is not None:
+                close_response(response)
+            raise
         except _RetryAfterRateLimit:
             # Let tenacity retry (transient by policy)
             raise
         except Timeout as e:
+            _check_cancelled(cancel_event)
             logger.error(f"Timeout connecting to {safe_url}: {redact_url(str(e))}")
             raise
         except RequestException as e:
+            if _request_event(cancel_event) is not None and _request_event(cancel_event).is_set():
+                if response is not None:
+                    close_response(response)
+                raise AIRequestCancelled("AI request cancelled") from e
             # requests embeds the full original URL in the exception text,
             # which can carry ?key=<API_KEY> - redact before logging.
             body_snippet = ""
             if response is not None:
                 try:
-                    # O body do provider (JSON com "invalid model",
-                    # "insufficient credits", "key disabled", ...) é o único
-                    # sítio onde se diagnostica um 4xx; descartá-lo tornava
-                    # os erros impossíveis de perceber.
-                    body_snippet = response.text[:500]
-                except Exception:
-                    pass
-                response.close()
+                    body_snippet = _error_body_snippet(response, cancel_event)
+                finally:
+                    close_response(response)
+            safe_error = _safe_provider_error(e)
             logger.error(
-                f"Request error for {safe_url}: {redact_url(str(e))}"
-                + (f" | body: {redact_url(body_snippet)}" if body_snippet else "")
+                f"Request error for {safe_url}: {safe_error}"
+                + (f" | body: {body_snippet}" if body_snippet else "")
             )
-            # Falha estruturada com a response anexada: a UI/CLI apanham-na
-            # por tipo e `_is_transient` continua a decidir o retry (5xx).
+            # Retain the response/status for the established 5xx retry policy.
             raise AIProviderError(
-                f"{redact_url(str(e))}" + (f" | {redact_url(body_snippet)}" if body_snippet else ""),
-                response=response,
+                safe_error + (f" | {body_snippet}" if body_snippet else ""), response=response,
             ) from e
         except Exception as e:
             if response is not None:
-                response.close()
+                close_response(response)
             logger.error(f"Unexpected error in request for {safe_url}: {redact_url(str(e))}")
             raise AIProviderError(redact_url(str(e))) from e
 
@@ -664,9 +884,9 @@ class AIClient:
 
     @staticmethod
     def _iter_sse_openai_style(response, usage_events: Optional[list] = None):
-        for data in iter_sse_json(response):
+        for data in _bounded_provider_events(response):
             if data.get("error"):
-                raise AIProviderError("Provider stream error: " + redact_url(str(data["error"])))
+                raise AIProviderError("Provider stream error: " + _safe_provider_error(data["error"]))
             if usage_events is not None and isinstance(data.get("usage"), dict):
                 usage_events.append(data["usage"])
             choices = data.get("choices") or []
@@ -677,9 +897,9 @@ class AIClient:
 
     @staticmethod
     def _iter_sse_anthropic(response, usage_events: Optional[list] = None):
-        for data in iter_sse_json(response):
+        for data in _bounded_provider_events(response):
             if data.get("type") == "error":
-                raise AIProviderError("Anthropic stream error: " + redact_url(str(data.get("error"))))
+                raise AIProviderError("Anthropic stream error: " + _safe_provider_error(data.get("error")))
             if usage_events is not None:
                 usage = (data.get("message") or {}).get("usage") if data.get("type") == "message_start" else data.get("usage")
                 if isinstance(usage, dict):
@@ -691,10 +911,14 @@ class AIClient:
     @staticmethod
     def _iter_sse_cohere(response, usage_events: Optional[list] = None):
         """Cohere v1 is newline-delimited JSON, not the v2 SSE contract."""
-        for raw in response.iter_lines():
+        events = 0
+        for raw in _bounded_provider_lines(response):
             line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
             if not line:
                 continue
+            events += 1
+            if events > MAX_STREAM_EVENTS:
+                raise AIResponseLimitError("Provider stream exceeded the local event limit")
             if line.startswith("data:"):
                 line = line[5:].lstrip(" ")
             try:
@@ -714,13 +938,13 @@ class AIClient:
                 if data.get("finish_reason") in {"ERROR", "ERROR_TOXIC"}:
                     raise AIProviderError("Cohere stream failed: " + str(data.get("finish_reason")))
             elif event == "error" or data.get("error"):
-                raise AIProviderError("Cohere stream error: " + redact_url(str(data.get("error") or data.get("message"))))
+                raise AIProviderError("Cohere stream error: " + _safe_provider_error(data.get("error") or data.get("message")))
 
     @staticmethod
     def _iter_sse_google(response, usage_events: Optional[list] = None):
-        for data in iter_sse_json(response):
+        for data in _bounded_provider_events(response):
             if data.get("error"):
-                raise AIProviderError("Google stream error: " + redact_url(str(data["error"])))
+                raise AIProviderError("Google stream error: " + _safe_provider_error(data["error"]))
             block = (data.get("promptFeedback") or {}).get("blockReason")
             if block:
                 raise AIProviderError("Google blocked the prompt: " + str(block))
@@ -759,7 +983,19 @@ class AIClient:
         return True
 
     def chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
-             temperature: float = 0.7, max_tokens: int = 2000) -> Optional[str]:
+             temperature: float = 0.7, max_tokens: int = 2000,
+             cancel_event=None) -> Optional[str]:
+        """Return one bounded response, optionally cancelling retry waits."""
+        with _request_scope(cancel_event):
+            result = self._chat_response(messages, provider, model, temperature, max_tokens)
+            _check_cancelled()
+            if isinstance(result, str) and len(result) > MAX_RESPONSE_CHARS:
+                raise AIResponseLimitError("AI response exceeds the local limit of 131072 characters")
+            return result
+
+    def _chat_response(self, messages: List[Dict[str, str]], provider: Optional[str] = None,
+                       model: Optional[str] = None, temperature: float = 0.7,
+                       max_tokens: int = 2000) -> Optional[str]:
         """
         Send messages to the AI API and get a response.
 
@@ -836,6 +1072,8 @@ class AIClient:
             else:
                 logger.error(f"Unsupported provider: {provider}")
                 return None
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except AIProviderError as e:
             logger.error(f"Error communicating with {provider}: {redact_url(str(e))}")
             return None
@@ -883,7 +1121,7 @@ class AIClient:
             try:
                 data = response.json()
             finally:
-                response.close()
+                close_response(response)
 
             self._record_usage(provider, data)
 
@@ -924,11 +1162,11 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                for chunk in self._iter_sse_openai_style(response, usage_events):
+                for chunk in _bounded_text(self._iter_sse_openai_style(response, usage_events)):
                     received.append(chunk)
                     yield chunk
             finally:
-                response.close()
+                close_response(response)
                 self._finish_stream_usage(provider, usage_events, messages,
                                           "".join(received))
         except AIProviderError:
@@ -980,6 +1218,8 @@ class AIClient:
 
         try:
             return self._chat_openai_style("openrouter", url, payload, headers, timeout)
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except AIProviderError as e:
             logger.error(f"OpenRouter error: {redact_url(str(e))}")
             return None
@@ -1032,7 +1272,7 @@ class AIClient:
             try:
                 data = response.json()
             finally:
-                response.close()
+                close_response(response)
 
             self._record_usage("google_ai_studio", data)
 
@@ -1120,12 +1360,12 @@ class AIClient:
             try:
                 data = response.json()
             finally:
-                response.close()
+                close_response(response)
 
             self._record_usage("anthropic", data)
 
             if data.get("type") == "error":
-                logger.error(f"Anthropic error: {data.get('error', {}).get('message', 'Unknown')}")
+                logger.error("Anthropic error: %s", _safe_provider_error(data.get('error', {}).get('message', 'Unknown')))
                 return None
 
             # Get content from the first reply
@@ -1142,6 +1382,8 @@ class AIClient:
         except KeyError as e:
             logger.error(f"Invalid response format from Anthropic: {redact_url(str(e))}")
             return None
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except Exception as e:
             logger.error(f"Anthropic error: {redact_url(str(e))}")
             return None
@@ -1162,6 +1404,8 @@ class AIClient:
         }
         try:
             return self._chat_openai_style("mistral", url, payload, headers, timeout)
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except AIProviderError as e:
             logger.error(f"Mistral error: {redact_url(str(e))}")
             return None
@@ -1182,6 +1426,8 @@ class AIClient:
         }
         try:
             return self._chat_openai_style("groq", url, payload, headers, timeout)
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except AIProviderError as e:
             logger.error(f"Groq error: {redact_url(str(e))}")
             return None
@@ -1235,7 +1481,7 @@ class AIClient:
             try:
                 data = response.json()
             finally:
-                response.close()
+                close_response(response)
 
             meta = data.get("meta") or {}
             self._record_usage("cohere", {"usage": meta.get("billed_units") or meta.get("tokens") or {}})
@@ -1246,6 +1492,8 @@ class AIClient:
         except KeyError as e:
             logger.error(f"Invalid response format from Cohere: {redact_url(str(e))}")
             return None
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except Exception as e:
             logger.error(f"Cohere error: {redact_url(str(e))}")
             return None
@@ -1262,12 +1510,26 @@ class AIClient:
         }
         try:
             return self._chat_openai_style("local_llm", url, payload, {}, timeout)
+        except (AIRequestCancelled, AIResponseLimitError):
+            raise
         except AIProviderError as e:
             logger.error(f"Local model error: {redact_url(str(e))}")
             return None
 
     def stream_chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
-                    temperature: float = 0.7, max_tokens: int = 2000):
+                    temperature: float = 0.7, max_tokens: int = 2000,
+                    cancel_event=None):
+        """Yield bounded text, closing the provider generator on cancel/error."""
+        with _request_scope(cancel_event):
+            stream = self._stream_chat_response(messages, provider, model, temperature, max_tokens)
+            try:
+                yield from _bounded_text(stream)
+            finally:
+                stream.close()
+
+    def _stream_chat_response(self, messages: List[Dict[str, str]], provider: Optional[str] = None,
+                              model: Optional[str] = None, temperature: float = 0.7,
+                              max_tokens: int = 2000):
         """
         AI response stream (generator).
 
@@ -1396,11 +1658,11 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                for chunk in self._iter_sse_anthropic(response, usage_events):
+                for chunk in _bounded_text(self._iter_sse_anthropic(response, usage_events)):
                     received.append(chunk)
                     yield chunk
             finally:
-                response.close()
+                close_response(response)
                 self._finish_stream_usage("anthropic", usage_events, messages,
                                           "".join(received))
         except AIProviderError:
@@ -1491,11 +1753,11 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                for chunk in self._iter_sse_cohere(response, usage_events):
+                for chunk in _bounded_text(self._iter_sse_cohere(response, usage_events)):
                     received.append(chunk)
                     yield chunk
             finally:
-                response.close()
+                close_response(response)
                 self._finish_stream_usage("cohere", usage_events, messages, "".join(received))
         except AIProviderError:
             raise
@@ -1534,11 +1796,11 @@ class AIClient:
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                for chunk in self._iter_sse_google(response, usage_events):
+                for chunk in _bounded_text(self._iter_sse_google(response, usage_events)):
                     received.append(chunk)
                     yield chunk
             finally:
-                response.close()
+                close_response(response)
                 self._finish_stream_usage("google_ai_studio", usage_events,
                                           messages, "".join(received))
         except AIProviderError:

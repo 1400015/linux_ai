@@ -552,6 +552,14 @@ class OfflineAssistant:
 
     def handle(self, message: str, lang: str = "en") -> Reply:
         """Answer `message` using only local knowledge."""
+        from .knowledge_loader import knowledge_warning
+        reply = self._handle(message, lang)
+        warning = knowledge_warning(lang)
+        if warning:
+            reply.text = warning + '\n\n' + reply.text
+        return reply
+
+    def _handle(self, message: str, lang: str = "en") -> Reply:
         if lang not in _TEXTS:
             lang = "en"
         text = (message or "").strip()

@@ -20,9 +20,9 @@ import logging
 
 from . import device_dialogs, dock, file_actions, offline_assistant
 from .device_actions import split_offer
-from .ai_client import AIProviderError
+from .ai_client import AIClient, AIProviderError, AIRequestCancelled, AIResponseLimitError
 from .chat_view import ChatView
-from .history_store import HistoryStore, MAX_HISTORY_MESSAGES
+from .history_store import HistoryStore, MAX_HISTORY_MESSAGES, MAX_MESSAGE_CHARS
 from .i18n import _, get_language
 from .assistant_context import build_system_message
 from .conversation_dialog import show_conversations
@@ -1384,10 +1384,12 @@ class MainWindow(Gtk.Window):
         memória tem o mesmo teto de 1000 mensagens do writer, para sessões
         longas não reterem memória ilimitada.
         """
+        # Validate/enqueue first. A rejected history entry must not leave an
+        # apparently saved message in the context of the next request.
+        self._save_message_to_history(role, content)
         self.conversation_history.append({"role": role, "content": content})
         if len(self.conversation_history) > MAX_HISTORY_MESSAGES:
             del self.conversation_history[:-MAX_HISTORY_MESSAGES]
-        self._save_message_to_history(role, content)
 
     def _get_context_message(self) -> Optional[Dict[str, str]]:
         query = next((item['content'] for item in reversed(self.conversation_history)
@@ -1424,13 +1426,22 @@ class MainWindow(Gtk.Window):
         if not text:
             return
 
+        if len(text) > MAX_MESSAGE_CHARS:
+            self._add_system_message(_("Message exceeds the local history limit. Shorten it before sending."))
+            return
+
+        try:
+            self._remember("user", text)
+        except (OSError, ValueError, RuntimeError) as error:
+            self._add_system_message(_("Could not save the message: {error}").format(error=error))
+            return
+
         self.input_entry.set_text("")
 
         # Add the user message to the chat...
         self._add_user_message(text)
 
         # ...and to the context + history.json (ponto único de persistência)
-        self._remember("user", text)
 
         # Snapshot do pedido construído NA main thread: a worker deixou de
         # ler conversation_history/expert_mode/config sem sincronização.
@@ -1509,20 +1520,39 @@ class MainWindow(Gtk.Window):
                 try:
                     if cancel_event.is_set():
                         return
-                    stream = (self.ai_client.stream_chat(full_history, provider=route['provider'])
-                              if route is not None else self.ai_client.stream_chat(full_history))
-                    for chunk in stream:
-                        if cancel_event.is_set():
-                            break
-
-                        response_text += chunk
-                        pending_chunks.append(chunk)
-                        now = time.monotonic()
-                        if now - last_flush >= STREAM_FLUSH_INTERVAL:
-                            GLib.idle_add(self._update_ai_message, request_id,
-                                          "".join(pending_chunks), True)
-                            pending_chunks = []
-                            last_flush = now
+                    options = {'provider': route['provider']} if route is not None else {}
+                    # Keep old third-party clients/test shims callable, while
+                    # the built-in client propagates this request's event.
+                    if isinstance(self.ai_client, AIClient):
+                        options['cancel_event'] = cancel_event
+                    stream = self.ai_client.stream_chat(full_history, **options)
+                    try:
+                        for chunk in stream:
+                            if cancel_event.is_set():
+                                break
+                            if len(response_text) + len(chunk) > MAX_MESSAGE_CHARS:
+                                raise AIResponseLimitError(
+                                    _("AI response exceeds the local history limit. The incomplete response was not saved; ask for a shorter response.")
+                                )
+                            response_text += chunk
+                            pending_chunks.append(chunk)
+                            now = time.monotonic()
+                            if now - last_flush >= STREAM_FLUSH_INTERVAL:
+                                GLib.idle_add(self._update_ai_message, request_id,
+                                              "".join(pending_chunks), True)
+                                pending_chunks = []
+                                last_flush = now
+                    finally:
+                        close = getattr(stream, 'close', None)
+                        if callable(close):
+                            close()
+                except AIRequestCancelled:
+                    GLib.idle_add(self._finalize_response, request_id, "", True)
+                    return
+                except AIResponseLimitError:
+                    # A local limit is an incomplete answer, not a reason to
+                    # silently replace it with an unrelated offline answer.
+                    raise
                 except AIProviderError as e:
                     # Falha ESTRUTURADA do provider (rede/HTTP/config) — não
                     # é conteúdo do modelo. O fallback offline dispara tanto
@@ -1585,9 +1615,13 @@ class MainWindow(Gtk.Window):
             return False
         self.streaming = False
         self.chat_view.abort_stream()
-        self._add_ai_message(reply.text, False)
-        self._remember('assistant', reply.text)
-        self._on_message_processed(request_id)
+        try:
+            self._add_ai_message(reply.text, False)
+            self._remember('assistant', reply.text)
+        except (OSError, ValueError, RuntimeError) as error:
+            self._add_system_message(_("Could not save the response: {error}").format(error=error))
+        finally:
+            self._on_message_processed(request_id)
         if reply.change is not None:
             self._confirm_display_change(reply.change, request_id, cancel_event, session_id)
         return False
@@ -1773,33 +1807,54 @@ class MainWindow(Gtk.Window):
         dialog.destroy()
         if response != Gtk.ResponseType.OK:
             return False
+        if request_id != self._active_request or cancel_event.is_set():
+            return False
 
+        self._local_running_request = request_id
+        self.is_loading = True
+        self.cancel_btn.set_sensitive(True)
+        self.status_icon.set_from_icon_name('process-working', Gtk.IconSize.MENU)
+        self.status_icon.set_tooltip_text(_("Running confirmed commands…"))
+        self._add_system_message(_("Running confirmed commands. Cancellation stops later commands; an operation already started may still finish."))
         threading.Thread(
             target=self._run_offline_commands,
-            args=(commands, request_id, cancel_event),
+            args=(commands, request_id, cancel_event, self.history_store.active_session_id),
             daemon=True,
         ).start()
         return False
 
-    def _run_offline_commands(self, commands, request_id, cancel_event):
+    def _run_offline_commands(self, commands, request_id, cancel_event, session_id=None):
         """Run the confirmed commands via pkexec (worker thread)."""
         store = getattr(self, 'history_store', None)
-        session_id = store.active_session_id if store is not None else None
-        for command in commands:
-            # Stop as soon as the request is cancelled or superseded:
-            # pkexec prompts must not pop up for a stale turn.
-            if cancel_event.is_set() or request_id != self._active_request:
-                logger.info("Skipping offline command: request was cancelled")
-                return False
-            ok, output = offline_assistant.OfflineAssistant.run_privileged(
-                command
-            )
-            detail = output or (_("Done.") if ok else _("Failed."))
-            result = f"$ {command.display()}\n{detail}"
-            GLib.idle_add(self._record_offline_result, request_id, result, session_id)
-            if not ok:
-                logger.info("Stopping confirmed command sequence after failure")
-                break
+        session_id = session_id or (store.active_session_id if store is not None else None)
+        try:
+            for command in commands:
+                # Cancellation does not roll back an operation already begun.
+                if cancel_event.is_set() or request_id != self._active_request:
+                    logger.info("Skipping offline command: request was cancelled")
+                    return False
+                try:
+                    ok, output = offline_assistant.OfflineAssistant.run_privileged(command)
+                except Exception:
+                    # An exception after dispatch does not prove that no
+                    # mutation happened. Avoid exposing command secrets.
+                    ok = False
+                    output = _("The operation result could not be determined. Check the target before trying again.")
+                detail = output or (_("Done.") if ok else _("Failed."))
+                result = f"$ {command.display()}\n{detail}"
+                GLib.idle_add(self._record_offline_result, request_id, result, session_id)
+                if not ok:
+                    logger.info("Stopping confirmed command sequence after failure")
+                    break
+        finally:
+            GLib.idle_add(MainWindow._finish_offline_commands, self, request_id, cancel_event)
+        return False
+
+    def _finish_offline_commands(self, request_id, cancel_event):
+        if getattr(self, '_local_running_request', None) == request_id:
+            self._local_running_request = None
+        if request_id == self._active_request:
+            self._on_message_processed(request_id, cancel_event.is_set())
         return False
 
     def _record_offline_result(self, request_id, result, session_id=None):
@@ -1808,15 +1863,25 @@ class MainWindow(Gtk.Window):
         Without the history append, follow-up questions had no idea what
         was executed (the text only reached the chat buffer).
         """
-        if request_id != self._active_request or self._cancel_event.is_set():
+        if request_id != self._active_request:
             # A completed action belongs to its original conversation even after a switch.
             if session_id is not None:
                 available = self.history_store.list_sessions(include_archived=True)
                 if any(session['id'] == session_id for session in available):
-                    self.history_store.append('assistant', result, session_id=session_id)
+                    try:
+                        self.history_store.append('assistant', result, session_id=session_id)
+                    except (OSError, ValueError, RuntimeError) as error:
+                        logger.error("Could not save the completed operation in its original session: %s", error)
             return False
+        # A cancelled operation's actual outcome remains visible in the same
+        # conversation. It must never be presented as if cancellation undid it.
+        if self._cancel_event.is_set():
+            self._add_system_message(_("Operation completed after cancellation. Check its result below; cancellation did not undo it."))
         self._add_system_message(result)
-        self._remember("assistant", result)
+        try:
+            self._remember("assistant", result)
+        except (OSError, ValueError, RuntimeError) as error:
+            self._add_system_message(_("Could not save the operation result: {error}").format(error=error))
         return False
 
     def _finalize_response(self, request_id: int, response_text: str,
@@ -1834,34 +1899,43 @@ class MainWindow(Gtk.Window):
         if cancelled:
             self.chat_view.abort_stream()
 
-        if response_text and not cancelled:
-            # The streamed body was inserted chunk by chunk; now that it is
-            # complete, tag its code spans and close with the "\n\n"
-            # separator (tudo dentro do ChatView, dono dos offsets).
-            self.chat_view.close_streamed_message(response_text)
+        try:
+            if response_text and len(response_text) > MAX_MESSAGE_CHARS:
+                self.chat_view.abort_stream()
+                self._add_system_message(_("AI response exceeds the local history limit. The incomplete response was not saved; ask for a shorter response."))
+                return False
+            if response_text and not cancelled:
+                # The streamed body was inserted chunk by chunk; now that it is
+                # complete, tag its code spans and close with the "\n\n"
+                # separator (tudo dentro do ChatView, dono dos offsets).
+                self.chat_view.close_streamed_message(response_text)
 
-            # Ponto único de persistência do turno (memória + history.json)
-            self._remember("assistant", response_text)
-            store = getattr(self, 'history_store', None)
-            if store is not None:
-                try:
-                    store.set_diagnostic_state(self.offline.diagnostic_state())
-                except (OSError, ValueError) as error:
-                    logger.error("Could not persist diagnostic progress: %s", error)
-                    self._add_system_message(str(error))
+                # Ponto único de persistência do turno (memória + history.json)
+                self._remember("assistant", response_text)
+                store = getattr(self, 'history_store', None)
+                if store is not None:
+                    try:
+                        store.set_diagnostic_state(self.offline.diagnostic_state())
+                    except (OSError, ValueError) as error:
+                        logger.error("Could not persist diagnostic progress: %s", error)
+                        self._add_system_message(str(error))
 
-            # Offer file writes in expert mode. We are already on the main
-            # loop, so the dialogs can be created directly (GTK is not
-            # thread-safe).
-            if self.expert_mode:
-                file_actions.offer_file_blocks(
-                    self, response_text,
-                    lambda msg: GLib.idle_add(self._add_system_message, msg),
-                    lambda: self.config.get("permissions.allowed_edit_dirs", []),
-                    self.change_journal, self.history_store.active_session_id,
-                )
+                # Offer file writes in expert mode. We are already on the main
+                # loop, so the dialogs can be created directly (GTK is not
+                # thread-safe).
+                if self.expert_mode:
+                    file_actions.offer_file_blocks(
+                        self, response_text,
+                        lambda msg: GLib.idle_add(self._add_system_message, msg),
+                        lambda: self.config.get("permissions.allowed_edit_dirs", []),
+                        self.change_journal, self.history_store.active_session_id,
+                    )
 
-        self._on_message_processed(request_id, cancelled)
+        except (OSError, ValueError, RuntimeError) as error:
+            logger.error("Could not finish or persist the response: %s", error)
+            self._add_system_message(_("Could not save the response: {error}").format(error=error))
+        finally:
+            self._on_message_processed(request_id, cancelled)
         return False
 
     def _update_ai_message(self, request_id: int, chunk: str, streaming: bool):
@@ -1901,7 +1975,8 @@ class MainWindow(Gtk.Window):
     def on_cancel_streaming(self, button):
         """Cancel the current streaming."""
         self._cancel_event.set()
-        self.is_loading = False
+        local_running = getattr(self, '_local_running_request', None) == self._active_request
+        self.is_loading = local_running
         self.streaming = False
         self.cancel_btn.set_sensitive(False)
         self.status_icon.set_from_icon_name("dialog-error", Gtk.IconSize.MENU)
@@ -1910,7 +1985,10 @@ class MainWindow(Gtk.Window):
         self.chat_view.abort_stream()
         if getattr(self, 'history_store', None) is not None:
             self._renew_offline_assistant()
-        self._add_system_message(_("Streaming cancelled"))
+        if local_running:
+            self._add_system_message(_("Cancellation requested. An operation already started may still finish; its result will be shown here."))
+        else:
+            self._add_system_message(_("Streaming cancelled"))
         logger.info("Streaming cancelled by the user")
 
     def on_capture_screen_clicked(self, button):

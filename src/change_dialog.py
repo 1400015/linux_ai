@@ -24,6 +24,9 @@ class ChangeDialog(Gtk.Dialog):
         self.all_sessions = Gtk.CheckButton(label=_("Show changes from all conversations"))
         self.all_sessions.connect('toggled', self._refresh)
         box.pack_start(self.all_sessions, False, False, 0)
+        self.archived = Gtk.CheckButton(label=_("Include archived file changes"))
+        self.archived.connect('toggled', self._refresh)
+        box.pack_start(self.archived, False, False, 0)
         self.selector = Gtk.ComboBoxText()
         for cell in self.selector.get_cells():
             cell.set_property('ellipsize', Pango.EllipsizeMode.MIDDLE)
@@ -48,7 +51,9 @@ class ChangeDialog(Gtk.Dialog):
 
     def _refresh(self, widget=None):
         try:
-            records = self.journal.list_changes(None if self.all_sessions.get_active() else self.session_id)
+            records = self.journal.list_changes(
+                None if self.all_sessions.get_active() else self.session_id,
+                include_archived=self.archived.get_active())
             self.records = {item['id']: item for item in records}
             self.selector.remove_all()
             for item in records:
@@ -64,11 +69,12 @@ class ChangeDialog(Gtk.Dialog):
 
     def _display(self, combo):
         item = self.records.get(combo.get_active_id())
-        self.restore_button.set_sensitive(bool(item and item['status'] == 'applied'))
+        self.restore_button.set_sensitive(bool(item and item['status'] in ('applied', 'pending', 'uncertain')))
         if item:
             labels = (('path', 'Path'), ('status', 'Status'), ('created_at', 'Created'),
                       ('session_id', 'Conversation'), ('before', 'Original SHA256'), ('after', 'Written SHA256'),
-                      ('backup', 'Original backup'), ('restored_at', 'Recovered'), ('recovery_backup', 'Recovery backup'))
+                      ('backup', 'Original backup'), ('restored_at', 'Recovered'),
+                      ('recovery_backup', 'Recovery backup'), ('archive_id', 'Archive'))
             self.view.get_buffer().set_text('\n'.join(_(label) + ': ' + (str(item.get(key) or '—') if key != 'status' else _(item[key]))
                                                      for key, label in labels))
 

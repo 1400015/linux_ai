@@ -6,6 +6,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 
 from .i18n import _
+from .ai_client import AIClient
 from .remote_models import _model_name
 
 
@@ -17,6 +18,7 @@ class RemoteModelSettings(Gtk.Box):
         self._provider, self._loading = None, False
         self._drafts = {}
         self._alive, self._generation = True, 0
+        self._cancel_event = None
         self.pack_start(Gtk.Label(label=_('Remote model'), xalign=0), False, False, 0)
         self.model = Gtk.ComboBoxText.new_with_entry()
         self.pack_start(self.model, False, False, 0)
@@ -33,8 +35,14 @@ class RemoteModelSettings(Gtk.Box):
         self._selected(provider_combo)
 
     def _destroyed(self, widget):
+        self._cancel_listing()
         self._alive = False
         self._generation += 1
+
+    def _cancel_listing(self):
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+            self._cancel_event = None
 
     def _allowed(self):
         draft_mode = self.mode_combo.get_active_id() if self.mode_combo else self.config.get_assistance_mode()
@@ -42,10 +50,13 @@ class RemoteModelSettings(Gtk.Box):
                 and self.config.get_assistance_mode() not in ('offline', 'local'))
 
     def _mode_changed(self, widget):
+        self._cancel_listing()
         self._generation += 1
+        self.status.set_text(_('Connection not tested'))
         self.button.set_sensitive(self._allowed())
 
     def _selected(self, combo):
+        self._cancel_listing()
         self._generation += 1
         self._provider = combo.get_active_id()
         self._loading = True
@@ -59,21 +70,30 @@ class RemoteModelSettings(Gtk.Box):
 
     def _edited(self, entry):
         if not self._loading and self._provider:
+            self._cancel_listing()
             self._drafts[self._provider] = entry.get_text()
             self._generation += 1
+            self.status.set_text(_('Connection not tested'))
             self.button.set_sensitive(self._allowed())
 
     def _list(self, button):
         if not self._allowed():
             return
+        self._cancel_listing()
         self._generation += 1
         generation, provider = self._generation, self._provider
+        cancel_event = threading.Event()
+        self._cancel_event = cancel_event
         button.set_sensitive(False)
         self.status.set_text(_('Listing models…'))
 
         def worker():
             try:
-                models = self.client.list_remote_models(provider)
+                if isinstance(self.client, AIClient):
+                    models = self.client.list_remote_models(provider, cancel_event=cancel_event)
+                else:
+                    # Preserve provider-only clients used by integrations/tests.
+                    models = self.client.list_remote_models(provider)
                 GLib.idle_add(self._result, generation, models, False)
             except Exception:
                 GLib.idle_add(self._result, generation, [], True)
@@ -82,6 +102,7 @@ class RemoteModelSettings(Gtk.Box):
     def _result(self, generation, models, error):
         if not self._alive or generation != self._generation:
             return False
+        self._cancel_event = None
         self.button.set_sensitive(self._allowed())
         if error:
             self.status.set_text(_('Model listing failed. Check the key, mode and endpoint.'))

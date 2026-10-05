@@ -73,6 +73,10 @@ final. O ficheiro não contém o snapshot, nomes de sockets ou credenciais e nã
 é uma autorização para repetir a operação. O assistente remove-o após o
 encerramento normal. Se o assistente morrer, pode ficar em `/tmp` para revisão
 manual; uma falha de escrita ou perda de `/tmp` pode impedir este comprovativo.
+Gravar esse ficheiro e comunicar o resultado ao assistente são operações
+independentes: uma falha do comprovativo não impede o envio de uma recuperação
+verificada ao assistente ainda vivo. Se o pipe também falhar, o assistente
+mantém a incerteza e exige a verificação do ecrã antes de outra operação.
 
 ## Validação efetuada e condição para ativação por predefinição
 

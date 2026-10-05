@@ -72,6 +72,8 @@ python -m src.cli local-models
 
 Text-file/stdin input is limited to 64 KiB. `--no-history` avoids saving the new exchange; `history --clear` clears only the selected conversation. Relevant bundled guides and detected distribution facts also inform model responses, with the response language following the application language.
 
+Model responses have a local limit of 131072 characters. Cancel interrupts supported response reads and retry waits; it does not guarantee the provider stops computing or undo a local operation already started. A completed local operation is retained in its original conversation even when cancellation arrives during execution.
+
 Explicit Wi-Fi, printer and scanner setup requests can open a device chooser or offer missing support packages, both offline and after a model answer. Hypothetical questions and refusals do not start setup. Printer confirmation shows the command for the edited queue name; changing Wi-Fi networks clears the password. Scanner support installs the package providing `scanimage` explicitly, alongside the AirScan backend when the tool is missing.
 
 Legacy CLI action offers require an interactive terminal and confirmation. Pipes show proposals without device discovery or execution. The chat command returns exit code `1` when an attempted action fails; success, cancellation and proposals without execution return `0`. The action result remains part of the conversation unless `--no-history` is used.
@@ -113,7 +115,26 @@ python -m src.cli chat 'apply option 2'
 
 The CLI requires an interactive terminal to execute changes; pipes and `--stdin`/`--input` produce proposals. `--no-history` does not retain choices for a later message. Choices belong to one session, expire after 15 minutes and are omitted from conversation import/export. Package/version and monitor mode are rechecked before changing the system. Commands come from the local action catalog, never from model-generated shell text.
 
-Package search uses existing indexes without refreshing them silently and returns at most 12 candidates. Monitor lists show up to 30 choices; request a specific resolution/frequency to filter longer lists. The rollback watchdog runs independently of GTK in the application process; recovery after a forced process termination requires future infrastructure. This phase does not add repositories, run Web installers, configure arbitrary applications, activate disabled monitors, change display layout/scale, or configure GNOME/KDE. Hardware and distribution coverage require local validation. See the [Portuguese roadmap](docs/roadmap-acoes-conversacionais.md) for the next capabilities and acceptance criteria.
+Package search uses existing indexes without refreshing them silently and returns at most 12 candidates. Monitor lists show up to 30 choices; request a specific resolution/frequency to filter longer lists. By default, the rollback watchdog runs independently of GTK inside the application process and stops if that process is killed. The experimental `app.display_independent_watchdog: true` option uses a separate worker that can survive the frontend PID being killed and attempt recovery in the same graphical session. It is disabled by default pending real X11/Sway trials; worker, cgroup or graphical server termination can prevent recovery. See the [independent recovery guide](docs/recuperacao-ecra-watchdog.md) for its conditions. This phase does not add repositories, run Web installers, configure arbitrary applications, activate disabled monitors, change display layout/scale, or configure GNOME/KDE. Hardware and distribution coverage require local validation. See the [Portuguese roadmap](docs/roadmap-acoes-conversacionais.md) for the next capabilities and acceptance criteria.
+
+## History and file recovery
+
+If an unsupported, oversized or excessively nested history file prevents startup, preserve it and start a new history with the explicit recovery command. It prints the path of a private backup containing all original bytes; it does not convert an unknown format:
+
+```bash
+python -m src.cli history recover --yes
+```
+
+Approved file changes keep a journal and adjacent backups. Archive completed records to free journal capacity, then review a change before approving recovery:
+
+```bash
+python -m src.cli changes archive --yes
+python -m src.cli changes list --archived
+python -m src.cli changes show CHANGE_ID
+python -m src.cli changes restore CHANGE_ID --yes
+```
+
+Archiving preserves change IDs and backup references; show/restore also find archived records. Recovery checks the current file, backup hashes and allowed paths again. A timeout or durability error requires checking the actual target before repeating the operation. The [security and recovery guide](docs/correcoes-seguranca-robustez.md) describes limits and uncertain outcomes.
 
 ## Local test recording
 
@@ -178,6 +199,14 @@ chmod +x scripts/*.sh
 # For Void Linux and d77void specifically
 ./scripts/install_void.sh
 ```
+
+System file operations and runit activation use optional, dedicated polkit helpers. From a reviewed checkout under your control, install them separately:
+
+```bash
+sudo bash scripts/install-privileged-helpers.sh
+```
+
+This installs root-owned helpers and application-specific authentication prompts. These operations refuse unsafe or missing helper installations; they do not run privileged Python from the user checkout. Reinstall the helpers when their code changes. Home-directory file operations do not require this system installation. See the [helper installation requirements](docs/correcoes-seguranca-robustez.md#helpers-privilegiados-e-polkit); the current Flatpak does not provide host-helper integration.
 
 ### Method 2: Manual Installation
 
@@ -464,6 +493,7 @@ linux_ai_assistant/
 │   ├── remote_models.py    # Explicit bounded remote model discovery
 │   ├── action_contract.py  # Structured action requests and results
 │   ├── conversation_actions.py # Session-scoped task choices
+│   ├── display_watchdog.py # Experimental separate-process display recovery
 │   ├── dock.py             # Docked mode (struts/layer-shell)
 │   ├── file_actions.py     # File writing with diff confirmation
 │   ├── i18n.py             # Translations (English fallback)

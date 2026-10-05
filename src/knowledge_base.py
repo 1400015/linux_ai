@@ -339,8 +339,8 @@ KNOWLEDGE_BASE: Dict[str, DistroKnowledge] = {
     ),
 }
 
-from .knowledge_loader import bundled_modules, legacy_facts
-for _module in bundled_modules():
+from .knowledge_loader import available_bundled_modules, legacy_facts
+for _module in available_bundled_modules():
     for _facts in _module["facts"]:
         KNOWLEDGE_BASE[_facts["family"]] = DistroKnowledge(**legacy_facts(_facts))
 
@@ -446,10 +446,10 @@ def knowledge_for(distro_id: str,
     """
     did = (distro_id or "").strip().lower()
     if did in _FAMILY_BY_ID:
-        return KNOWLEDGE_BASE[_FAMILY_BY_ID[did]]
+        return KNOWLEDGE_BASE.get(_FAMILY_BY_ID[did])
     for token in id_like:
         family = _FAMILY_BY_LIKE.get((token or "").strip().lower())
-        if family:
+        if family and family in KNOWLEDGE_BASE:
             return KNOWLEDGE_BASE[family]
     if did and did != "unknown":
         return None

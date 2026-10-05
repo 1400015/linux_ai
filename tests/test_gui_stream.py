@@ -6,7 +6,7 @@ from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from src.ai_client import AIProviderError
+from src.ai_client import AIProviderError, AIClient, AIRequestCancelled
 from src.i18n import set_language
 
 
@@ -121,6 +121,82 @@ class TestGtkStream(unittest.TestCase):
         offset = self.text().index('code')
         tags = self.view.buffer.get_iter_at_offset(offset).get_tags()
         self.assertIn('inline-code', [tag.get_property('name') for tag in tags])
+
+    def test_oversized_response_is_removed_without_offline_fallback_or_persistence(self):
+        window, remembered = self.window(iter(['shown first', 'x' * 131072]))
+        window.offline.handle = Mock()
+        self.run_worker(window)
+        self.assertEqual(remembered, [])
+        window.offline.handle.assert_not_called()
+        self.assertNotIn('shown first', self.text())
+        self.assertIn('local history limit', self.text())
+        window._on_message_processed.assert_called_once()
+
+    def test_cancelled_client_does_not_trigger_offline_fallback(self):
+        window, remembered = self.window(iter([]))
+        client = AIClient.__new__(AIClient)
+        client._stream_chat_response = Mock(side_effect=AIRequestCancelled('cancelled'))
+        client.provider_ready = Mock(return_value=True)
+        window.ai_client = client
+        window.offline.handle = Mock()
+        self.run_worker(window)
+        self.assertEqual(remembered, [])
+        window.offline.handle.assert_not_called()
+        window._on_message_processed.assert_called_once_with(1, True)
+
+    def test_history_failure_settles_loading_and_keeps_rendered_response(self):
+        window, remembered = self.window(iter(['complete response']))
+        window.is_loading = True
+        window.get_property = Mock(return_value=True)
+        window._remove_loading_message = lambda: self.view.clear_loading()
+        window._on_message_processed = MethodType(self.MainWindow._on_message_processed, window)
+        window._remember = Mock(side_effect=OSError('synthetic history failure'))
+        self.run_worker(window)
+        self.assertFalse(window.is_loading)
+        self.assertFalse(window.streaming)
+        window.cancel_btn.set_sensitive.assert_called_with(False)
+        self.assertIn('complete response', self.text())
+        self.assertIn('Could not save the response', self.text())
+
+    def test_final_callback_guards_oversized_offline_reply_and_always_settles(self):
+        window, remembered = self.window(iter([]))
+        self.MainWindow._finalize_response(window, 1, 'x' * 131073, False)
+        self.assertEqual(remembered, [])
+        self.assertIn('local history limit', self.text())
+        window._on_message_processed.assert_called_once_with(1, False)
+
+    def test_rejected_history_entry_does_not_enter_in_memory_context(self):
+        window = SimpleNamespace(conversation_history=[],
+                                 _save_message_to_history=Mock(side_effect=ValueError('too large')))
+        with self.assertRaises(ValueError):
+            self.MainWindow._remember(window, 'assistant', 'synthetic response')
+        self.assertEqual(window.conversation_history, [])
+
+    def test_completed_command_result_remains_visible_after_cancel(self):
+        window, remembered = self.window(iter([]))
+        window.history_store = Mock(active_session_id='original-session')
+        window._record_offline_result = MethodType(self.MainWindow._record_offline_result, window)
+        first, second = Mock(), Mock()
+        first.display.return_value = 'synthetic first command'
+        second.display.return_value = 'synthetic second command'
+        def execute(command):
+            window._cancel_event.set()
+            return True, 'completed despite cancellation'
+        with patch('src.main_window.offline_assistant.OfflineAssistant.run_privileged', side_effect=execute) as run, \
+                patch('src.main_window.GLib.idle_add', side_effect=lambda callback, *args: callback(*args)):
+            self.MainWindow._run_offline_commands(window, [first, second], 1, window._cancel_event,
+                                                   'original-session')
+        self.assertEqual(run.call_count, 1)
+        self.assertIn('completed despite cancellation', self.text())
+        self.assertEqual(remembered, [('assistant', '$ synthetic first command\ncompleted despite cancellation')])
+
+    def test_cancel_during_started_local_operation_keeps_busy_until_result(self):
+        window, remembered = self.window(iter([]))
+        window._local_running_request = 1
+        window.is_loading = True
+        self.MainWindow.on_cancel_streaming(window, None)
+        self.assertTrue(window.is_loading)
+        self.assertIn('already started may still finish', self.text())
 
     def test_theme_updates_real_text_tags(self):
         self.view.set_style('DejaVu Sans Mono', 16, {'user': '#123456', 'ai': '#abcdef',

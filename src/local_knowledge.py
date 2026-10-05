@@ -189,9 +189,9 @@ PROCEDURES += (
         ), ("https://docs.voidlinux.org/xbps/troubleshooting/common-issues.html", "https://docs.openssl.org/master/man1/openssl-verification-options/")),
 )
 
-from .knowledge_loader import bundled_modules, legacy_procedure
+from .knowledge_loader import available_bundled_modules, legacy_procedure
 PROCEDURES += tuple(Procedure(**legacy_procedure(record, DiagnosticStep))
-                    for module in bundled_modules() for record in module["procedures"])
+                    for module in available_bundled_modules() for record in module["procedures"])
 
 _PROCEDURE_ORDER = {identifier: index for index, identifier in enumerate((
     'network-interface', 'network-address', 'network-route', 'network-dns', 'network-wifi', 'network-manager',

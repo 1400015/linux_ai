@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from datetime import date
+import logging
 from pathlib import Path
 
 from .schema_validation import SchemaError, validate_schema
@@ -11,6 +12,7 @@ KNOWN_ACTIONS = frozenset(('packages.search', 'packages.install', 'display.list_
     'display.apply_mode', 'services.list', 'services.status', 'services.control',
     'files.checksum', 'storage.list'))
 KNOWN_PROBES = frozenset(('', 'links', 'addresses', 'routes', 'routes6', 'disk', 'inodes', 'memory'))
+_bundled_unavailable = False
 
 
 def load_module(source):
@@ -105,10 +107,42 @@ def bundled_modules():
     return tuple(validate_modules(modules))
 
 
+def available_bundled_modules():
+    """Disable the entire YAML collection on corruption without blocking startup.
+
+    The strict loader remains available to validation tools. No invalid or
+    partially validated module gains authority; built-in Python references can
+    still be used with an explicit degraded-knowledge warning.
+    """
+    global _bundled_unavailable
+    try:
+        modules = bundled_modules()
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        if not _bundled_unavailable:
+            logging.getLogger(__name__).warning(
+                'Bundled YAML knowledge is unavailable; reinstall the application. '
+                'Only built-in reference material remains available.')
+        _bundled_unavailable = True
+        return ()
+    _bundled_unavailable = False
+    return modules
+
+
+def knowledge_warning(lang='en'):
+    """Describe degraded knowledge without including source data or errors."""
+    if not _bundled_unavailable:
+        return ''
+    if lang == 'pt':
+        return ('A base YAML está indisponível. Só as referências incorporadas '
+                'continuam disponíveis; reinstala a aplicação para recuperar os módulos.')
+    return ('Bundled YAML knowledge is unavailable. Only built-in references '
+            'remain available; reinstall the application to recover the modules.')
+
+
 def compose_modules(context):
     """Select components independently; distro dependencies never claim activity."""
     identifiers = {getattr(context, name).identifier for name in ('package_manager', 'service_manager', 'audio', 'network')}
-    return tuple(module for module in bundled_modules() if module['kind'] == 'linux'
+    return tuple(module for module in available_bundled_modules() if module['kind'] == 'linux'
                  or context.distro_id in module['match']['distro_ids']
                  or set(context.id_like).intersection(module['match']['distro_ids'])
                  or identifiers.intersection(module['match']['components']))

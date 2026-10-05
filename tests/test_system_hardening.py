@@ -139,6 +139,12 @@ class TestLogPrivacy(unittest.TestCase):
 
 
 class TestBoundedExecution(unittest.TestCase):
+    def setUp(self):
+        helper = patch('src.file_actions.file_helper_command', return_value=[
+            '/usr/bin/pkexec', '/usr/libexec/linux-ai-files'])
+        helper.start()
+        self.addCleanup(helper.stop)
+
     def test_environment_and_closed_stdin_reach_a_real_child(self):
         env = dict(os.environ, FIXTURE_PROCESS_VALUE='fixture-value')
         code, output, errors = run_bounded(
@@ -173,13 +179,17 @@ class TestBoundedExecution(unittest.TestCase):
         self.assertNotIn('partial-secret', output)
 
     def test_privileged_helpers_keep_metadata_and_use_the_authentication_deadline(self):
-        with patch('src.file_actions.run_bounded', return_value=(0, '{"backup":"fixture-backup"}', '')) as run:
+        with patch('src.file_actions.run_bounded', return_value=(
+                0, '{"backup":"fixture-backup","published":true}', '')) as run, \
+                patch('src.file_actions.file_helper_command', return_value=[
+                    '/usr/bin/pkexec', '/usr/libexec/linux-ai-files']):
             self.assertEqual(file_actions._write_privileged(
                 'fixture-source', '/fixture/target', 'digest', (1, 2)), 'fixture-backup')
             self.assertEqual(file_actions._remove_privileged('/fixture/target', 'digest', (1, 2)), 'fixture-backup')
             self.assertEqual(file_actions._inspect_privileged('/fixture/target', 'digest', (1, 2)),
-                             {'backup': 'fixture-backup'})
-        self.assertTrue(all(call.args[0][0] == 'pkexec' for call in run.call_args_list))
+                             {'backup': 'fixture-backup', 'published': True})
+        self.assertTrue(all(call.args[0][:2] == ['/usr/bin/pkexec', '/usr/libexec/linux-ai-files']
+                            for call in run.call_args_list))
         self.assertEqual([call.args[1:] for call in run.call_args_list],
                          [(120, 1024 * 1024), (120, 1024 * 1024),
                           (120, file_actions.MAX_PRIVILEGED_PREVIEW_BYTES)])

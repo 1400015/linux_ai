@@ -11,13 +11,13 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
 from xml.sax.saxutils import escape
 
 from .process_output import run_bounded
+from .privileged_write import FileOperationError, is_sensitive_path
 
 try:
     from .render_core import FileBlock
@@ -55,6 +55,8 @@ def is_allowed_path(path, allowed_dirs=None):
     anywhere via pkexec. Confirmed writes go through the change journal.
     """
     real = os.path.realpath(os.path.expanduser(path))
+    if is_sensitive_path(real):
+        return False
     home = os.path.realpath(os.path.expanduser("~"))
     if real == home or real.startswith(home + os.sep):
         return True
@@ -149,47 +151,76 @@ def _run_privileged(argv, output_limit=MAX_DIFF_BYTES):
     try:
         code, stdout, stderr = run_bounded(argv, PRIVILEGED_TIMEOUT, output_limit)
     except subprocess.TimeoutExpired as error:
-        raise PermissionError(
+        raise FileOperationError(
             'Privileged operation timed out after 120 seconds, including polkit authentication and execution. '
             'This does not establish a file defect or cancellation. '
-            'Check the target state and recovery journal before repeating it.'
+            'Check the target state and recovery journal before repeating it.', published=None
         ) from error
+    except OSError as error:
+        # An I/O or cleanup error can occur after the helper started. Its
+        # publication state cannot be inferred from an exception alone.
+        raise FileOperationError(str(error), published=None) from error
     return subprocess.CompletedProcess(argv, code, stdout, stderr)
 
 
-def _write_privileged(temp_path, dest_path, expected_digest=None, parent_identity=None, source_digest=None):
+def file_helper_command():
+    """Resolve the installed, root-owned wrapper before opening polkit."""
+    try:
+        from .privileged_helpers import file_helper_command as installed_command
+    except ImportError as error:
+        raise PermissionError('The dedicated privileged file helper must be installed before '
+                              'system files can be modified') from error
+    return installed_command()
+
+
+def _operation_result(result, message):
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        payload = {}
+    if result.returncode:
+        outcome = payload.get('outcome') if isinstance(payload, dict) else None
+        if isinstance(outcome, dict):
+            raise FileOperationError(result.stderr.strip() or message,
+                                     published=outcome.get('published'), backup=outcome.get('backup'),
+                                     cleanup=outcome.get('cleanup'))
+        # polkit denial happens before the helper starts; other outcomes may
+        # reflect a terminated helper after publication.
+        raise FileOperationError(result.stderr.strip() or message,
+                                 published=False if result.returncode in (126, 127) else None)
+    if not isinstance(payload, dict) or payload.get('published') is not True:
+        raise FileOperationError('Invalid privileged helper outcome; inspect the target before retrying',
+                                 published=None)
+    return payload.get('backup')
+
+
+def _write_privileged(temp_path, dest_path, expected_digest=None, parent_identity=None,
+                      source_digest=None, backup_path=None):
     """One elevation prompt; anchored, exclusive destination and backup files."""
     if parent_identity is None:
         parent = os.stat(os.path.dirname(dest_path))
         parent_identity = (parent.st_dev, parent.st_ino)
-    helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
     result = _run_privileged(
-        ['pkexec', os.path.realpath(sys.executable), helper, temp_path, dest_path,
+        file_helper_command() + [temp_path, dest_path,
          expected_digest if expected_digest is not None else '-',
-         str(parent_identity[0]), str(parent_identity[1])] + ([source_digest] if source_digest else []),
+         str(parent_identity[0]), str(parent_identity[1])]
+        + ([source_digest or '-', backup_path] if backup_path else ([source_digest] if source_digest else [])),
     )
-    if result.returncode != 0:
-        raise PermissionError(
-            result.stderr.strip() or f"Failed to write {dest_path} (pkexec)"
-        )
-    return json.loads(result.stdout).get('backup')
+    return _operation_result(result, f"Failed to write {dest_path} (pkexec)")
 
 
-def _remove_privileged(path, expected_digest, parent_identity):
-    helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
+def _remove_privileged(path, expected_digest, parent_identity, backup_path=None):
     result = _run_privileged(
-        ['pkexec', os.path.realpath(sys.executable), helper, '--remove', path,
-         expected_digest, str(parent_identity[0]), str(parent_identity[1])],
+        file_helper_command() + ['--remove', path,
+         expected_digest, str(parent_identity[0]), str(parent_identity[1])]
+        + ([backup_path] if backup_path else []),
     )
-    if result.returncode:
-        raise PermissionError(result.stderr.strip() or 'Recovery denied')
-    return json.loads(result.stdout).get('backup')
+    return _operation_result(result, 'Recovery denied')
 
 
 def _inspect_privileged(path, expected_digest, parent_identity, backup=None, backup_digest=None):
-    helper = os.path.join(os.path.dirname(__file__), 'privileged_write.py')
     result = _run_privileged(
-        ['pkexec', os.path.realpath(sys.executable), helper, '--inspect', path, expected_digest,
+        file_helper_command() + ['--inspect', path, expected_digest,
          str(parent_identity[0]), str(parent_identity[1]), backup or '-', backup_digest or '-'],
         output_limit=MAX_PRIVILEGED_PREVIEW_BYTES,
     )

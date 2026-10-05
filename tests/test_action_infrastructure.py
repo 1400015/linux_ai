@@ -316,21 +316,34 @@ class ServiceTests(unittest.TestCase):
         candidate = replace(self.candidate, manager='runit', name='cups', active='inactive', enabled='disabled', pid=0)
         service.status = Mock(side_effect=[candidate, replace(candidate, enabled='enabled')])
         service._call = Mock(return_value=(True, ''))
-        result = service.control(candidate, 'enable', lambda: True)
+        with patch('src.privileged_helpers.service_helper_command', return_value=[
+                '/usr/bin/pkexec', '/usr/libexec/linux-ai-assistant/services']):
+            result = service.control(candidate, 'enable', lambda: True)
         self.assertTrue(result.verified)
         argv = service._call.call_args.args[0]
         self.assertEqual(argv[-3:], ['enable', 'cups', candidate.identity])
-        self.assertIn('-I', argv)
-        self.assertTrue(argv[-4].endswith('/privileged_service.py'))
+        self.assertEqual(argv[:2], ['/usr/bin/pkexec', '/usr/libexec/linux-ai-assistant/services'])
 
     def test_runit_disable_does_not_remove_a_running_service_after_failed_stop(self):
         service = ServiceService(which=lambda name: '/usr/bin/' + name)
         candidate = replace(self.candidate, manager='runit', name='cups')
         service.status = Mock(return_value=candidate)
         service._call = Mock(return_value=(False, 'stop failed'))
-        self.assertFalse(service.control(candidate, 'disable', lambda: True).ok)
+        with patch('src.privileged_helpers.service_helper_command', return_value=[
+                '/usr/bin/pkexec', '/usr/libexec/linux-ai-assistant/services']):
+            self.assertFalse(service.control(candidate, 'disable', lambda: True).ok)
         self.assertEqual(service._call.call_count, 1)
         self.assertIn('stop', service._call.call_args.args[0])
+
+    def test_missing_activation_helper_does_not_stop_a_running_service(self):
+        service = ServiceService(which=lambda name: '/usr/bin/' + name)
+        candidate = replace(self.candidate, manager='runit', name='cups')
+        service.status = Mock(return_value=candidate)
+        service._call = Mock()
+        with patch('src.privileged_helpers.service_helper_command', side_effect=PermissionError('not installed')):
+            with self.assertRaises(PermissionError):
+                service.control(candidate, 'disable', lambda: True)
+        service._call.assert_not_called()
 
     def test_privileged_entry_point_rejects_free_paths_and_nonroot_requests(self):
         from src import privileged_service
