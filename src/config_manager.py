@@ -1025,7 +1025,14 @@ class ConfigManager:
                 "name": theme.get("name", theme_name),
                 "description": theme.get("description", ""),
                 "colors": theme.get("colors", {}),
-                "ui": theme.get("ui", {})
+                "ui": theme.get("ui", {}),
+                # MainWindow uses this palette for its TextBuffer tags. Dropping
+                # it made light themes inherit nearly white message colours.
+                "syntax_highlighting": (
+                    theme["syntax_highlighting"]
+                    if isinstance(theme.get("syntax_highlighting"), dict)
+                    else {}
+                ),
             }
         return None
 

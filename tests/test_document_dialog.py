@@ -2,13 +2,14 @@
 
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
 try:
     import gi
     gi.require_version('Gtk', '3.0')
-    from gi.repository import Gtk
+    from gi.repository import GLib, Gtk
     from src.document_dialog import DocumentDialog
     GTK_AVAILABLE = Gtk.init_check()[0]
 except (ImportError, ValueError):
@@ -84,3 +85,57 @@ class TestDocumentDialog(unittest.TestCase):
         self.assertEqual(self.store.list_documents(), [])
         self.assertTrue(self.source.exists())
         self.changed.assert_called_once_with()
+
+    def test_main_window_opening_shows_document_controls_before_modal_run(self):
+        from src.main_window import MainWindow
+
+        self.window._get_document_store = lambda: self.store
+        self.window._add_system_message = Mock()
+        for populated in (False, True):
+            with self.subTest(populated=populated):
+                if populated:
+                    self.store.add([self.source])
+                observed, failures = [], []
+                deadline = time.monotonic() + 5
+
+                def inspect_and_close():
+                    visible = [dialog for dialog in Gtk.Window.list_toplevels()
+                               if isinstance(dialog, DocumentDialog) and dialog.get_visible()]
+                    if not visible and time.monotonic() < deadline:
+                        return True
+                    try:
+                        self.assertTrue(visible, 'Document dialog did not appear')
+                        opened = visible[0]
+                        for widget in (opened.selector, opened.add_document_button, opened.reindex_button,
+                                       opened.remove_button, opened.clear_button, opened.details,
+                                       opened.preview, opened.notice):
+                            self.assertTrue(widget.get_visible(), type(widget).__name__ + ' is hidden')
+                            self.assertTrue(widget.get_mapped(), type(widget).__name__ + ' is not mapped')
+                        self.assertTrue(opened.add_document_button.get_sensitive())
+                        self.assertEqual(opened.remove_button.get_sensitive(), populated)
+                        self.assertEqual(opened.reindex_button.get_sensitive(), populated)
+                        if populated:
+                            buffer = opened.preview.get_buffer()
+                            self.assertEqual(buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True),
+                                             self.source.read_text())
+                        else:
+                            self.assertTrue(opened.details.get_text())
+                        observed.append(opened)
+                    except BaseException as error:
+                        failures.append(error)
+                    finally:
+                        for dialog in visible:
+                            dialog.response(Gtk.ResponseType.CLOSE)
+                    return False
+
+                timer = GLib.timeout_add(20, inspect_and_close)
+                try:
+                    MainWindow.on_documents_clicked(self.window)
+                finally:
+                    context = GLib.MainContext.default()
+                    if context.find_source_by_id(timer) is not None:
+                        GLib.source_remove(timer)
+                if failures:
+                    raise failures[0]
+                self.assertEqual(len(observed), 1)
+                self.window._add_system_message.assert_not_called()

@@ -234,7 +234,7 @@ class TestGuiFeatureInterfaces(unittest.TestCase):
                 self.assertEqual(window.session_combo.get_active_id(), new['id'])
                 self.assertNotIn('old session secret', window._get_context_message()['content'])
                 self.assertFalse(window.chat_view.has_loading())
-                self.assertEqual(window.status_icon.get_icon_name()[0], 'emblem-ok')
+                self.assertEqual(window.status_icon.get_icon_name()[0], 'object-select-symbolic')
                 window._switch_session(old_id)
                 self.assertEqual(window.offline.diagnostic_state(), {'id': 'network-route', 'step': 0})
             finally:
