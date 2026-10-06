@@ -105,7 +105,8 @@ class SystemUtils:
 
     def _detect_environment(self):
         """Detect the environment (X11 vs Wayland) and other system properties"""
-        self.is_wayland = os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+        self.is_wayland = (os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+                           or bool(os.environ.get('WAYLAND_DISPLAY') or os.environ.get('SWAYSOCK')))
         self.is_x11 = os.environ.get("DISPLAY") is not None
         self.is_root = os.geteuid() == 0
         self.username = getpass.getuser()
@@ -490,45 +491,70 @@ class SystemUtils:
             logger.warning(f"Could not get selection from slurp: {e}")
             return None
 
-    def capture_screen(self, output_path: Optional[str] = None) -> Tuple[bool, str]:
+    def capture_screen(self, output_path: Optional[str] = None, *, cancel_event=None) -> Tuple[bool, str]:
         """
         Capture the screen with support for Wayland and X11.
 
         Args:
             output_path: Path to save the capture (optional).
+            cancel_event: Cancels a pending desktop screenshot request.
 
         Returns:
             Tuple (success, image_path).
         """
         temp_path = None
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                return False, "Screen capture cancelled"
             if output_path is None:
                 import tempfile
                 fd, temp_path = tempfile.mkstemp(suffix='.png')
                 os.close(fd)
                 output_path = temp_path
 
-            # Wayland: grim. NB: a flag antiga `grim -o <ficheiro>` está
-            # ERRADA — `-o/--output` escolhe o MONITOR, não o ficheiro; a
-            # captura primária em Wayland falhava sempre e caía no scrot
-            # (que não funciona em Wayland).
-            grim = self._which("grim")
-            if self.is_wayland and grim:
-                result = _run_process([grim, output_path], timeout=10)
-                if result.returncode == 0:
-                    logger.info(f"Screen captured with grim: {output_path}")
+            if self.is_wayland:
+                # GNOME/Mutter does not expose wlroots' grim protocol and scrot
+                # can only see XWayland surfaces. Use the desktop's authorised
+                # screenshot flow; user cancellation must never try another tool.
+                from .screenshot_portal import (
+                    capture_screenshot, ScreenshotPortalError,
+                    ScreenshotPortalCancelled, ScreenshotPortalUnavailable,
+                )
+                try:
+                    capture_screenshot(os.path.abspath(output_path), cancel_event=cancel_event)
+                    logger.info("Screen captured through the desktop portal")
                     return True, output_path
-                logger.warning(f"grim failed: {result.stderr!r}")
+                except ScreenshotPortalCancelled:
+                    return False, "Screen capture cancelled"
+                except ScreenshotPortalUnavailable:
+                    # Preserve the existing wlroots/Sway path when that desktop
+                    # has no Screenshot portal. Permission refusal, bad results
+                    # and timeouts are errors, not permission to use a fallback.
+                    if cancel_event is not None and cancel_event.is_set():
+                        return False, "Screen capture cancelled"
+                    grim = self._which("grim")
+                    if grim:
+                        result = _run_process([grim, output_path], timeout=10)
+                        if result.returncode == 0:
+                            logger.info("Screen captured with grim: %s", output_path)
+                            return True, output_path
+                    return False, (
+                        "Wayland screenshot portal unavailable. On Ubuntu, check "
+                        "xdg-desktop-portal and xdg-desktop-portal-gnome. "
+                        "On wlroots/Sway, grim is an alternative."
+                    )
+                except ScreenshotPortalError as error:
+                    return False, str(error)
 
             # X11: scrot
             scrot = self._which("scrot")
-            if scrot and not self.is_wayland:
+            if scrot:
                 result = _run_process([scrot, output_path], timeout=10)
                 if result.returncode == 0:
                     logger.info(f"Screen captured with scrot: {output_path}")
                     return True, output_path
 
-            # gnome-screenshot (último recurso, ambos os servidores gráficos)
+            # Legacy X11 fallback; not a Wayland permission workaround.
             gnome = self._which("gnome-screenshot")
             if gnome:
                 result = _run_process([gnome, "-f", output_path], timeout=10)
@@ -537,7 +563,7 @@ class SystemUtils:
                     return True, output_path
 
             logger.error("No screen capture utility found")
-            return False, "No screen capture utility found (install scrot, grim or gnome-screenshot)"
+            return False, "No X11 screen capture utility found (install scrot or gnome-screenshot)"
 
         except subprocess.TimeoutExpired:
             logger.error("Timeout capturing screen")

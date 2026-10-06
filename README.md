@@ -454,9 +454,18 @@ When expert mode is active:
 ### Screen Capture
 
 1. Click the 📷 button
-2. The screen will be captured automatically
+2. On Wayland, choose or approve the screenshot in the desktop's screenshot dialog.
+   On X11, the configured capture utility takes the screenshot directly.
 3. Text will be extracted using OCR
 4. The text will be added to the conversation
+
+Wayland capture uses the XDG Screenshot portal, including on GNOME/Ubuntu where
+`grim` cannot capture the desktop. Ubuntu needs `xdg-desktop-portal` and
+`xdg-desktop-portal-gnome` running in the graphical session. Cancellation and
+permission refusal stop the request; the application does not try another tool
+after either. A wlroots/Sway desktop without this portal can still use `grim`.
+The request has a 120-second limit, and its temporary image is removed after
+OCR or image preparation. OCR also requires Tesseract and the chosen languages.
 
 For an image question, use **Capture an image for AI** or choose an image file.
 Review the normalized image and the selected OpenRouter model, then attach it

@@ -1,12 +1,14 @@
-# Testar as correções GTK no Ubuntu
+# Testar a interface e a captura de ecrã no Ubuntu
 
 Esta cópia contém a base 1.4.1 com as correções de contraste, ícones,
-entrada de mensagens e abertura do gestor de documentos. É uma versão
-de teste; ainda não foi integrada no `master`.
+entrada de mensagens, abertura do gestor de documentos e captura Wayland
+pelo portal do sistema. É uma versão de teste; ainda não foi integrada no
+`master`.
 
 O ambiente do relato é Ubuntu 26.04.1 LTS, amd64, VMware, com sessão
-Wayland. A reprodução automática foi feita com GTK/Adwaita em Xvfb;
-o objetivo deste teste é confirmar o resultado na tua sessão Ubuntu.
+Wayland. A interface foi verificada com GTK/Adwaita em Xvfb e o protocolo
+de captura com um portal simulado num barramento D-Bus real. O objetivo
+deste teste é confirmar o resultado na tua sessão Ubuntu/GNOME.
 
 ## Abrir a cópia nova
 
@@ -41,6 +43,21 @@ a apontar para a pasta anterior.
 - **Documentos locais** mostra os botões de adicionar, reindexar, remover e
   limpar, mesmo com o índice vazio. Fecha esse diálogo para voltar ao chat.
 - **Ensaios / Debug** mostra campos e legendas legíveis.
+- Carrega no botão da câmara ou usa **Ctrl+S**: no Ubuntu/Wayland, o sistema
+  apresenta a seleção ou autorização de captura. Confirma-a para extrair
+  texto com OCR. Cancelar nessa caixa ou na aplicação deve interromper o
+  pedido, sem tentar outra ferramenta.
+
+Se aparecer **Wayland screenshot portal unavailable**, verifica as dependências
+do desktop no terminal do Ubuntu:
+
+```bash
+sudo apt install xdg-desktop-portal xdg-desktop-portal-gnome
+```
+
+Depois termina e volta a iniciar a sessão gráfica. Para extrair texto, o
+Tesseract e os idiomas `por`/`eng` também devem estar instalados; a ausência de
+texto na imagem é diferente de uma falha de captura.
 
 Para voltar à cópia anterior, fecha esta aplicação e abre o `run.sh` da
 pasta anterior. Nos resultados do teste, indica a referência do download

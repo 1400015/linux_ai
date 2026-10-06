@@ -130,6 +130,62 @@ class CaptureLifecycleTests(unittest.TestCase):
         self.window.system_utils.extract_text_from_image.side_effect = ocr
         return entered, release
 
+    def block_capture_until_cancelled(self):
+        entered = threading.Event()
+        received_events = []
+
+        def capture(*, cancel_event):
+            received_events.append(cancel_event)
+            self.releases.append(cancel_event)
+            entered.set()
+            if not cancel_event.wait(2):
+                raise RuntimeError('Test did not cancel its capture backend')
+            return False, 'Screen capture cancelled'
+
+        self.window.system_utils.capture_screen.side_effect = capture
+        return entered, received_events
+
+    def test_cancel_reaches_waiting_capture_backend(self):
+        entered, received_events = self.block_capture_until_cancelled()
+        self.window.on_capture_screen_clicked(None)
+        self.assertTrue(entered.wait(1))
+        self.assertIs(received_events[0], self.window._cancel_event)
+        self.window.on_cancel_streaming(None)
+        self.join_worker()
+        self.drain()
+        self.assertTrue(received_events[0].is_set())
+        self.window.system_utils.extract_text_from_image.assert_not_called()
+        self.assertEqual(self.store.load_messages(), [])
+        self.assertNotIn('Error capturing screen:', self.text())
+        self.assertEqual(self.window.status_icon.get_tooltip_text(), 'Cancelled')
+
+    def test_session_switch_cancels_waiting_capture_backend(self):
+        entered, received_events = self.block_capture_until_cancelled()
+        self.window.on_capture_screen_clicked(None)
+        self.assertTrue(entered.wait(1))
+        new = self.store.create_session('Other conversation', select=False)
+        self.window._switch_session(new['id'])
+        self.join_worker()
+        self.drain()
+        self.assertTrue(received_events[0].is_set())
+        self.assertIsNot(received_events[0], self.window._cancel_event)
+        self.assertFalse(self.window._cancel_event.is_set())
+        self.window.system_utils.extract_text_from_image.assert_not_called()
+        self.assertEqual(self.store.load_messages(self.original_session), [])
+        self.assertEqual(self.store.load_messages(new['id']), [])
+        self.assertNotIn('Error capturing screen:', self.text())
+
+    def test_shutdown_cancels_waiting_capture_backend(self):
+        entered, received_events = self.block_capture_until_cancelled()
+        self.window.on_capture_screen_clicked(None)
+        self.assertTrue(entered.wait(1))
+        self.window.close_history_writer()
+        self.join_worker()
+        self.drain()
+        self.assertTrue(received_events[0].is_set())
+        self.window.system_utils.extract_text_from_image.assert_not_called()
+        self.assertNotIn('Error capturing screen:', self.text())
+
     def test_capture_after_cancel_uses_fresh_event_and_saves_ocr_once(self):
         previous = self.window._cancel_event
         self.window.on_cancel_streaming(None)

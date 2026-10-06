@@ -2415,7 +2415,7 @@ class MainWindow(Gtk.Window):
             temporary_image = None
             try:
                 # Capture screen
-                success, image_path = self.system_utils.capture_screen()
+                success, image_path = self.system_utils.capture_screen(cancel_event=capture_event)
 
                 if success:
                     temporary_image = image_path

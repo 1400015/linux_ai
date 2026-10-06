@@ -1,13 +1,16 @@
 # Registo de Alterações — linux_ai
 
-## Correções de interface GTK (2026-10-06, após v1.4.1)
+## Correções de interface GTK e captura Wayland (2026-10-06, após v1.4.1)
 
 - O tema da aplicação fica limitado ao conteúdo da janela principal. Diálogos, menus e decorações conservam o tema GTK nativo, evitando a mistura de texto e fundos claros/escuros.
 - Botões deixam de herdar gradientes que ocultavam os símbolos; o fundo interno do chat recebe a cor do tema. Ícones simbólicos e contraste do texto dos botões foram revistos, e a paleta de mensagens do tema claro passa a ser conservada.
 - A entrada de mensagens ocupa uma linha inteira, com os controlos abaixo, e recebe o foco inicial sem o reclamar novamente ao abrir diálogos. Regressões GTK verificam renderização, isolamento dos estilos, entrada e foco em janelas estreitas.
 - O gestor de documentos mostra os seus controlos antes de iniciar o diálogo modal. A omissão deixava a janela vazia mesmo com documentos no índice; uma regressão abre o diálogo pelo percurso da janela principal e verifica os estados vazio e preenchido.
+- Captura de ecrã em Wayland usa o portal Screenshot do desktop, com seleção/autorização do sistema, prazo de 120 segundos e cancelamento propagado ao pedido. GNOME/Ubuntu deixa de depender de `grim` ou `gnome-screenshot`; recusa ou cancelamento não tenta outro backend. Sway/wlroots conserva `grim` quando o portal está indisponível.
+- O resultado do portal é copiado para um PNG privado com limites de tamanho e dimensões; URIs remotos, ficheiros não regulares e ligações simbólicas são recusados. A imagem original do portal é preservada e a cópia temporária da aplicação é eliminada após OCR ou preparação da imagem.
 - As imagens que motivaram estas correções foram recolhidas em Ubuntu 26.04.1 LTS (`resolute`), amd64, numa máquina virtual VMware, com sessão Wayland confirmada pelo operador. A sessão do desktop não identifica por si só o backend GDK usado pela aplicação.
 - A reprodução foi feita com GTK/Adwaita em Xvfb, incluindo temas claros e escuros. Não certifica foco e digitação em todas as sessões Ubuntu/Wayland.
+- O protocolo de captura foi exercitado com um serviço Gio simulado num barramento D-Bus real, incluindo autorização, resposta antecipada, cancelamento e prazo. A captura real no desktop Ubuntu/GNOME continua a depender do ensaio do operador.
 
 ## v1.4.1 — Recuperação gráfica e operações de ficheiros responsivas (2026-10-05)
 
