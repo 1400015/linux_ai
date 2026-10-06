@@ -1,9 +1,8 @@
 # Testar a interface e a captura de ecrã no Ubuntu
 
-Esta cópia contém a base 1.4.1 com as correções de contraste, ícones,
-entrada de mensagens, abertura do gestor de documentos e captura Wayland
-pelo portal do sistema. É uma versão de teste; ainda não foi integrada no
-`master`.
+A versão 1.4.2 inclui as correções de contraste, ícones, entrada de
+mensagens, abertura do gestor de documentos e captura Wayland pelo portal
+do sistema. Este guia descreve como verificar o resultado no Ubuntu.
 
 O ambiente do relato é Ubuntu 26.04.1 LTS, amd64, VMware, com sessão
 Wayland. A interface foi verificada com GTK/Adwaita em Xvfb e o protocolo

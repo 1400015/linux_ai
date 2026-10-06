@@ -1,6 +1,8 @@
 # Registo de Alterações — linux_ai
 
-## Ícone da aplicação e diagnóstico de credenciais (2026-10-06, após v1.4.1)
+## v1.4.2 — Interface Ubuntu, captura Wayland e configuração online (2026-10-06)
+
+### Ícone da aplicação e diagnóstico de credenciais
 
 - O projeto inclui um ícone SVG usado no menu, na janela e na área de notificação. Instaladores, wheel e Flatpak incluem o ficheiro; deixam de depender de um PNG gerado por ImageMagick ou de um ícone do sistema que pode não existir.
 - `bash scripts/install-desktop.sh` atualiza apenas o ícone e o atalho do utilizador para a pasta atual. Conserva configuração e dependências, não ativa autostart e suporta caminhos com espaços e caracteres especiais. A identidade GTK coincide com o atalho nativo ou Flatpak.
@@ -8,8 +10,10 @@
 - `config get` recusa caminhos inexistentes com código de saída não zero, conserva valores nulos reais e oculta chaves também em secções e listas. A consulta de uma chave usa a mesma precedência de ambiente/cofre/configuração que o cliente.
 - Cores hexadecimais de quatro ou oito dígitos usam uma cor de reserva compatível com o parser GTK3, evitando que um tema personalizado interrompa a aplicação do estilo. A ausência do portal em Wayland já terminava com erro quando não havia `grim`; não exigiu alteração de backend.
 - O fecho com **Ctrl+Q** devolve ao GTK que o atalho foi tratado. O retorno anterior permitia continuar a percorrer grupos de aceleradores depois da destruição da janela, provocando uma falha de segmentação reproduzida com a janela real. A regressão aciona o acelerador num processo separado.
+- O chat explica quando uma variável canónica vazia bloqueia uma chave do armazenamento selecionado. A deteção conserva a prioridade da variável canónica sobre nomes legados, não usa chaves residuais de outro backend e não desbloqueia o cofre. O aviso acompanha o fornecedor do pedido e é descartado após cancelamento ou mudança de conversa.
+- O aviso distingue uma atribuição vazia removível do `.env` de uma variável herdada ou alterada externamente. Só apresenta o botão de remoção quando a atribuição pode ser retirada com segurança; nos outros casos indica a alteração na origem e o reinício.
 
-## Correções de configuração online (2026-10-06, após v1.4.1)
+### Configuração online
 
 - O template de ambiente deixa as chaves não usadas como comentários. A interface identifica variáveis vazias que bloqueiam chaves guardadas e permite remover explicitamente uma atribuição vazia carregada do seu próprio `.env`, preservando o restante conteúdo. A prioridade das variáveis herdadas e das sobreposições intencionais mantém-se.
 - **Listar modelos** usa a chave escrita no diálogo para esse pedido, sem a guardar. Mudanças de chave cancelam a consulta anterior e descartam resultados antigos. O seletor apresenta os modelos devolvidos pelo fornecedor; **Aceitar** grava a escolha.
@@ -17,7 +21,7 @@
 - As páginas das definições passam a ter deslocamento vertical, mantendo **Aceitar** visível em ecrãs pequenos mesmo com os avisos de credenciais.
 - O fornecedor Google envia o contexto de sistema em `systemInstruction`, separado das mensagens da conversa, tanto em chat como em streaming.
 
-## Correções de interface GTK e captura Wayland (2026-10-06, após v1.4.1)
+### Interface GTK e captura Wayland
 
 - O tema da aplicação fica limitado ao conteúdo da janela principal. Diálogos, menus e decorações conservam o tema GTK nativo, evitando a mistura de texto e fundos claros/escuros.
 - Botões deixam de herdar gradientes que ocultavam os símbolos; o fundo interno do chat recebe a cor do tema. Ícones simbólicos e contraste do texto dos botões foram revistos, e a paleta de mensagens do tema claro passa a ser conservada.

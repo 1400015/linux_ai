@@ -300,6 +300,9 @@ installation loaded an empty canonical assignment from its `.env`, Settings
 offers **Use stored key (remove empty override from .env)**. This explicit
 action removes only that unchanged empty assignment. An inherited environment
 override must be changed at its source, followed by an application restart.
+When a stored key in the selected storage is blocked, the chat explains the
+empty override and points to the appropriate recovery step. Notices belong to
+the original request and are discarded after cancellation or a conversation change.
 
 **Settings → API** shows the stored key, keeps edits for each provider until
 **OK**, and identifies an active environment override. Copying the effective

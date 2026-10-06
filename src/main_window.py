@@ -1824,22 +1824,28 @@ class MainWindow(Gtk.Window):
                 # No key for the selected provider: answer from local knowledge
                 # instead of failing with "API key not configured".
                 logger.info("No usable provider; using the offline assistant")
-                # Aviso acionável: uma chave armazenada pode estar a ser
-                # DESACTIVADA por um placeholder vazio no .env (contrato
-                # documentado) — o caso real que produziu "sempre offline"
-                # numa instalação com o .env antigo, sem nada na linha de
-                # estado a explicar o motivo.
+                # Keep the diagnostic on this request's selected provider.
+                # An empty override may come from the process environment;
+                # only assignments this manager loaded can be removed here.
                 try:
-                    shadow_provider = self.ai_client.active_provider()
+                    shadow_provider = route['provider'] if route is not None else self.ai_client.active_provider()
                     if shadow_provider and self.config.stored_key_shadowed_by_empty_env(shadow_provider):
                         shadow_var = self.config.api_key_env_var(shadow_provider)
+                        warning = _(
+                            "The stored key for {provider} is disabled by the empty "
+                            "{var} environment variable."
+                        ).format(provider=shadow_provider, var=shadow_var)
+                        if self.config.can_remove_empty_api_key_override(shadow_provider):
+                            warning += ' ' + _(
+                                "Open Settings → API and choose '{button}' to remove "
+                                "the empty assignment from .env."
+                            ).format(button=_("Use stored key (remove empty override from .env)"))
+                        else:
+                            warning += ' ' + _(
+                                "Remove or fill this variable at its source, then restart the application."
+                            )
                         GLib.idle_add(
-                            self._add_system_message,
-                            _("The stored key for {provider} is disabled by the empty "
-                              "{var} override in .env. Open Settings → API and use "
-                              "'Use stored key (remove empty override from .env)', "
-                              "or comment that line out.").format(
-                                  provider=shadow_provider, var=shadow_var))
+                            self._add_system_message_if_active, request_id, cancel_event, warning)
                 except Exception:
                     pass
                 offline_reply = offline.handle(message, get_language())

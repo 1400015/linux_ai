@@ -1267,7 +1267,10 @@ TRANSLATIONS["pt"].update({
 TRANSLATIONS["pt"].update({
     "Preview conversation import": "Pré-visualizar importação da conversa",
     "Import conversation": "Importar conversa",
-    "The stored key for {provider} is disabled by the empty {var} override in .env. Open Settings → API and use 'Use stored key (remove empty override from .env)', or comment that line out.": "A chave guardada de {provider} está desativada pela variável vazia {var} no .env. Abre Definições → API e usa 'Use stored key (remove empty override from .env)', ou comenta essa linha.",
+    "The stored key for {provider} is disabled by the empty {var} environment variable.":
+        "A chave guardada de {provider} está desativada pela variável de ambiente vazia {var}.",
+    "Open Settings → API and choose '{button}' to remove the empty assignment from .env.":
+        "Abre Definições → API e escolhe '{button}' para remover a atribuição vazia do .env.",
     "Conversation exports (*.md, *.json)": "Conversas exportadas (*.md, *.json)",
     "Conversation: {title}\nMessages: {count}\nFormat: {format}":
         "Conversa: {title}\nMensagens: {count}\nFormato: {format}",
