@@ -65,6 +65,21 @@ class QtShell(_BaseShell):
         self.setCentralWidget(central)
         self._build_tray()
 
+    def open_settings_dialog(self):
+        from .qt_dialogs import QT_AVAILABLE as DIALOGS_QT_AVAILABLE, QtSettingsDialog
+        if not DIALOGS_QT_AVAILABLE:
+            return
+        QtSettingsDialog(self.config, self).exec()
+
+    def open_history_dialog(self):
+        from .qt_dialogs import QT_AVAILABLE as DIALOGS_QT_AVAILABLE, QtHistoryDialog
+        if not DIALOGS_QT_AVAILABLE or getattr(self, "history_store", None) is None:
+            return
+        def reopen(session_id):
+            if self.chat is not None and hasattr(self.chat, "load_session"):
+                self.chat.load_session(session_id)
+        QtHistoryDialog(self.history_store, self, on_open=reopen, on_new=reopen).exec()
+
     def toggle_visibility(self):
         """Single toggle point for the Qt track (tray, future shortcut)."""
         if self.isVisible():
@@ -99,7 +114,15 @@ class QtShell(_BaseShell):
             logger.warning("Offline assistant unavailable for the Qt shell: %s",
                            type(error).__name__)
             return
-        self.chat = QtChatWidget(self.config, offline, self)
+        self.history_store = None
+        try:
+            from .history_store import HistoryStore
+            self.history_store = HistoryStore()
+        except Exception as error:
+            logger.warning("History store unavailable for the Qt shell: %s",
+                           type(error).__name__)
+        self.chat = QtChatWidget(self.config, offline, self,
+                                 history_store=self.history_store)
         layout.addWidget(self.chat, 1)
 
     def _status_text(self):

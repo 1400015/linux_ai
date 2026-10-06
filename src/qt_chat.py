@@ -54,16 +54,19 @@ class QtChatWidget(_BaseWidget):
 
     send_requested = QtCore.Signal(str) if QT_AVAILABLE else None
 
-    def __init__(self, config_manager, offline_assistant, parent=None):
+    def __init__(self, config_manager, offline_assistant, parent=None,
+                 history_store=None):
         if not QT_AVAILABLE:
             raise RuntimeError("PySide6 is required for QtChatWidget")
         super().__init__(parent)
         self.config = config_manager
         self.offline = offline_assistant
+        self.history_store = history_store
         self._log_chars = 0
         self._build()
         if self.send_requested is not None:
             self.send_requested.connect(self._on_send)
+        self.load_session()
 
     def _build(self):
         from . import i18n
@@ -97,6 +100,30 @@ class QtChatWidget(_BaseWidget):
         self.append_message(i18n._("User"), text)
         answer = offline_reply_text(self.offline, text) or ""
         self.append_message(i18n._("AI"), answer)
+        if self.history_store is not None:
+            try:
+                self.history_store.append("user", text)
+                self.history_store.append("assistant", answer)
+            except Exception as error:
+                logger.warning("History write failed: %s", type(error).__name__)
+
+    def load_session(self, session_id=None):
+        """Render the active (or given) session's stored messages."""
+        if self.history_store is None:
+            return
+        try:
+            entries = self.history_store.load_messages(session_id)
+        except Exception as error:
+            logger.warning("History read failed: %s", type(error).__name__)
+            return
+        self.log.clear()
+        self._log_chars = 0
+        from . import i18n
+        labels = {"user": i18n._("User"), "assistant": i18n._("AI"),
+                  "system": i18n._("System")}
+        for entry in entries:
+            label = labels.get(entry.get("role"), entry.get("role", "?"))
+            self.append_message(label, entry.get("content", ""))
 
     def append_message(self, label, text):
         chunk = "{}: {}\n".format(label, text)

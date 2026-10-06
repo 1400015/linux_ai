@@ -81,10 +81,24 @@ class QtTrayIcon(_BaseTray):
         self.menu = QtWidgets.QMenu()
         self.toggle_action = self.menu.addAction(i18n._("Hide Window"))
         self.toggle_action.triggered.connect(self.toggle_window)
+        settings_action = self.menu.addAction(i18n._("Settings"))
+        settings_action.triggered.connect(self.show_settings)
+        history_action = self.menu.addAction(i18n._("Conversation History"))
+        history_action.triggered.connect(self.show_history)
         self.menu.addSeparator()
         quit_action = self.menu.addAction(i18n._("Quit"))
         quit_action.triggered.connect(self.quit)
         self.setContextMenu(self.menu)
+
+    def show_settings(self):
+        dialog = getattr(self.shell, "open_settings_dialog", None)
+        if callable(dialog):
+            dialog()
+
+    def show_history(self):
+        dialog = getattr(self.shell, "open_history_dialog", None)
+        if callable(dialog):
+            dialog()
 
     def _on_activated(self, reason):
         if tray_click_toggles(self.config, reason):
