@@ -130,7 +130,7 @@ class QtShell(_BaseShell):
         name = {"windows": "Windows", "wsl": "WSL", "linux": "Linux"}.get(
             self.platform_name, self.platform_name)
         title = i18n._("Welcome to Linux AI Assistant!")
-        return "{}\nQt shell (phase 4a) — platform: {}".format(title, name)
+        return "{}\nQt shell — platform: {}".format(title, name)
 
     def closeEvent(self, event):
         logger.info("Qt shell closed by the user")

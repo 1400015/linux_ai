@@ -1,9 +1,10 @@
-# Windows launcher for the Linux AI Assistant Qt track (phase 4c).
-# Usage: .\run.ps1 [-Ui gtk|qt]
+# Windows launcher for the Linux AI Assistant.
+# Usage: .\run.ps1 [-Ui auto|gtk|qt]  (default: auto: Qt on Windows, GTK on Linux)
+
 
 param(
-    [ValidateSet("gtk", "qt")]
-    [string]$Ui = "qt"
+    [ValidateSet("auto", "gtk", "qt")]
+    [string]$Ui = "auto"
 )
 
 $ErrorActionPreference = "Stop"

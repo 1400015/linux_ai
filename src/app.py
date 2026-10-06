@@ -318,8 +318,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Linux AI Assistant desktop application')
     parser.add_argument('--show', action='store_true',
                         help='Start or focus the existing assistant window (for desktop shortcuts)')
-    parser.add_argument('--ui', choices=('gtk', 'qt'), default='gtk',
-                        help='UI track: the default GTK shell or the minimal Qt shell (phase 4a)')
+    parser.add_argument('--ui', choices=('auto', 'gtk', 'qt'), default='auto',
+                        help='UI track: auto selects Qt on the Windows host and GTK on Linux; '
+                             'gtk/qt force a track explicitly')
     args = parser.parse_args(argv)
     logger.info("Linux AI Assistant - Start")
     # File logging só no arranque real (não no import do pacote)
@@ -339,7 +340,10 @@ def main(argv=None):
         print(f"\nError: {GTK_IMPORT_ERROR}\n\n{message}", file=sys.stderr)
         return 1
 
-    if args.ui == 'qt':
+    from .platform.ui_selection import select_ui_track
+    if select_ui_track(args.ui) == 'qt':
+        # Auto selects Qt on the Windows host (GTK is absent there) and GTK
+        # on Linux, where the mature track keeps its users; --ui overrides.
         from .qt_app import run as run_qt
         if run_qt(ConfigManager()) != 0:
             return 1
