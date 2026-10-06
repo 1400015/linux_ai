@@ -1,0 +1,317 @@
+schema_version: '0.1'
+id: windows-core
+kind: platform
+requires: []
+match:
+  distro_ids:
+  - windows
+  components: []
+facts:
+- family: windows
+  display_name: Windows
+  wiki_name: Microsoft Learn Windows documentation
+  wiki_url: https://learn.microsoft.com/windows/
+  wiki_search_url: https://learn.microsoft.com/search/?search={query}&category=Windows
+  docs_urls:
+  - https://learn.microsoft.com/windows/
+  - https://learn.microsoft.com/windows/wsl/
+  summary: Windows desktop and server operating system by Microsoft, with the winget
+    package manager, PowerShell as the default shell and WSL for Linux workloads.
+  repositories: Microsoft Store and winget community repository; additional sources
+    can be added with winget source add.
+  network: Settings app, Network Connections (ncpa.cpl), and Get-NetAdapter / Get-NetIPConfiguration
+    in PowerShell.
+  logs: Windows Event Viewer (eventvwr.msc); PowerShell via Get-WinEvent -LogName System
+    with a bounded -MaxEvents value.
+  hostname: Settings > System > About; PowerShell Rename-Computer requires a restart.
+  locale: Settings > Time & language > Language & region.
+  firewall_tool: Windows Defender Firewall with Advanced Security
+  firewall_status:
+  - - powershell
+    - -Command
+    - Get-NetFirewallProfile | Select-Object Name, Enabled
+  firewall_allow: powershell -Command New-NetFirewallRule -DisplayName <name> -Direction
+    Inbound -Action Allow (requires elevation and explicit confirmation)
+  services_note: Services (services.msc) or Get-Service / Set-Service in PowerShell;
+    service changes require an elevated session.
+  distinct:
+  - PowerShell is the default shell; cmdlets follow a Verb-Noun naming convention
+    and many parameters use full words (-ListAvailable, -NoTypeInformation).
+  - winget installs and upgrades applications from the command line.
+  - WSL runs real Linux distributions beside the Windows session.
+  - Execution policy, PSModulePath and $PROFILE shape how scripts behave per user
+    and per host.
+procedures:
+- id: windows-service-fails
+  title:
+  - "Serviço do Windows não arranca"
+  - Windows service fails to start
+  summary:
+  - Confirma o estado e a conta do serviço antes de o reiniciar.
+  - Confirm the service state and account before restarting it.
+  keywords:
+  - servico
+  - serviço
+  - service
+  - windows
+  - failed
+  - nao arranca
+  - not starting
+  steps:
+  - instruction:
+    - Consulta o estado do serviço identificado.
+    - Inspect the identified service state.
+    interpretation:
+    - Usa Get-Service <nome> e distingue Stopped, Running e StartPending. Substitui
+      o marcador por um nome confirmado.
+    - Use Get-Service <name> and distinguish Stopped, Running and StartPending.
+      Replace the placeholder with a confirmed name.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Consulta um trecho limitado dos eventos do Sistema relacionados com o serviço.
+    - Inspect a bounded excerpt of System events related to the service.
+    interpretation:
+    - Usa Get-WinEvent -LogName System -MaxEvents 50 e procura a primeira causa,
+      como dependências em falta ou falhas de permissões.
+    - Use Get-WinEvent -LogName System -MaxEvents 50 and look for the first cause,
+      such as missing dependencies or permission failures.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.management/get-service
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.management/get-winevent
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de corrigir, regista a configuração
+    atual e define como repor a alteração.
+  - These steps do not modify the system. Before fixing it, record the current
+    configuration and define how to revert the change.
+- id: windows-disk-space
+  title:
+  - "Disco cheio no Windows"
+  - Windows disk full
+  summary:
+  - Localiza a unidade sem espaço antes de apagar dados.
+  - Locate the drive without space before deleting data.
+  keywords:
+  - disco
+  - disk
+  - space
+  - storage
+  - volume
+  - cheio
+  - full
+  steps:
+  - instruction:
+    - Verifica a ocupação das unidades.
+    - Check drive usage.
+    interpretation:
+    - Usa Get-Volume e compara SizeRemaining com Size. Uma percentagem elevada exige
+      identificar a unidade afetada, incluindo unidades de rede montadas.
+    - Use Get-Volume and compare SizeRemaining with Size. High usage requires
+      identifying the affected drive, including mounted network drives.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Usa a Ferramenta de Limpeza de Disco ou Definições para limpar ficheiros temporários.
+    - Use Disk Cleanup or Settings to clean temporary files.
+    interpretation:
+    - Confirma os itens a eliminar antes de avançar. Limpezas automáticas podem remover
+      ficheiros ainda necessários, como descarregamentos ou versões anteriores do
+      Windows.
+    - Confirm the items to remove before proceeding. Automatic cleanup may delete
+      files still needed, such as downloads or previous Windows versions.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/storage/get-volume
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Antes de apagar dados, confirma o que é seguro
+    remover e define como repor.
+  - These steps do not modify the system. Before deleting data, confirm what is safe
+    to remove and define how to revert.
+- id: windows-network-adapter
+  title:
+  - Adaptador de rede sem ligação no Windows
+  - Windows network adapter disconnected
+  summary:
+  - Distingue adaptador desativado, cabo/Wi-Fi e configuração IP.
+  - Distinguish a disabled adapter, cable/Wi-Fi and IP configuration.
+  keywords:
+  - rede
+  - network
+  - adaptador
+  - adapter
+  - ethernet
+  - wifi
+  - wi-fi
+  - internet
+  steps:
+  - instruction:
+    - Verifica os adaptadores de rede e o estado de cada um.
+    - Check network adapters and their status.
+    interpretation:
+    - Usa Get-NetAdapter e distingue Disabled, Disconnected e Up. Um adaptador Disabled
+      exige ativação; Disconnected indica cabo ou rádio, não configuração.
+    - Use Get-NetAdapter and distinguish Disabled, Disconnected and Up. A Disabled
+      adapter must be enabled; Disconnected points to cable or radio, not configuration.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Confirma a configuração IP do adaptador em uso.
+    - Confirm the IP configuration of the adapter in use.
+    interpretation:
+    - Usa Get-NetIPConfiguration e verifica endereço, gateway e servidores DNS. Um
+      endereço 169.254.x.x indica falha DHCP na rede local.
+    - Use Get-NetIPConfiguration and check address, gateway and DNS servers. A
+      169.254.x.x address indicates local DHCP failure.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/netadapter/get-netadapter
+  - https://learn.microsoft.com/powershell/module/nettcpip/get-netipconfiguration
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Ativação de adaptadores e alteração de configuração
+    são passos separados que exigem confirmação.
+  - These steps do not modify the system. Enabling adapters and changing configuration
+    are separate steps requiring confirmation.
+- id: windows-update-issue
+  title:
+  - Problemas com o Windows Update
+  - Windows Update problems
+  summary:
+  - Verifica o estado do serviço e do histórico antes de aplicar correções.
+  - Check the service state and history before applying fixes.
+  keywords:
+  - update
+  - atualizacao
+  - atualização
+  - windows update
+  - patches
+  steps:
+  - instruction:
+    - Verifica o estado do serviço Windows Update.
+    - Check the Windows Update service state.
+    interpretation:
+    - Usa Get-Service wuauserv. O serviço pode estar Stopped por política ou por
+      escolha; não significa necessariamente corrupção.
+    - Use Get-Service wuauserv. The service may be Stopped due to policy or by
+      choice; it does not necessarily mean corruption.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Verifica o histórico de atualizações instaladas.
+    - Check the history of installed updates.
+    interpretation:
+    - Usa as Definições ou Get-HotFix para listar atualizações instaladas e comparar
+      com a esperada. Falhas repetidas no mesmo update sugerem corrupção de componentes.
+    - Use Settings or Get-HotFix to list installed updates and compare with the
+      expected one. Repeated failures on the same update suggest component corruption.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/windows/deployment/update/
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Reparação de componentes do Windows Update
+    é uma operação separada que deve seguir a documentação oficial.
+  - These steps do not modify the system. Repairing Windows Update components is
+    a separate operation that must follow official documentation.
+- id: windows-event-log-errors
+  title:
+  - "Erros no registo de eventos do Windows"
+  - Windows Event Log errors
+  summary:
+  - Identifica eventos de erro recentes antes de alterar configuração.
+  - Identify recent error events before changing configuration.
+  keywords:
+  - eventos
+  - events
+  - event viewer
+  - eventvwr
+  - log
+  - erro
+  - error
+  steps:
+  - instruction:
+    - Consulta um número limitado de eventos recentes do Sistema.
+    - Inspect a limited number of recent System events.
+    interpretation:
+    - Usa Get-WinEvent -LogName System -MaxEvents 50. Filtra por Level para erros;
+      o eventId e o provider identificam o componente responsável.
+    - Use Get-WinEvent -LogName System -MaxEvents 50. Filter by Level for errors;
+      the eventId and provider identify the responsible component.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Compara o evento com a documentação do provider antes de agir.
+    - Compare the event with the provider documentation before acting.
+    interpretation:
+    - Um evento de erro isolado pode ser transitório. Procura padrões repetidos no
+      mesmo provider e evita alterar configuração com base num único evento.
+    - A single error event may be transient. Look for repeated patterns on the
+      same provider and avoid changing configuration based on one event.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.management/get-winevent
+  - https://learn.microsoft.com/windows/win32/wes/windows-event-log
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema e apenas leem registos.
+  - These steps do not modify the system and only read logs.
+action_ids: []
+provenance:
+  origin: Microsoft Learn documentation reviewed 2026-10-02
+  verification: documentation_review
+  sources:
+  - https://learn.microsoft.com/windows/
+  - https://learn.microsoft.com/powershell/

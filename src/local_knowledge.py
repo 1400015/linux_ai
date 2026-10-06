@@ -55,7 +55,13 @@ class Procedure:
         "These steps do not modify the system. Before fixing it, save the configuration and define how to revert the change.",
     )
 
+    platforms: Tuple[str, ...] = ()
+
     def applies_to(self, distro) -> bool:
+        if self.platforms:
+            from .platform import detect_platform
+            if detect_platform() not in self.platforms:
+                return False
         if distro is None:
             return not self.families
         profile = knowledge_for(getattr(distro, "distro_id", "unknown"),
@@ -190,7 +196,8 @@ PROCEDURES += (
 )
 
 from .knowledge_loader import available_bundled_modules, legacy_procedure
-PROCEDURES += tuple(Procedure(**legacy_procedure(record, DiagnosticStep))
+PROCEDURES += tuple(Procedure(**legacy_procedure(record, DiagnosticStep),
+                              platforms=tuple(module["match"]["distro_ids"]) if module["kind"] == "platform" else ())
                     for module in available_bundled_modules() for record in module["procedures"])
 
 _PROCEDURE_ORDER = {identifier: index for index, identifier in enumerate((

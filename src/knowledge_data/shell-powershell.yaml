@@ -1,0 +1,316 @@
+schema_version: '0.1'
+id: shell-powershell
+kind: platform
+requires:
+- windows-core
+match:
+  distro_ids:
+  - windows
+  components: []
+facts:
+- family: powershell
+  display_name: PowerShell
+  wiki_name: Microsoft Learn PowerShell documentation
+  wiki_url: https://learn.microsoft.com/powershell/
+  wiki_search_url: https://learn.microsoft.com/search/?search={query}&category=PowerShell
+  docs_urls:
+  - https://learn.microsoft.com/powershell/scripting/overview
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/
+  summary: PowerShell task automation framework with cmdlets, object pipelines, providers
+    and a configurable profile system.
+  repositories: PowerShell Gallery is the central module repository; Install-Module
+    fetches from it.
+  network: PowerShell networking cmdlets (Get-NetAdapter, Get-NetIPConfiguration,
+    Resolve-DnsName) read host configuration without network probes.
+  logs: Get-WinEvent -LogName <logname> -MaxEvents <n> for a bounded event excerpt.
+  hostname: $env:COMPUTERNAME; Rename-Computer changes it after a restart.
+  locale: Get-Culture and Get-UICulture report the session locale.
+  firewall_tool: Windows Defender Firewall cmdlets (NetSecurity module)
+  firewall_status:
+  - - powershell
+    - -Command
+    - Get-NetFirewallProfile | Select-Object Name, Enabled
+  firewall_allow: New-NetFirewallRule (requires elevation and explicit confirmation)
+  services_note: Get-Service reads service state; Start-Service, Stop-Service and
+    Set-Service modify it and require an elevated session.
+  distinct:
+  - Cmdlets follow Verb-Noun naming; Get-Command lists available commands.
+  - The pipeline passes objects, not text; Where-Object and Select-Object filter and
+    project them.
+  - Execution policy (Get-ExecutionPolicy -List) constrains script execution per scope;
+    it is a safety rail, not a security boundary.
+  - $PROFILE is a per-user, per-host script; PSModulePath lists module locations.
+  - Comparison operators are -eq, -ne, -like, -match, not = or !=.
+procedures:
+- id: powershell-execution-policy
+  title:
+  - "Política de execução bloqueia scripts"
+  - Execution policy blocks scripts
+  summary:
+  - Compara a política em vigor com a pretendida por âmbito antes de a alterar.
+  - Compare the effective policy with the intended one per scope before changing it.
+  keywords:
+  - execucao
+  - execução
+  - execution policy
+  - executionpolicy
+  - script
+  - bloqueado
+  - blocked
+  - running scripts is disabled
+  steps:
+  - instruction:
+    - Lista a política de execução por âmbito.
+    - List the execution policy per scope.
+    interpretation:
+    - Usa Get-ExecutionPolicy -List. A política efetiva é a mais restritiva aplicável;
+      MachinePolicy e UserPolicy vêm de Group Policy e sobrepõem LocalMachine.
+    - Use Get-ExecutionPolicy -List. The effective policy is the most restrictive
+      applicable one; MachinePolicy and UserPolicy come from Group Policy and
+      override LocalMachine.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Usa a política mínima que resolve o teu caso, com o âmbito mais estreito possível.
+    - Use the minimum policy that solves your case, on the narrowest scope possible.
+    interpretation:
+    - Prefer RemoteSigned para scripts locais; evita Bypass e Unrestricted como solução
+      permanente. A política é um trilho de segurança, não um limite de segurança.
+    - Prefer RemoteSigned for local scripts; avoid Bypass and Unrestricted as a
+      permanent fix. The policy is a safety rail, not a security boundary.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Alterar a política de execução é um passo separado
+    que deve guardar o valor anterior por âmbito.
+  - These steps do not modify the system. Changing the execution policy is a separate
+    step that must record the previous value per scope.
+- id: powershell-profile-not-loading
+  title:
+  - "Perfil do PowerShell não carrega"
+  - PowerShell profile not loading
+  summary:
+  - Confirma que host e caminho do perfil estão corretos antes de editar.
+  - Confirm the host and profile path are correct before editing.
+  keywords:
+  - profile
+  - perfil
+  - $profile
+  - profile.ps1
+  - not loading
+  - nao carrega
+  steps:
+  - instruction:
+    - Mostra o caminho do perfil do host atual e se existe.
+    - Show the current host profile path and whether it exists.
+    interpretation:
+    - "$PROFILE é por host: CurrentUserCurrentHost, AllUsersAllHosts e outros variam. Testa Test-Path $PROFILE antes de presumir que o ficheiro está no sítio certo."
+    - "$PROFILE is per-host: CurrentUserCurrentHost, AllUsersAllHosts and others differ. Test Test-Path $PROFILE before assuming the file is in the right place."
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Verifica se a política de execução bloqueia o perfil.
+    - Check whether the execution policy blocks the profile.
+    interpretation:
+    - Um perfil existente pode não carregar porque a política bloqueia todos os scripts,
+      incluindo o perfil. Resolve primeiro o guia de política de execução.
+    - An existing profile may not load because the policy blocks all scripts,
+      including the profile. Solve the execution policy guide first.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_profiles
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Criar ou editar um perfil deve guardar uma
+    cópia anterior se o ficheiro já existir.
+  - These steps do not modify the system. Creating or editing a profile must keep
+    a previous copy when the file already exists.
+- id: powershell-module-missing
+  title:
+  - "Módulo do PowerShell não encontrado"
+  - PowerShell module not found
+  summary:
+  - Distingue módulo não instalado de módulo fora do PSModulePath.
+  - Distinguish a not-installed module from a module outside PSModulePath.
+  keywords:
+  - modulo
+  - módulo
+  - module
+  - install-module
+  - psmodulepath
+  - not found
+  - nao encontrado
+  steps:
+  - instruction:
+    - Verifica se o módulo está instalado e em que caminho.
+    - Check whether the module is installed and in which path.
+    interpretation:
+    - Usa Get-Module -ListAvailable <modulo>. Um módulo instalado fora de $env:PSModulePath
+      não é detetado automaticamente.
+    - Use Get-Module -ListAvailable <module>. A module installed outside
+      $env:PSModulePath is not detected automatically.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Se não estiver instalado, instala-o da PowerShell Gallery.
+    - If not installed, install it from the PowerShell Gallery.
+    interpretation:
+    - Install-Module descarrega da Gallery; confirma o nome com Find-Module primeiro.
+      Módulos nãoassinados exigem atenção ao publisher antes de instalar.
+    - Install-Module downloads from the Gallery; confirm the name with Find-Module
+      first. Unsigned modules require attention to the publisher before installing.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_modules
+  - https://learn.microsoft.com/powershell/module/powershellget/install-module
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Instalar módulos é um passo separado que deve
+    registar o que foi instalado e a versão.
+  - These steps do not modify the system. Installing modules is a separate step
+    that must record what was installed and the version.
+- id: powershell-alias-conflict
+  title:
+  - Aliases do PowerShell confundem comandos Linux
+  - PowerShell aliases confuse Linux commands
+  summary:
+  - Mapeia os aliases incorporados antes de os remover.
+  - Map built-in aliases before removing them.
+  keywords:
+  - alias
+  - ls
+  - cp
+  - mv
+  - rm
+  - cat
+  - set-alias
+  - remove-alias
+  steps:
+  - instruction:
+    - Mostra a definição de um alias incorporado.
+    - Show a built-in alias definition.
+    interpretation:
+    - Get-Alias ls mostra que aponta para Get-ChildItem no Windows PowerShell; a sintaxe
+      de parâmetros Linux (-la) não existe e gera erros de parâmetro.
+    - Get-Alias ls shows it points to Get-ChildItem in Windows PowerShell; Linux
+      parameter syntax (-la) does not exist and produces parameter errors.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Decide se queres o alias incorporado ou o comportamento Linux.
+    - Decide whether you want the built-in alias or the Linux behaviour.
+    interpretation:
+    - Remove-Alias não existe em todos os hosts; em Windows PowerShell pode sobrepôr-se
+      com Set-Alias por sessão ou definir funções equivalentes no $PROFILE.
+    - Remove-Alias is unavailable on all hosts; in Windows PowerShell you can
+      override with a session Set-Alias or define equivalent functions in $PROFILE.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_aliases
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Alterações de alias em $PROFILE devem ser
+    revertíveis removendo as linhas adicionadas.
+  - These steps do not modify the system. Alias changes in $PROFILE must be
+    reversible by removing the added lines.
+- id: powershell-error-reading
+  title:
+  - "Como ler erros no PowerShell"
+  - How to read PowerShell errors
+  summary:
+  - Usa os objetos de erro para identificar cmdlet, categoria e alvo.
+  - Use error objects to identify the cmdlet, category and target.
+  keywords:
+  - erro
+  - error
+  - errorrecord
+  - $error
+  - exception
+  - categoryinfo
+  - erroraction
+  steps:
+  - instruction:
+    - Consulta o último erro como objeto.
+    - Inspect the last error as an object.
+    interpretation:
+    - "$Error[0] expõe CategoryInfo, Exception e TargetObject; a mensagem de texto perde este contexto. Um acesso limitado evita despejar o histórico inteiro."
+    - "$Error[0] exposes CategoryInfo, Exception and TargetObject; the plain text message loses this context. A bounded read avoids dumping the whole history."
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Trata erros não-terminantes de forma explícita.
+    - Handle non-terminating errors explicitly.
+    interpretation:
+    - Por predefinição, cmdlets como Get-ChildItem continuam após erros por item e
+      escrevem no fluxo de erro. -ErrorAction Stop converte em exceção capturável
+      com try/catch.
+    - By default cmdlets like Get-ChildItem continue after per-item errors and
+      write to the error stream. -ErrorAction Stop converts them into an exception
+      catchable with try/catch.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_try_catch_finally
+  - https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_commonparameters
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos são apenas leitura e não alteram o sistema.
+  - These steps are read-only and do not modify the system.
+action_ids: []
+provenance:
+  origin: Microsoft Learn PowerShell documentation reviewed 2026-10-02
+  verification: documentation_review
+  sources:
+  - https://learn.microsoft.com/powershell/
+  - https://learn.microsoft.com/powershell/scripting/overview

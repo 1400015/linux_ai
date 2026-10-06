@@ -14,7 +14,8 @@
         "linux",
         "distro",
         "package_manager",
-        "service_manager"
+        "service_manager",
+        "platform"
       ]
     },
     "requires": {

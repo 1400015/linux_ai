@@ -74,8 +74,8 @@ class KnowledgeTests(unittest.TestCase):
 
     def test_bundled_composition_preserves_provenance_and_retrieval(self):
         modules = bundled_modules()
-        self.assertEqual(len(modules), 7)
-        self.assertEqual(sum(len(item['procedures']) for item in modules), 9)
+        self.assertEqual(len(modules), 9)
+        self.assertEqual(sum(len(item['procedures']) for item in modules), 19)
         self.assertEqual(PROCEDURE_BY_ID['service-runit'].reviewed_at, '2026-10-02')
         self.assertEqual(PROCEDURE_BY_ID['service-runit'].tested_versions, ())
         ids = {item['id'] for item in compose_modules(context('systemd'))}

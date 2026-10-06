@@ -146,10 +146,17 @@ def knowledge_warning(lang='en'):
             'remain available; reinstall the application to recover the modules.')
 
 
-def compose_modules(context):
-    """Select components independently; distro dependencies never claim activity."""
+def compose_modules(context, platform=None):
+    """Select components independently; distro dependencies never claim activity.
+
+    ``platform`` modules declare their platforms in ``match.distro_ids`` and
+    compose only when the detected (or explicitly validated) platform matches.
+    """
+    from .platform import effective_platform
+    current = effective_platform(platform)
     identifiers = {getattr(context, name).identifier for name in ('package_manager', 'service_manager', 'audio', 'network')}
     return tuple(module for module in available_bundled_modules() if module['kind'] == 'linux'
+                 or (module['kind'] == 'platform' and current in module['match']['distro_ids'])
                  or context.distro_id in module['match']['distro_ids']
                  or set(context.id_like).intersection(module['match']['distro_ids'])
                  or identifiers.intersection(module['match']['components']))
