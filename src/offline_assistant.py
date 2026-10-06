@@ -513,6 +513,11 @@ class OfflineAssistant:
         self._kb = (knowledge_for(self._distro.distro_id, self._distro.id_like)
                     or knowledge_for("unknown"))
         self._diagnostic = None
+        # Probes follow the running platform: PowerShell on Windows host,
+        # POSIX probes wrapped through the WSL bridge inside a distro.
+        from .platform import detect_platform, wsl_distro_name
+        self._platform = detect_platform()
+        self._wsl_distro = wsl_distro_name() if self._platform != "windows" else ""
 
     @property
     def distro(self) -> DistroInfo:
@@ -814,6 +819,11 @@ class OfflineAssistant:
         commands = {"links": "ip link show", "addresses": "ip addr show",
                     "routes": "ip route", "disk": "df -h", "inodes": "df -i",
                     "memory": "free -h"}
+        if self._platform != "linux":
+            from .platform.probes import probe_argv_for
+            argv = probe_argv_for(key, platform=self._platform,
+                                  wsl_distro=self._wsl_distro or None)
+            return self._run(list(argv)) if argv is not None else None
         command = commands.get(key)
         if command and command.split()[0] not in self._distro.available_tools:
             return None

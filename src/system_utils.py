@@ -331,6 +331,15 @@ class SystemUtils:
 
         cmd_base = cmd_parts[0]
 
+        # Platform probes: read-only PowerShell cmdlets or wrapped WSL
+        # probes bypass the POSIX allowlist only after passing their own
+        # dedicated policy (allowlisted cmdlet, safe operands / re-validated
+        # inner command). They remain read-only diagnostics.
+        if cmd_base.lower() in ("powershell", "wsl.exe"):
+            if not self._validate_platform_probe(cmd_parts):
+                return False, f"Platform probe rejected: {cmd_base}"
+            return self._run_platform_probe(cmd_parts, timeout)
+
         # Check if the command is allowed
         if cmd_base not in self.allowed_commands:
             logger.warning(f"Command not allowed: {cmd_base}")
@@ -361,6 +370,42 @@ class SystemUtils:
             if getattr(e, 'cleanup_uncertainty', None):
                 message += ' ' + CLEANUP_UNCERTAINTY
             return False, message
+
+    def _validate_platform_probe(self, cmd_parts):
+        """Positive validation for platform probe argv: PowerShell cmdlets
+        or WSL-wrapped inner commands must pass their dedicated policy."""
+        try:
+            base = str(cmd_parts[0]).lower()
+            if base == "powershell":
+                # powershell -Command <cmdlet argv...>: validate the cmdlet tail.
+                if len(cmd_parts) < 3 or str(cmd_parts[1]).lower() != "-command":
+                    return False
+                from .platform.shell_pwsh import validate_pwsh_arguments
+                return validate_pwsh_arguments(cmd_parts[2:])
+            if base == "wsl.exe":
+                from .platform.wsl_bridge import probe_argv as wsl_probe
+                return wsl_probe(str(cmd_parts[2]), cmd_parts[4:]) is not None
+        except Exception:
+            return False
+        return False
+
+    def _run_platform_probe(self, cmd_parts, timeout):
+        """Run an already-validated platform probe with bounded output."""
+        try:
+            logger.info("Running platform probe: %s", redact_command(cmd_parts))
+            returncode, stdout, stderr = run_bounded(cmd_parts, timeout, MAX_COMMAND_OUTPUT)
+            if returncode == 0:
+                return True, stdout
+            return False, stderr or stdout
+        except subprocess.TimeoutExpired as error:
+            logger.error("Timeout running platform probe")
+            message = "Timeout running platform probe"
+            if getattr(error, 'cleanup_uncertainty', None):
+                message += ' ' + CLEANUP_UNCERTAINTY
+            return False, message
+        except Exception as e:
+            logger.error("Error running platform probe (%s)", type(e).__name__)
+            return False, "Error running platform probe"
 
     def read_file(self, filepath: str, max_lines: int = 100) -> Tuple[bool, str]:
         """
