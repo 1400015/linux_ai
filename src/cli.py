@@ -1221,12 +1221,15 @@ Examples:
         if not args.config_command:
             # List configuration
             config = self.config.config
+            print("Stored configuration (environment overrides and Secret Service keys are not shown):")
             self._print_config(config)
-            return
+            return 0
 
         if args.config_command == 'list':
             config = self.config.config
+            print("Stored configuration (environment overrides and Secret Service keys are not shown):")
             self._print_config(config)
+            return 0
         elif args.config_command == 'set':
             if not args.key or not args.value:
                 print("✗ You must specify both key and value")
@@ -1256,13 +1259,37 @@ Examples:
             print(f"✓ Configuration updated: {args.key} = {shown}")
         elif args.config_command == 'get':
             if not args.key:
-                print("✗ You must specify a key")
-                return
-            value = self.config.get(args.key)
-            # get() decrypts api_key values - never print a live secret
-            if "api_key" in args.key.lower() and value:
-                value = "*" * 12
+                print("✗ You must specify a key", file=sys.stderr)
+                return 1
+            # A missing path and a real null value are different. Check the
+            # stored structure before resolving environment/key-store values.
+            stored = self.config.config
+            for component in args.key.split('.'):
+                if not isinstance(stored, dict) or component not in stored:
+                    print(f"✗ Unknown configuration key: {args.key}", file=sys.stderr)
+                    return 1
+                stored = stored[component]
+            components = args.key.split('.')
+            if (len(components) == 4 and components[:2] == ['api', 'providers']
+                    and components[3] == 'api_key'):
+                value = self.config.get_api_key(components[2])
+            else:
+                value = self.config.get(args.key)
+            # A section can contain API keys too. Redact before printing,
+            # including effective credentials resolved from a vault or env.
+            value = self._masked_config_value(value, args.key)
             print(f"{args.key}: {value}")
+            return 0
+
+    @classmethod
+    def _masked_config_value(cls, value, key=''):
+        if 'api_key' in key.lower() and value:
+            return '*' * 12
+        if isinstance(value, dict):
+            return {name: cls._masked_config_value(item, str(name)) for name, item in value.items()}
+        if isinstance(value, list):
+            return [cls._masked_config_value(item) for item in value]
+        return value
 
     def _print_config(self, config: Dict, indent: int = 0):
         """Show configuration in an organized way."""
@@ -1272,8 +1299,10 @@ Examples:
                 self._print_config(value, indent + 1)
             else:
                 # Hide API keys (fixed size: does not reveal the length)
-                if 'api_key' in key and value:
+                if 'api_key' in key.lower() and value:
                     value = "********"
+                else:
+                    value = self._masked_config_value(value)
                 print("  " * indent + f"{key}: {value}")
 
     def handle_providers(self, args):
@@ -1286,20 +1315,51 @@ Examples:
 
         # Get configuration
         api_config = self.config.get("api.providers", {})
+        if not isinstance(api_config, dict):
+            api_config = {}
         default_provider = self.config.get("api.default_provider", "openrouter")
 
         for provider in providers:
             config = api_config.get(provider, {})
-            model = config.get("model", "N/A")
-            has_key = bool(config.get("api_key"))
+            if not isinstance(config, dict):
+                config = {}
+            # Remote chat reads the provider map; only local settings resolve
+            # a model override at the individual leaf as well.
+            model = (self.config.get(f"api.providers.{provider}.model", config.get("model", ""))
+                     if provider == 'local_llm' else config.get("model", "N/A"))
             is_default = provider == default_provider
 
             marker = "✓" if is_default else " "
-            key_status = "✓" if has_key else "✗"
+            key_status, source = self._provider_key_status(provider)
 
-            print(f"{marker} {provider:<20} Model: {model:<30} Key: {key_status}")
+            print(f"{marker} {provider:<20} Model: {model:<30} Key: {key_status} ({source})")
 
+        print("\nKey reports the effective credential; no API request or key-store unlock was performed.")
+        print("A present key is not proof that the provider accepts it. The leading ✓ marks the default provider.")
         print("\n" + "=" * 50 + "\n")
+        return 0
+
+    def _provider_key_status(self, provider):
+        """Resolve credential presence without disclosing it or unlocking a vault."""
+        if provider == 'local_llm':
+            return 'N/A', 'not required'
+        override = self.config.get_api_key_env_override(provider)
+        if override is not None:
+            present = bool(self.config.get_api_key(provider))
+            source = f"environment: {override}"
+            if not present:
+                source += '; empty override blocks stored key'
+            return ('✓' if present else '✗'), source
+        from .credential_store import CredentialStoreError
+        try:
+            storage = self.config.get_api_key_storage(provider)
+        except CredentialStoreError:
+            return '✗', 'invalid credential storage'
+        present = bool(self.config.get_api_key(provider))
+        source = 'Secret Service' if storage == 'secret-service' else 'config'
+        if not present:
+            source += '; not set or unavailable'
+        return ('✓' if present else '✗'), source
 
     def handle_tokens(self, args):
         """Process the tokens command."""

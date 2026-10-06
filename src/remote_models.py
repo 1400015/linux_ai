@@ -39,6 +39,22 @@ class ModelDiscoveryError(ValueError):
     """Messages must contain neither credentials nor provider response bodies."""
 
 
+def _http_error(status):
+    """Explain refusal using fixed messages without reading a response body."""
+    messages = {
+        400: 'The provider rejected the model-listing request (HTTP 400). Check the API key and endpoint.',
+        401: 'The provider rejected the API key (HTTP 401).',
+        403: 'The provider denied access (HTTP 403). Check the API key permissions.',
+        404: 'The model-listing endpoint was not found (HTTP 404).',
+        429: 'The provider rate limit or quota was exceeded (HTTP 429). Try again later.',
+    }
+    if status in messages:
+        return messages[status]
+    if 500 <= status < 600:
+        return 'The provider service is unavailable (HTTP 5xx). Try again later.'
+    return 'The provider refused model listing; check the key and endpoint.'
+
+
 class _ExplicitAuth(AuthBase):
     def __call__(self, request):
         return request  # Retain proxies/CA, but never pick up .netrc credentials.
@@ -132,7 +148,7 @@ def _collect_models(provider, endpoint, headers, timeout, session_factory, clock
                 timeout=(min(3.0, remaining), remaining))
             try:
                 if response.status_code != 200:
-                    raise ModelDiscoveryError('The provider refused model listing; check the key and endpoint.')
+                    raise ModelDiscoveryError(_http_error(response.status_code))
                 remaining_time()
                 chunks = bytearray()
                 available = MAX_BYTES - total_bytes

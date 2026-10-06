@@ -32,17 +32,26 @@ remove_venv() {
 remove_desktop_entry() {
     echo -e "${YELLOW}Removing the application shortcut...${NC}"
     
-    DESKTOP_FILE="$HOME/.local/share/applications/linux-ai-assistant.desktop"
+    DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+    DESKTOP_FILE="$DATA_DIR/applications/linux-ai-assistant.desktop"
     if [ -f "$DESKTOP_FILE" ]; then
         rm "$DESKTOP_FILE"
         # Guarda: sob set -e, um binário ausente abortava aqui e nunca
         # chegava a remover config/cache/autostart
         if command -v update-desktop-database >/dev/null 2>&1; then
-            update-desktop-database "$HOME/.local/share/applications"
+            update-desktop-database "$DATA_DIR/applications"
         fi
         echo -e "${GREEN}Shortcut removed.${NC}"
     else
         echo -e "${BLUE}Shortcut not found.${NC}"
+    fi
+
+    ICON_FILE="$DATA_DIR/icons/hicolor/scalable/apps/io.github.linux_ai_assistant.svg"
+    if [ -f "$ICON_FILE" ]; then
+        rm -f "$ICON_FILE"
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t "$DATA_DIR/icons/hicolor" >/dev/null 2>&1 || true
+        fi
     fi
 
     # Remover também o autostart criado por `autostart.sh enable` — sem

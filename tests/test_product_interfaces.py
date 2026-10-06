@@ -312,10 +312,15 @@ class TestDesktopPackaging(unittest.TestCase):
         commands = [line[5:] for line in desktop.splitlines() if line.startswith('Exec=')]
         self.assertTrue(commands)
         for command in commands:
-            self.assertEqual(command.split(), ['flatpak', 'run', APPLICATION_ID, '--show'])
+            self.assertEqual(command.split(), [manifest['command'], '--show'])
+        self.assertIn('StartupWMClass=' + APPLICATION_ID, desktop)
 
     def test_installers_and_wheel_desktop_entry_activate_existing_assistant(self):
-        for filename in ('scripts/install.sh', 'scripts/install_void.sh', 'scripts/linux-ai-assistant.desktop'):
+        for filename in ('scripts/install.sh', 'scripts/install_void.sh'):
+            with self.subTest(filename=filename):
+                text = (self.repository / filename).read_text()
+                self.assertIn('bash "$SCRIPT_DIR/install-desktop.sh"', text)
+        for filename in ('scripts/linux-ai-assistant.desktop',):
             with self.subTest(filename=filename):
                 text = (self.repository / filename).read_text()
                 commands = [line[5:] for line in text.splitlines() if line.startswith('Exec=')]

@@ -97,6 +97,58 @@ class TestCredentialSettings(unittest.TestCase):
             unlock.assert_not_called()
             self.assertTrue(self.widget.save())
 
+    def test_empty_override_is_explicit_and_cannot_be_copied_over_stored_key(self):
+        variable = 'LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY'
+        with patch.dict(os.environ, {variable: ''}):
+            self.widget._provider_changed(self.combo)
+            self.assertIn(variable, self.widget.warning.get_text())
+            self.assertIn('empty', self.widget.warning.get_text())
+            self.assertFalse(self.widget.copy_button.get_sensitive())
+            self.assertFalse(self.widget.remove_override_button.get_sensitive())
+            self.widget._copy(None)
+        self.assertEqual(self.config.get_stored_api_key('openrouter'), 'stored-synthetic')
+
+    def test_explicit_placeholder_removal_enables_saved_key_and_emits_probe_change(self):
+        variable = 'LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY'
+        dotenv = Path(self.directory.name) / '.env'
+        dotenv.write_text(f'{variable}=\n')
+        self.config = ConfigManager(str(Path(self.directory.name) / 'config.json'))
+        self.config.set_api_key('openrouter', 'stored-synthetic')
+        self.widget.config = self.config
+        self.widget._provider_changed(self.combo)
+        self.assertTrue(self.widget.remove_override_button.get_sensitive())
+        changes = []
+        self.widget.connect('probe-key-changed', lambda widget: changes.append(True))
+        self.widget.remove_override_button.emit('clicked')
+        self.assertEqual(self.widget.warning.get_text(), '')
+        self.assertFalse(self.widget.remove_override_button.get_visible())
+        self.assertEqual(self.widget.effective_key_for_probe('openrouter'), 'stored-synthetic')
+        self.assertNotIn(variable, os.environ)
+        self.assertTrue(changes)
+
+    def test_probe_key_uses_unsaved_draft_but_environment_still_takes_priority(self):
+        self.assertEqual(self.widget.effective_key_for_probe('openrouter'), 'stored-synthetic')
+        self.widget.entry.set_text('edited-synthetic')
+        self.assertEqual(self.widget.effective_key_for_probe('openrouter'), 'edited-synthetic')
+        self.assertEqual(self.config.get_stored_api_key('openrouter'), 'stored-synthetic')
+        with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'environment-synthetic'}):
+            self.assertEqual(self.widget.effective_key_for_probe('openrouter'), 'environment-synthetic')
+        with patch.dict(os.environ, {'LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY': ''}):
+            self.assertEqual(self.widget.effective_key_for_probe('openrouter'), '')
+        self.widget.entry.set_text('')
+        self.assertEqual(self.widget.effective_key_for_probe('openrouter'), '')
+
+    def test_credential_edits_provider_switch_and_reload_emit_no_secret_signal_arguments(self):
+        changed = Mock()
+        self.widget.connect('probe-key-changed', changed)
+        self.widget.entry.set_text('edited-synthetic')
+        self.widget._reload(None)
+        self.combo.set_active_id('anthropic')
+        self.assertGreaterEqual(changed.call_count, 3)
+        for arguments, keywords in changed.call_args_list:
+            self.assertEqual(arguments, (self.widget,))
+            self.assertEqual(keywords, {})
+
 
 @unittest.skipUnless(GTK_AVAILABLE, 'GTK display unavailable')
 class TestRemoteModelSettings(unittest.TestCase):

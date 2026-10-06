@@ -16,15 +16,17 @@ Por exemplo, `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` definida com valor vazi
 
 O campo da chave mostra o valor **guardado**, ignorando a sobreposição do ambiente. O aviso identifica o nome da variável ativa. O fornecedor predefinido continua a ser uma escolha separada da origem da sua credencial.
 
+O template `.env.example` conserva as variáveis de chaves não utilizadas como comentários. Instalações anteriores podem ter copiado atribuições canónicas vazias. O aviso identifica este bloqueio e o botão **Usar chave guardada (remover substituição vazia do .env)** permite remover explicitamente a atribuição. Só fica disponível para uma variável vazia carregada pela aplicação do seu próprio `.env`, se o ficheiro continuar intacto. As restantes linhas são preservadas e a substituição é atómica, com modo `0600`. Variáveis herdadas do terminal ou ficheiros entretanto alterados devem ser corrigidos na sua origem e exigem reiniciar a aplicação.
+
 ## Editar, copiar e limpar
 
 Ao mudar de fornecedor, o diálogo conserva o rascunho de cada chave no fornecedor correspondente. **OK** grava os rascunhos alterados; **Reload saved keys** descarta o rascunho do fornecedor visível e volta a ler o valor guardado. Uma falha ao ler um cofre bloqueado ou uma chave cifrada não transforma o campo vazio numa instrução de limpeza automática.
 
-**Copy effective key to selected storage** copia explicitamente o valor efetivo do ambiente para o armazenamento já ativo. Se o seletor aponta para outro armazenamento, é necessário migrar primeiro. Uma variável canónica vazia corresponde a uma chave efetiva vazia: copiar esse valor limpa a chave guardada. Sem este botão, guardar outras definições não persiste a chave do ambiente.
+**Copy effective key to selected storage** copia explicitamente o valor efetivo do ambiente para o armazenamento já ativo. Se o seletor aponta para outro armazenamento, é necessário migrar primeiro. O botão fica desativado quando a variável está vazia, para não apagar uma chave guardada ao tentar resolver o bloqueio. Sem este botão, guardar outras definições não persiste a chave do ambiente.
 
 Para limpar uma chave guardada, apaga o conteúdo do campo e grava com **OK**. Com Secret Service ativo, esta ação elimina o item correspondente no cofre e verifica a sua ausência. Uma sobreposição do ambiente continua a ter prioridade até ser removida do processo ou do `.env` e a aplicação ser reiniciada.
 
-Os botões **Copy**, **Move** e **Unlock** efetuam ações quando são premidos. **Cancelar** descarta os rascunhos ainda não gravados; não desfaz cópias ou migrações explícitas já concluídas.
+Os botões **Copy**, **Move**, **Unlock** e de remoção da substituição vazia efetuam ações quando são premidos. **Cancelar** descarta os rascunhos ainda não gravados; não desfaz essas ações explícitas já concluídas.
 
 ## Linux Secret Service
 
@@ -90,7 +92,7 @@ Uma falha criptográfica bloqueia a gravação da credencial; não grava texto s
 
 ## Modelos remotos
 
-O campo **Remote model** aceita um identificador manual. **List models** faz um pedido explícito em background ao fornecedor selecionado, usando a chave efetiva já configurada. Uma chave apenas escrita num rascunho ainda não guardado não é utilizada nesse pedido. A resposta acrescenta opções ao seletor sem substituir o texto introduzido; a escolha só é guardada em **OK**.
+O campo **Remote model** aceita um identificador manual. **List models** faz um pedido explícito em background ao fornecedor selecionado. Se não houver sobreposição de ambiente, usa a chave escrita no rascunho; a consulta não a guarda. Uma variável de ambiente ativa mantém a sua prioridade. A resposta acrescenta opções ao seletor sem substituir o texto introduzido; a escolha só é guardada em **OK**. Alterar a chave durante a consulta cancela o pedido e descarta o resultado antigo.
 
 Não há consulta de modelos remotos no arranque. O modo offline ou local bloqueia a listagem remota, incluindo o modo efetivo imposto pelo ambiente. A consulta aceita apenas endpoints HTTPS conhecidos dos fornecedores suportados, rejeita redirecionamentos e limita prazo, tamanho, número de modelos e paginação. Usa a autenticação do fornecedor escolhido; não envia uma conversa nem descarrega modelos. Um erro de listagem conserva o identificador manual, e uma lista devolvida pela API não confirma preços, quotas ou acesso da conta a uma resposta de chat.
 
@@ -148,7 +150,7 @@ Verifica estes casos em **Menu → Settings → API**:
 2. Uma variável de ambiente ativa produz o aviso, mas o campo continua a mostrar a chave guardada. Guardar outras definições não copia a variável. O botão **Copy** copia apenas quando solicitado para o backend ativo. Confirma também canónica vazia, legada vazia e canónica com prioridade sobre legada.
 3. Um cofre bloqueado não apresenta pedidos ao abrir o diálogo ou resolver uma chave. **Unlock** pode apresentar autenticação; uma recusa conserva as credenciais. A migração usa a chave guardada, verifica o destino e retira a chave do JSON apenas após sucesso.
 4. Falhas de escrita/verificação, chave Fernet ausente e dados cifrados danificados mantêm a credencial anterior ou comunicam indisponibilidade; não produzem uma cópia em texto simples. Simula falhas com os testes, evitando destruir a configuração de utilização diária.
-5. **List models** só contacta o fornecedor após o clique, conserva um ID manual e não grava a escolha antes de **OK**. Falhas e mudança de fornecedor durante a consulta não aplicam uma resposta antiga ao novo fornecedor. O modo local/offline bloqueia o pedido.
+5. **List models** só contacta o fornecedor após o clique. Usa a chave escrita no diálogo sem a guardar, mantendo a prioridade de uma variável de ambiente ativa. Conserva um ID manual e só grava o modelo escolhido com **OK**. Falhas e alterações da chave, fornecedor ou modo durante a consulta não aplicam uma resposta antiga. O modo local/offline bloqueia o pedido. Erros HTTP de autenticação, permissões, quota e serviço são apresentados sem copiar chaves nem respostas brutas do fornecedor.
 
 Os testes automáticos usam cofres falsos, configurações temporárias e respostas HTTP sintéticas:
 

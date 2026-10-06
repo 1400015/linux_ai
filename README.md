@@ -295,6 +295,14 @@ replacing existing process environment variables. A canonical name such as
 `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` takes precedence even when its
 value is empty. Otherwise a nonempty legacy variable overrides the selected
 credential store; an empty legacy variable falls back to that store.
+The template leaves unused API-key variables commented out. If an older
+installation loaded an empty canonical assignment from its `.env`, Settings
+offers **Use stored key (remove empty override from .env)**. This explicit
+action removes only that unchanged empty assignment. An inherited environment
+override must be changed at its source, followed by an application restart.
+When a stored key in the selected storage is blocked, the chat explains the
+empty override and points to the appropriate recovery step. Notices belong to
+the original request and are discarded after cancellation or a conversation change.
 
 **Settings → API** shows the stored key, keeps edits for each provider until
 **OK**, and identifies an active environment override. Copying the effective
@@ -305,6 +313,12 @@ requires an explicit unlock before writing; install it with
 encryption uses `python -m pip install '.[encryption]'`. See the
 [credential, model and manual QA guide](docs/credenciais-modelos.md) for
 precedence, verified migration, encryption recovery and safe inspection.
+
+The CLI `providers` command reports effective credential availability and its
+source, including empty environment overrides. It makes no authentication
+request and never unlocks the key store. `config list` shows stored settings;
+`config get` resolves an existing path, masks API keys also in returned sections,
+and fails for unknown paths. The assistance-mode path is `assistance.mode`.
 
 GTK bindings come from the system packages; use `--system-site-packages` so the
 virtual environment can import them. Do not install the unrelated PyPI `gi`
@@ -350,7 +364,9 @@ The shipped configuration template includes both shortcut settings, with
 These defaults apply to new configurations and missing fields; existing model
 choices are preserved. Model availability depends on the provider and account.
 In **Settings → API**, enter a model ID or explicitly click **List models**;
-listing runs in the background and changes no saved model until **OK**. Remote
+listing runs in the background, can use the key just entered without saving it,
+and changes no saved model until **OK**. Environment key overrides retain their
+priority. Remote
 listing uses supported standard HTTPS endpoints and is blocked in local/offline
 modes. Direct Google and OpenRouter model IDs are independent. See the
 [model selection guide](docs/credenciais-modelos.md#modelos-remotos).
@@ -454,9 +470,18 @@ When expert mode is active:
 ### Screen Capture
 
 1. Click the 📷 button
-2. The screen will be captured automatically
+2. On Wayland, choose or approve the screenshot in the desktop's screenshot dialog.
+   On X11, the configured capture utility takes the screenshot directly.
 3. Text will be extracted using OCR
 4. The text will be added to the conversation
+
+Wayland capture uses the XDG Screenshot portal, including on GNOME/Ubuntu where
+`grim` cannot capture the desktop. Ubuntu needs `xdg-desktop-portal` and
+`xdg-desktop-portal-gnome` running in the graphical session. Cancellation and
+permission refusal stop the request; the application does not try another tool
+after either. A wlroots/Sway desktop without this portal can still use `grim`.
+The request has a 120-second limit, and its temporary image is removed after
+OCR or image preparation. OCR also requires Tesseract and the chosen languages.
 
 For an image question, use **Capture an image for AI** or choose an image file.
 Review the normalized image and the selected OpenRouter model, then attach it

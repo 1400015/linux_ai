@@ -38,14 +38,18 @@ class TrayIcon:
     def _create_tray_icon(self):
         """Create system tray icon"""
         try:
+            from .desktop_icons import ICON_NAME, icon_path
             # Try AppIndicator3 (Ubuntu).
             # NB: the class is `Indicator` (`IndicatorApp` does not exist and
             # raised AttributeError, silently forcing the StatusIcon fallback).
             self.indicator = AppIndicator3.Indicator.new(
                 "linux-ai-assistant",
-                "system-run",
+                ICON_NAME,
                 AppIndicator3.IndicatorCategory.APPLICATION_STATUS
             )
+            path = icon_path()
+            if path is not None:
+                self.indicator.set_icon_theme_path(str(path.parent))
             self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
             self.indicator.set_attention_icon("dialog-information")
 
@@ -65,9 +69,9 @@ class TrayIcon:
         try:
             self.status_icon = Gtk.StatusIcon()
 
-            # Load icon (use system default icon)
-            icon_theme = Gtk.IconTheme.get_default()
-            icon = icon_theme.load_icon("system-run", 48, 0)
+            from .desktop_icons import ICON_NAME, configure_application_icon
+            icon_theme = configure_application_icon()
+            icon = icon_theme.load_icon(ICON_NAME, 48, 0)
             if icon:
                 self.status_icon.set_from_pixbuf(icon)
             else:

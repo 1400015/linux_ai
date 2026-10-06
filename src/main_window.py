@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 
 # Values coming from theme files are interpolated into GTK's CSS; validating
 # the format prevents a malicious JSON from injecting arbitrary style rules.
-_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+# GTK3 supports RGB hex colors; CSS4's RGBA hex forms fail its CSS parser.
+_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 _.,'-]{1,64}$")
 
 # Context budget: by default 12000 characters (~3k tokens) and 20 messages.
@@ -59,7 +60,7 @@ STREAM_FLUSH_INTERVAL = 0.08
 
 
 def safe_color(value, fallback="#1e1e1e"):
-    """Return a valid CSS color or `fallback`."""
+    """Return a hex color supported by GTK3 CSS or `fallback`."""
     if isinstance(value, str) and _COLOR_RE.match(value.strip()):
         return value.strip()
     if value is not None:
@@ -74,6 +75,18 @@ def safe_font_family(value, fallback="Monospace"):
     if value is not None:
         logger.warning(f"Invalid theme font family ignored: {value!r}")
     return fallback
+
+
+def contrasting_text_color(background):
+    """Choose readable text for a validated theme accent, including light ones."""
+    value = safe_color(background, '#4CAF50')[1:]
+    if len(value) == 3:
+        value = ''.join(character * 2 for character in value)
+    channels = [int(value[offset:offset + 2], 16) / 255 for offset in (0, 2, 4)]
+    linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+              for channel in channels]
+    luminance = sum(channel * weight for channel, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+    return '#000000' if (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) else '#ffffff'
 
 
 def safe_number(value, fallback, cast, minimum=None, maximum=None):
@@ -94,6 +107,10 @@ class MainWindow(Gtk.Window):
 
     def __init__(self, app, config_manager, ai_client, system_utils, history_store=None):
         super().__init__(title="Linux AI Assistant")
+
+        from .desktop_icons import ICON_NAME, configure_application_icon
+        configure_application_icon()
+        self.set_icon_name(ICON_NAME)
 
         self.app = app
         self.config = config_manager
@@ -322,6 +339,9 @@ class MainWindow(Gtk.Window):
 
     def _setup_style(self):
         """Set up window CSS styling"""
+        # A screen provider also sees dialogs, menus and window decorations.
+        # Scope every rule to our content so those keep their native GTK theme.
+        self.get_style_context().add_class('linux-ai-main')
         # add_provider_for_screen() is cumulative: remove the previous provider
         # first so changing theme does not stack stylesheets indefinitely.
         previous = getattr(self, "_style_provider", None)
@@ -352,6 +372,9 @@ class MainWindow(Gtk.Window):
         accent_color = safe_color(colors.get('accent'), '#4CAF50')
         secondary_color = safe_color(colors.get('secondary'), '#2d2d2d')
         tertiary_color = safe_color(colors.get('tertiary'), '#252525')
+        accent_text = contrasting_text_color(accent_color)
+        expert_text = contrasting_text_color('#2196F3')
+        danger_text = contrasting_text_color('#f44336')
 
         font_family = safe_font_family(
             theme_ui.get('font_family') or self.config.get('ui.font_family'),
@@ -367,9 +390,9 @@ class MainWindow(Gtk.Window):
         )
 
         # Cores de syntax highlighting
-        user_msg_color = safe_color(syntax_colors.get('user_message'), '#e0e0e0')
-        ai_msg_color = safe_color(syntax_colors.get('ai_message'), '#a0d0a0')
-        system_msg_color = safe_color(syntax_colors.get('system_message'), '#808080')
+        user_msg_color = safe_color(syntax_colors.get('user_message'), text_color)
+        ai_msg_color = safe_color(syntax_colors.get('ai_message'), text_color)
+        system_msg_color = safe_color(syntax_colors.get('system_message'), text_color)
         if hasattr(self, 'chat_view'):
             self.chat_view.set_style(font_family, font_size, {
                 'user': user_msg_color, 'ai': ai_msg_color, 'system': system_msg_color,
@@ -378,7 +401,7 @@ class MainWindow(Gtk.Window):
             })
 
         css = f"""
-        #main-box {{
+        .linux-ai-main #main-box {{
             background-color: {bg_color};
             color: {text_color};
             border-radius: {border_radius}px;
@@ -386,14 +409,14 @@ class MainWindow(Gtk.Window):
             margin: 5px;
         }}
 
-        #header {{
+        .linux-ai-main #header {{
             background-color: {secondary_color};
             border-radius: {border_radius}px {border_radius}px 0 0;
             padding: 8px;
             margin-bottom: 10px;
         }}
 
-        #chat-area {{
+        .linux-ai-main #chat-area {{
             background-color: {tertiary_color};
             border-radius: 5px;
             padding: 10px;
@@ -401,13 +424,14 @@ class MainWindow(Gtk.Window):
             min-height: 300px;
         }}
 
-        #input-area {{
+        .linux-ai-main #input-area {{
             background-color: {secondary_color};
             border-radius: 5px;
             padding: 10px;
         }}
 
-        textview {{
+        .linux-ai-main #main-box textview,
+        .linux-ai-main #main-box textview text {{
             font-family: {font_family};
             font-size: {font_size}pt;
             background-color: {tertiary_color};
@@ -416,68 +440,88 @@ class MainWindow(Gtk.Window):
             padding: 5px;
         }}
 
-        button {{
+        .linux-ai-main #main-box button {{
             background-color: {accent_color};
-            color: white;
+            background-image: none;
+            color: {accent_text};
+            text-shadow: none;
+            -gtk-icon-shadow: none;
+            box-shadow: none;
             border-radius: 5px;
             padding: 5px 10px;
             font-family: {font_family};
             font-size: 10pt;
             border: none;
-            min-width: 40px;
+            min-width: 32px;
         }}
 
-        button:hover {{
+        .linux-ai-main #main-box button:hover {{
             opacity: 0.9;
         }}
 
-        button:active {{
+        .linux-ai-main #main-box button:active {{
             opacity: 0.7;
         }}
 
-        button.expert {{
+        .linux-ai-main #main-box button.expert {{
             background-color: #2196F3;
+            color: {expert_text};
         }}
 
-        button.expert:hover {{
+        .linux-ai-main #main-box button.expert:hover {{
             background-color: #0b7dda;
         }}
 
-        button.danger {{
+        .linux-ai-main #main-box button.danger {{
             background-color: #f44336;
+            color: {danger_text};
         }}
 
-        button.danger:hover {{
+        .linux-ai-main #main-box button.danger:hover {{
             background-color: #da190b;
         }}
 
-        entry {{
+        .linux-ai-main #main-box button:disabled {{
             background-color: {secondary_color};
+            color: {text_color};
+            opacity: 0.6;
+        }}
+
+        .linux-ai-main #main-box entry {{
+            background-color: {secondary_color};
+            background-image: none;
             color: {text_color};
             border-radius: 5px;
             padding: 5px;
             font-family: {font_family};
             font-size: {font_size}pt;
-            border: none;
+            border: 1px solid transparent;
+            box-shadow: none;
+            caret-color: {text_color};
         }}
 
-        entry:focus {{
-            outline: none;
+        .linux-ai-main #main-box entry:focus {{
             border: 1px solid {accent_color};
         }}
 
-        scrolledwindow {{
+        .linux-ai-main #main-box entry selection,
+        .linux-ai-main #main-box textview text selection {{
+            background-color: {accent_color};
+            color: {accent_text};
+        }}
+
+        .linux-ai-main #main-box scrolledwindow {{
             background-color: {tertiary_color};
             border-radius: 5px;
             border: none;
         }}
 
-        .loading {{
+        .linux-ai-main #main-box .loading {{
             opacity: 0.7;
             font-style: italic;
         }}
 
-        .expert-mode {{
+        .linux-ai-main #main-box .expert-mode {{
             border-left: 3px solid #2196F3;
             padding-left: 10px;
         }}
@@ -504,7 +548,7 @@ class MainWindow(Gtk.Window):
         main_box.pack_start(header, False, False, 0)
 
         # Menu button
-        menu_btn = Gtk.Button.new_from_icon_name("open-menu", Gtk.IconSize.MENU)
+        menu_btn = Gtk.Button.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.MENU)
         menu_btn.connect("clicked", self.on_menu_clicked)
         menu_btn.set_tooltip_text(_("Menu"))
         header.pack_start(menu_btn, False, False, 0)
@@ -516,18 +560,18 @@ class MainWindow(Gtk.Window):
         header.pack_start(title_label, True, True, 0)
 
         # Icon de estado
-        self.status_icon = Gtk.Image.new_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon = Gtk.Image.new_from_icon_name("object-select-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
         header.pack_end(self.status_icon, False, False, 0)
 
         # Close button
-        close_btn = Gtk.Button.new_from_icon_name("window-close", Gtk.IconSize.MENU)
+        close_btn = Gtk.Button.new_from_icon_name("window-close-symbolic", Gtk.IconSize.MENU)
         close_btn.connect("clicked", lambda btn: self.on_close_clicked())
         close_btn.set_tooltip_text(_("Close"))
         header.pack_end(close_btn, False, False, 0)
 
         # Minimize button
-        minimize_btn = Gtk.Button.new_from_icon_name("window-minimize", Gtk.IconSize.MENU)
+        minimize_btn = Gtk.Button.new_from_icon_name("window-minimize-symbolic", Gtk.IconSize.MENU)
         minimize_btn.connect("clicked", lambda btn: self.iconify())
         minimize_btn.set_tooltip_text(_("Minimize"))
         header.pack_end(minimize_btn, False, False, 0)
@@ -539,7 +583,7 @@ class MainWindow(Gtk.Window):
         self.session_combo.set_tooltip_text(_("Conversations"))
         self.session_combo.connect('changed', self._on_session_selected)
         conversations.pack_start(self.session_combo, True, True, 0)
-        new_conversation = Gtk.Button.new_from_icon_name('document-new', Gtk.IconSize.MENU)
+        new_conversation = Gtk.Button.new_from_icon_name('document-new-symbolic', Gtk.IconSize.MENU)
         new_conversation.set_tooltip_text(_("New conversation"))
         new_conversation.connect('clicked', self._new_conversation)
         conversations.pack_start(new_conversation, False, False, 0)
@@ -597,7 +641,9 @@ class MainWindow(Gtk.Window):
         references.pack_start(self.remove_image_button, False, False, 0)
 
         # Input area
-        input_area = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        # Keep the message field on its own row. On a narrow floating/docked
+        # window, five action buttons otherwise consume most of its width.
+        input_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         input_area.set_property("name", "input-area")
         main_box.pack_start(input_area, False, False, 0)
 
@@ -608,21 +654,22 @@ class MainWindow(Gtk.Window):
         self.input_entry.set_placeholder_text(_("Type your message... (Enter to send)"))
         self.input_entry.connect("activate", self.on_input_activate)
         self.input_entry.set_hexpand(True)
-        input_area.pack_start(self.input_entry, True, True, 0)
+        input_area.pack_start(self.input_entry, False, True, 0)
 
         # Action buttons
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        input_area.pack_end(button_box, False, False, 0)
+        button_box.set_halign(Gtk.Align.END)
+        input_area.pack_start(button_box, False, False, 0)
 
         # Cancel button
-        self.cancel_btn = Gtk.Button.new_from_icon_name("process-stop", Gtk.IconSize.MENU)
+        self.cancel_btn = Gtk.Button.new_from_icon_name("process-stop-symbolic", Gtk.IconSize.MENU)
         self.cancel_btn.connect("clicked", self.on_cancel_streaming)
         self.cancel_btn.set_tooltip_text(_("Cancel"))
         self.cancel_btn.set_sensitive(False)
         button_box.pack_start(self.cancel_btn, False, False, 0)
 
         # Screen capture button (hidden when features.screen_capture is off)
-        capture_btn = Gtk.Button.new_from_icon_name("camera-photo", Gtk.IconSize.MENU)
+        capture_btn = Gtk.Button.new_from_icon_name("camera-photo-symbolic", Gtk.IconSize.MENU)
         capture_btn.connect("clicked", self.on_capture_screen_clicked)
         capture_btn.set_tooltip_text(_("Capture screen (Ctrl+S)"))
         button_box.pack_start(capture_btn, False, False, 0)
@@ -634,13 +681,13 @@ class MainWindow(Gtk.Window):
         button_box.pack_start(image_btn, False, False, 0)
 
         # Expert mode button (hidden when features.expert_mode is off)
-        self.expert_btn = Gtk.Button.new_from_icon_name("system-run", Gtk.IconSize.MENU)
+        self.expert_btn = Gtk.Button.new_from_icon_name("system-run-symbolic", Gtk.IconSize.MENU)
         self.expert_btn.connect("clicked", self.on_expert_mode_toggled)
         self.expert_btn.set_tooltip_text(_("Expert Mode (Ctrl+E)"))
         button_box.pack_start(self.expert_btn, False, False, 0)
 
         # Send button
-        send_btn = Gtk.Button.new_from_icon_name("go-next", Gtk.IconSize.MENU)
+        send_btn = Gtk.Button.new_from_icon_name("go-next-symbolic", Gtk.IconSize.MENU)
         send_btn.connect("clicked", lambda btn: self.on_send_clicked())
         send_btn.set_tooltip_text(_("Send (Enter)"))
         button_box.pack_start(send_btn, False, False, 0)
@@ -657,6 +704,11 @@ class MainWindow(Gtk.Window):
 
         # Auto-scroll to bottom
         self._scroll_to_bottom()
+
+        # Choose the typing field before the window is mapped. This establishes
+        # the initial keyboard target without presenting the window or changing
+        # focus again when a settings/review dialog is open.
+        self.set_focus(self.input_entry)
 
         logger.info("UI created successfully")
 
@@ -724,6 +776,7 @@ class MainWindow(Gtk.Window):
         try:
             dialog = DocumentDialog(self, self._get_document_store())
             try:
+                dialog.show_all()
                 dialog.run()
             finally:
                 dialog.destroy()
@@ -1052,10 +1105,18 @@ class MainWindow(Gtk.Window):
 
         # Notebook for sections
         notebook = Gtk.Notebook()
-        content.add(notebook)
+        content.pack_start(notebook, True, True, 0)
         # Kept so on_themes_clicked can jump to the Themes tab instead of
         # reopening a second (nested) dialog.
         self._settings_notebook = notebook
+
+        def add_settings_page(box, title):
+            # Credential warnings and model lists can exceed a small desktop.
+            # Keep the dialog's confirmation button outside the scrolling page.
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.add(box)
+            notebook.append_page(scroll, Gtk.Label(label=_(title)))
 
         # API section
         api_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1079,11 +1140,12 @@ class MainWindow(Gtk.Window):
         credential_settings = APIKeySettings(self.config, provider_combo)
         api_box.pack_start(credential_settings, False, False, 0)
 
-        notebook.append_page(api_box, Gtk.Label(label=_("API")))
+        add_settings_page(api_box, "API")
         assistance_settings = ProviderSettings(self.config, self.ai_client)
-        model_settings = RemoteModelSettings(self.config, self.ai_client, provider_combo, assistance_settings.mode)
+        model_settings = RemoteModelSettings(self.config, self.ai_client, provider_combo,
+                                             assistance_settings.mode, credential_settings=credential_settings)
         api_box.pack_start(model_settings, False, False, 0)
-        notebook.append_page(assistance_settings, Gtk.Label(label=_("Assistance")))
+        add_settings_page(assistance_settings, "Assistance")
 
         # Appearance section
         ui_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1178,7 +1240,7 @@ class MainWindow(Gtk.Window):
         dock_edge_combo.set_active_id(self.config.get("app.dock_edge", "right"))
         ui_box.pack_start(dock_edge_combo, False, False, 0)
 
-        notebook.append_page(ui_box, Gtk.Label(label=_("Appearance")))
+        add_settings_page(ui_box, "Appearance")
 
         # Themes section
         themes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1209,7 +1271,7 @@ class MainWindow(Gtk.Window):
 
         themes_box.pack_start(theme_buttons, False, False, 0)
 
-        notebook.append_page(themes_box, Gtk.Label(label=_("Themes")))
+        add_settings_page(themes_box, "Themes")
 
         # Features section
         features_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1235,7 +1297,7 @@ class MainWindow(Gtk.Window):
         expert_check.set_active(self.config.get("features.expert_mode", True))
         features_box.pack_start(expert_check, False, False, 0)
 
-        notebook.append_page(features_box, Gtk.Label(label=_("Features")))
+        add_settings_page(features_box, "Features")
 
         # Show dialog
         dialog.show_all()
@@ -1503,7 +1565,7 @@ class MainWindow(Gtk.Window):
         documents_check = getattr(self, 'documents_check', None)
         if documents_check is not None:
             documents_check.set_active(False)
-        self.status_icon.set_from_icon_name('emblem-ok', Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name('object-select-symbolic', Gtk.IconSize.MENU)
         self._renew_offline_assistant()
         self._refresh_mode_status()
 
@@ -1708,7 +1770,7 @@ class MainWindow(Gtk.Window):
         self.is_loading = True
         self.streaming = True
         self.cancel_btn.set_sensitive(True)
-        self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name("process-working-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Processing..."))
 
         # Process in a separate thread so the UI is not blocked
@@ -1762,6 +1824,30 @@ class MainWindow(Gtk.Window):
                 # No key for the selected provider: answer from local knowledge
                 # instead of failing with "API key not configured".
                 logger.info("No usable provider; using the offline assistant")
+                # Keep the diagnostic on this request's selected provider.
+                # An empty override may come from the process environment;
+                # only assignments this manager loaded can be removed here.
+                try:
+                    shadow_provider = route['provider'] if route is not None else self.ai_client.active_provider()
+                    if shadow_provider and self.config.stored_key_shadowed_by_empty_env(shadow_provider):
+                        shadow_var = self.config.api_key_env_var(shadow_provider)
+                        warning = _(
+                            "The stored key for {provider} is disabled by the empty "
+                            "{var} environment variable."
+                        ).format(provider=shadow_provider, var=shadow_var)
+                        if self.config.can_remove_empty_api_key_override(shadow_provider):
+                            warning += ' ' + _(
+                                "Open Settings → API and choose '{button}' to remove "
+                                "the empty assignment from .env."
+                            ).format(button=_("Use stored key (remove empty override from .env)"))
+                        else:
+                            warning += ' ' + _(
+                                "Remove or fill this variable at its source, then restart the application."
+                            )
+                        GLib.idle_add(
+                            self._add_system_message_if_active, request_id, cancel_event, warning)
+                except Exception:
+                    pass
                 offline_reply = offline.handle(message, get_language())
             else:
                 try:
@@ -2080,7 +2166,7 @@ class MainWindow(Gtk.Window):
         self._local_running_request = request_id
         self.is_loading = True
         self.cancel_btn.set_sensitive(True)
-        self.status_icon.set_from_icon_name('process-working', Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name('process-working-symbolic', Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Running confirmed commands…"))
         self._add_system_message(_("Running confirmed commands. Cancellation stops later commands; an operation already started may still finish."))
         threading.Thread(
@@ -2280,7 +2366,7 @@ class MainWindow(Gtk.Window):
             # on_cancel_streaming already painted the cancelled state.
             return False
 
-        self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name("object-select-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
 
         # Show a notification if the window is not active. `is-active` is a
@@ -2296,7 +2382,7 @@ class MainWindow(Gtk.Window):
         self.is_loading = local_running
         self.streaming = False
         self.cancel_btn.set_sensitive(False)
-        self.status_icon.set_from_icon_name("dialog-error", Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name("dialog-error-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Cancelled"))
 
         self.chat_view.abort_stream()
@@ -2360,14 +2446,14 @@ class MainWindow(Gtk.Window):
         cancel_button = getattr(self, 'cancel_btn', None)
         if cancel_button is not None:
             cancel_button.set_sensitive(True)
-        self.status_icon.set_from_icon_name("process-working", Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name("process-working-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Capturing screen..."))
 
         def capture_and_process():
             temporary_image = None
             try:
                 # Capture screen
-                success, image_path = self.system_utils.capture_screen()
+                success, image_path = self.system_utils.capture_screen(cancel_event=capture_event)
 
                 if success:
                     temporary_image = image_path
@@ -2452,7 +2538,7 @@ class MainWindow(Gtk.Window):
         cancel_button = getattr(self, 'cancel_btn', None)
         if cancel_button is not None:
             cancel_button.set_sensitive(False)
-        self.status_icon.set_from_icon_name("emblem-ok", Gtk.IconSize.MENU)
+        self.status_icon.set_from_icon_name("object-select-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Ready"))
         return False
 
@@ -2481,7 +2567,7 @@ class MainWindow(Gtk.Window):
 
     def on_close_clicked(self):
         """Handler for closing the window."""
-        self.on_delete_event(None, None)
+        return self.on_delete_event(None, None)
 
     def on_delete_event(self, widget, event):
         """Handler for closing the window."""

@@ -10,7 +10,10 @@ from typing import Any, Optional, Dict, List
 import logging
 import sys
 import uuid
+import io
+import stat
 from dotenv import load_dotenv
+from dotenv.parser import parse_stream
 from .provider_modes import ASSISTANCE_MODES, validate_local_url, validate_model_name
 
 # Configurar logger
@@ -70,6 +73,49 @@ SAVE_DEBOUNCE_SECONDS = 0.5
 # restricted to the same simple identifier the "Add Theme" dialog accepts.
 _THEME_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _ENCRYPTED_PREFIX = "fernet:v1:"
+_DOTENV_MAX_BYTES = 128 * 1024
+_API_KEY_ENV_RE = re.compile(r"^LINUX_AI_API_PROVIDERS_[A-Z0-9_]+_API_KEY$")
+
+
+def _dotenv_identity(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _read_owned_dotenv(path):
+    """Read a bounded owned file and parent without following final links."""
+    path = Path(path)
+    parent_descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor = None
+    try:
+        parent_info = os.fstat(parent_descriptor)
+        if parent_info.st_uid != os.getuid() or parent_info.st_mode & 0o022:
+            raise ValueError("The environment file cannot be safely changed.")
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=parent_descriptor)
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or before.st_mode & 0o022
+                or before.st_size > _DOTENV_MAX_BYTES):
+            raise ValueError("The environment file cannot be safely changed.")
+        chunks = bytearray()
+        while len(chunks) <= _DOTENV_MAX_BYTES:
+            block = os.read(descriptor, min(8192, _DOTENV_MAX_BYTES + 1 - len(chunks)))
+            if not block:
+                break
+            chunks.extend(block)
+        if len(chunks) > _DOTENV_MAX_BYTES or _dotenv_identity(os.fstat(descriptor)) != _dotenv_identity(before):
+            raise ValueError("The environment file cannot be safely changed.")
+        return chunks.decode("utf-8"), (parent_info.st_dev, parent_info.st_ino, *_dotenv_identity(before))
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_descriptor)
+
+
+def _dotenv_bindings(contents):
+    bindings = list(parse_stream(io.StringIO(contents)))
+    if any(binding.error for binding in bindings):
+        raise ValueError("The environment file cannot be safely changed.")
+    return bindings
 
 
 class CredentialEncryptionError(ValueError):
@@ -287,7 +333,25 @@ class ConfigManager:
             config_dir.mkdir(parents=True, exist_ok=True)
             config_path = str(config_dir / "config.json")
 
-        load_dotenv(Path(config_path).parent / ".env", override=False)
+        self._dotenv_path = Path(config_path).parent / ".env"
+        self._dotenv_empty_overrides = set()
+        self._dotenv_source_identity = None
+        try:
+            contents, identity = _read_owned_dotenv(self._dotenv_path)
+            bindings = _dotenv_bindings(contents)
+            counts = {}
+            for binding in bindings:
+                if binding.key is not None:
+                    counts[binding.key] = counts.get(binding.key, 0) + 1
+            candidates = {binding.key for binding in bindings
+                          if binding.key and _API_KEY_ENV_RE.fullmatch(binding.key)
+                          and binding.value == "" and counts[binding.key] == 1
+                          and binding.key not in os.environ}
+            self._dotenv_source_identity = identity
+        except (OSError, ValueError, UnicodeError):
+            candidates = set()
+        load_dotenv(self._dotenv_path, override=False)
+        self._dotenv_empty_overrides = {name for name in candidates if os.environ.get(name) == ""}
         self.config_path = config_path
         self.config = {}
         self._encryption_key = None
@@ -855,8 +919,105 @@ class ConfigManager:
             return legacy_name
         return None
 
+    def api_key_env_var(self, provider: str) -> str:
+        """Canonical environment variable name that overrides this provider's key."""
+        return self._env_name(f"api.providers.{provider}.api_key")
+
+    def stored_key_shadowed_by_empty_env(self, provider: str) -> bool:
+        """Whether an empty canonical override disables a usable stored key.
+
+        The canonical variable wins even when a legacy variable is nonempty.
+        Inspect only the selected storage, without unlocking a vault or
+        falling back to a residual JSON key when Secret Service is selected.
+        """
+        canonical = self.api_key_env_var(provider)
+        if os.environ.get(canonical) != "":
+            return False
+        from .credential_store import CredentialStoreError
+        try:
+            return bool(self.get_stored_api_key(provider))
+        except (CredentialStoreError, CredentialEncryptionError):
+            return False
+
+    def can_remove_empty_api_key_override(self, provider: str) -> bool:
+        """Only this manager's unchanged, empty .env assignment is removable."""
+        name = self._env_name(f"api.providers.{provider}.api_key")
+        if name not in self._dotenv_empty_overrides or os.environ.get(name) != "":
+            return False
+        try:
+            contents, identity = _read_owned_dotenv(self._dotenv_path)
+            if identity != self._dotenv_source_identity:
+                return False
+            records = [record for record in _dotenv_bindings(contents) if record.key == name]
+            return len(records) == 1 and records[0].value == ""
+        except (OSError, ValueError, UnicodeError):
+            return False
+
+    def remove_empty_api_key_override(self, provider: str) -> None:
+        """Explicitly remove a loaded placeholder; never touch inherited keys.
+
+        Other dotenv records are retained verbatim. The process override is
+        cleared only after the private atomic replacement has succeeded.
+        """
+        name = self._env_name(f"api.providers.{provider}.api_key")
+        parent_descriptor = None
+        temporary_name = None
+        with self._lock:
+            try:
+                if not self.can_remove_empty_api_key_override(provider):
+                    raise ValueError("The empty override could not be removed safely.")
+                contents, identity = _read_owned_dotenv(self._dotenv_path)
+                records = _dotenv_bindings(contents)
+                target = [record for record in records if record.key == name]
+                if identity != self._dotenv_source_identity or len(target) != 1 or target[0].value != "":
+                    raise ValueError("The empty override could not be removed safely.")
+                replacement = "".join(record.original.string if record.key != name else
+                                      re.match(r"\s*", record.original.string).group(0)
+                                      for record in records).encode("utf-8")
+                parent_descriptor = os.open(self._dotenv_path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                parent_info = os.fstat(parent_descriptor)
+                if parent_info.st_uid != os.getuid() or parent_info.st_mode & 0o022:
+                    raise ValueError("The empty override could not be removed safely.")
+                temporary_name = f".env.tmp-{uuid.uuid4().hex}"
+                descriptor = os.open(temporary_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                                     0o600, dir_fd=parent_descriptor)
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(replacement)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                current = os.stat(self._dotenv_path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+                current_identity = (parent_info.st_dev, parent_info.st_ino, *_dotenv_identity(current))
+                if current_identity != identity or os.environ.get(name) != "":
+                    raise ValueError("The empty override could not be removed safely.")
+                os.replace(temporary_name, self._dotenv_path.name,
+                           src_dir_fd=parent_descriptor, dst_dir_fd=parent_descriptor)
+                temporary_name = None
+                try:
+                    updated = os.stat(self._dotenv_path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+                    new_identity = (parent_info.st_dev, parent_info.st_ino, *_dotenv_identity(updated))
+                except OSError:
+                    # The atomic edit is already committed. Never report it
+                    # as a failed write or leave this empty override active.
+                    new_identity = None
+                if os.environ.get(name) == "":
+                    del os.environ[name]
+                self._dotenv_empty_overrides.discard(name)
+                # Other originally loaded placeholders remain removable after
+                # this manager's own successful edit, not after outside edits.
+                self._dotenv_source_identity = new_identity
+            except (OSError, ValueError, UnicodeError):
+                raise ValueError("The empty override could not be removed safely.") from None
+            finally:
+                if temporary_name is not None and parent_descriptor is not None:
+                    try:
+                        os.unlink(temporary_name, dir_fd=parent_descriptor)
+                    except OSError:
+                        pass
+                if parent_descriptor is not None:
+                    os.close(parent_descriptor)
+
     def get_stored_api_key(self, provider: str) -> str:
-        """The key persisted in config.json, ignoring env overrides."""
+        """The key in the selected storage, ignoring environment overrides."""
         if self.get_api_key_storage(provider) == "secret-service":
             return self._api_key_store().lookup(provider) or ""
         value = self.get_config_value(f"api.providers.{provider}.api_key")
@@ -1025,7 +1186,14 @@ class ConfigManager:
                 "name": theme.get("name", theme_name),
                 "description": theme.get("description", ""),
                 "colors": theme.get("colors", {}),
-                "ui": theme.get("ui", {})
+                "ui": theme.get("ui", {}),
+                # MainWindow uses this palette for its TextBuffer tags. Dropping
+                # it made light themes inherit nearly white message colours.
+                "syntax_highlighting": (
+                    theme["syntax_highlighting"]
+                    if isinstance(theme.get("syntax_highlighting"), dict)
+                    else {}
+                ),
             }
         return None
 

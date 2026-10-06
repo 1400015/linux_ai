@@ -333,6 +333,61 @@ TestRemoteModels()._assert_repeated_discovery_cleanup()
             self.assertEqual(client.list_remote_models('groq', cancel_event=cancelled), ['fixture-chat'])
         self.assertIs(discovery.call_args.kwargs['cancel_event'], cancelled)
 
+    def test_client_uses_draft_key_without_reading_or_writing_the_stored_key(self):
+        client = object.__new__(AIClient)
+        values = {'assistance.mode': 'remote',
+                  'api.providers': {'mistral': {'base_url': 'https://api.mistral.ai/v1'}}}
+        client.config = SimpleNamespace(get=lambda key, default=None: values.get(key, default),
+                                        get_api_key=Mock(), set_api_key=Mock(), save=Mock())
+        with patch('src.remote_models.discover_remote_models', return_value=['fixture-chat']) as discovery:
+            self.assertEqual(client.list_remote_models('mistral', api_key='synthetic-draft'),
+                             ['fixture-chat'])
+        self.assertEqual(discovery.call_args.args[2], 'synthetic-draft')
+        client.config.get_api_key.assert_not_called()
+        client.config.set_api_key.assert_not_called()
+        client.config.save.assert_not_called()
+
+    def test_cleared_draft_key_never_falls_back_to_a_saved_key_or_starts_http(self):
+        client = object.__new__(AIClient)
+        values = {'assistance.mode': 'remote',
+                  'api.providers': {'mistral': {'base_url': 'https://api.mistral.ai/v1'}}}
+        client.config = SimpleNamespace(get=lambda key, default=None: values.get(key, default),
+                                        get_api_key=Mock(return_value='synthetic-stored'))
+        with patch('src.remote_models._start_worker') as start:
+            with self.assertRaisesRegex(ModelDiscoveryError, 'Configure a valid API key'):
+                client.list_remote_models('mistral', api_key='')
+        client.config.get_api_key.assert_not_called()
+        start.assert_not_called()
+
+    def test_remote_modes_cannot_be_bypassed_by_a_draft_key(self):
+        client = object.__new__(AIClient)
+        for mode in ('offline', 'local'):
+            with self.subTest(mode=mode):
+                client.config = SimpleNamespace(get=lambda key, default=None: mode,
+                                                get_api_key=Mock())
+                with patch('src.remote_models.discover_remote_models') as discovery:
+                    with self.assertRaises(ModelDiscoveryError):
+                        client.list_remote_models('mistral', api_key='synthetic-draft')
+                discovery.assert_not_called()
+                client.config.get_api_key.assert_not_called()
+
+    def test_http_refusals_explain_status_without_reading_or_disclosing_response_bodies(self):
+        expected = {400: 'API key', 401: 'API key', 403: 'permissions', 404: 'endpoint',
+                    429: 'quota', 500: 'service', 503: 'service'}
+        for status, explanation in expected.items():
+            with self.subTest(status=status):
+                response = Response({'error': {'message': 'synthetic-key private response'}}, status)
+                session = Session(response)
+                with self.assertRaises(ModelDiscoveryError) as error:
+                    discover_remote_models('mistral', {'base_url': 'https://api.mistral.ai/v1'},
+                                           'synthetic-key', session_factory=lambda: session)
+                self.assertIn(explanation, str(error.exception))
+                self.assertIn('HTTP', str(error.exception))
+                self.assertNotIn('synthetic-key', str(error.exception))
+                self.assertNotIn('private response', str(error.exception))
+                self.assertEqual(response.chunk_sizes, [])
+                self.assertTrue(response.closed.wait(1))
+
     def test_backend_exceptions_do_not_disclose_keys(self):
         session = Mock()
         session.__enter__ = Mock(side_effect=RuntimeError('synthetic-key'))

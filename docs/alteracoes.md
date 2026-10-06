@@ -1,5 +1,38 @@
 # Registo de Alterações — linux_ai
 
+## v1.4.2 — Interface Ubuntu, captura Wayland e configuração online (2026-10-06)
+
+### Ícone da aplicação e diagnóstico de credenciais
+
+- O projeto inclui um ícone SVG usado no menu, na janela e na área de notificação. Instaladores, wheel e Flatpak incluem o ficheiro; deixam de depender de um PNG gerado por ImageMagick ou de um ícone do sistema que pode não existir.
+- `bash scripts/install-desktop.sh` atualiza apenas o ícone e o atalho do utilizador para a pasta atual. Conserva configuração e dependências, não ativa autostart e suporta caminhos com espaços e caracteres especiais. A identidade GTK coincide com o atalho nativo ou Flatpak.
+- `providers` passa a mostrar a disponibilidade da chave efetiva e a origem, incluindo substituições vazias. A presença de uma chave não valida autenticação; o diagnóstico não consulta a API nem desbloqueia o cofre. `config list` identifica os valores como guardados.
+- `config get` recusa caminhos inexistentes com código de saída não zero, conserva valores nulos reais e oculta chaves também em secções e listas. A consulta de uma chave usa a mesma precedência de ambiente/cofre/configuração que o cliente.
+- Cores hexadecimais de quatro ou oito dígitos usam uma cor de reserva compatível com o parser GTK3, evitando que um tema personalizado interrompa a aplicação do estilo. A ausência do portal em Wayland já terminava com erro quando não havia `grim`; não exigiu alteração de backend.
+- O fecho com **Ctrl+Q** devolve ao GTK que o atalho foi tratado. O retorno anterior permitia continuar a percorrer grupos de aceleradores depois da destruição da janela, provocando uma falha de segmentação reproduzida com a janela real. A regressão aciona o acelerador num processo separado.
+- O chat explica quando uma variável canónica vazia bloqueia uma chave do armazenamento selecionado. A deteção conserva a prioridade da variável canónica sobre nomes legados, não usa chaves residuais de outro backend e não desbloqueia o cofre. O aviso acompanha o fornecedor do pedido e é descartado após cancelamento ou mudança de conversa.
+- O aviso distingue uma atribuição vazia removível do `.env` de uma variável herdada ou alterada externamente. Só apresenta o botão de remoção quando a atribuição pode ser retirada com segurança; nos outros casos indica a alteração na origem e o reinício.
+
+### Configuração online
+
+- O template de ambiente deixa as chaves não usadas como comentários. A interface identifica variáveis vazias que bloqueiam chaves guardadas e permite remover explicitamente uma atribuição vazia carregada do seu próprio `.env`, preservando o restante conteúdo. A prioridade das variáveis herdadas e das sobreposições intencionais mantém-se.
+- **Listar modelos** usa a chave escrita no diálogo para esse pedido, sem a guardar. Mudanças de chave cancelam a consulta anterior e descartam resultados antigos. O seletor apresenta os modelos devolvidos pelo fornecedor; **Aceitar** grava a escolha.
+- Falhas de consulta distinguem autenticação, permissões, endpoint, quota e serviço sem apresentar credenciais ou corpos de resposta. Os novos avisos têm tradução portuguesa.
+- As páginas das definições passam a ter deslocamento vertical, mantendo **Aceitar** visível em ecrãs pequenos mesmo com os avisos de credenciais.
+- O fornecedor Google envia o contexto de sistema em `systemInstruction`, separado das mensagens da conversa, tanto em chat como em streaming.
+
+### Interface GTK e captura Wayland
+
+- O tema da aplicação fica limitado ao conteúdo da janela principal. Diálogos, menus e decorações conservam o tema GTK nativo, evitando a mistura de texto e fundos claros/escuros.
+- Botões deixam de herdar gradientes que ocultavam os símbolos; o fundo interno do chat recebe a cor do tema. Ícones simbólicos e contraste do texto dos botões foram revistos, e a paleta de mensagens do tema claro passa a ser conservada.
+- A entrada de mensagens ocupa uma linha inteira, com os controlos abaixo, e recebe o foco inicial sem o reclamar novamente ao abrir diálogos. Regressões GTK verificam renderização, isolamento dos estilos, entrada e foco em janelas estreitas.
+- O gestor de documentos mostra os seus controlos antes de iniciar o diálogo modal. A omissão deixava a janela vazia mesmo com documentos no índice; uma regressão abre o diálogo pelo percurso da janela principal e verifica os estados vazio e preenchido.
+- Captura de ecrã em Wayland usa o portal Screenshot do desktop, com seleção/autorização do sistema, prazo de 120 segundos e cancelamento propagado ao pedido. GNOME/Ubuntu deixa de depender de `grim` ou `gnome-screenshot`; recusa ou cancelamento não tenta outro backend. Sway/wlroots conserva `grim` quando o portal está indisponível.
+- O resultado do portal é copiado para um PNG privado com limites de tamanho e dimensões; URIs remotos, ficheiros não regulares e ligações simbólicas são recusados. A imagem original do portal é preservada e a cópia temporária da aplicação é eliminada após OCR ou preparação da imagem.
+- As imagens que motivaram estas correções foram recolhidas em Ubuntu 26.04.1 LTS (`resolute`), amd64, numa máquina virtual VMware, com sessão Wayland confirmada pelo operador. A sessão do desktop não identifica por si só o backend GDK usado pela aplicação.
+- A reprodução foi feita com GTK/Adwaita em Xvfb, incluindo temas claros e escuros. Não certifica foco e digitação em todas as sessões Ubuntu/Wayland.
+- O protocolo de captura foi exercitado com um serviço Gio simulado num barramento D-Bus real, incluindo autorização, resposta antecipada, cancelamento e prazo. A captura real no desktop Ubuntu/GNOME continua a depender do ensaio do operador.
+
 ## v1.4.1 — Recuperação gráfica e operações de ficheiros responsivas (2026-10-05)
 
 - Histórico inválido, desconhecido, demasiado grande ou profundo apresenta recuperação explícita no arranque. O original é copiado integralmente para um backup privado antes de criar um novo histórico; cancelar preserva-o e termina com código de erro.
