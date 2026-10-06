@@ -311,6 +311,12 @@ encryption uses `python -m pip install '.[encryption]'`. See the
 [credential, model and manual QA guide](docs/credenciais-modelos.md) for
 precedence, verified migration, encryption recovery and safe inspection.
 
+The CLI `providers` command reports effective credential availability and its
+source, including empty environment overrides. It makes no authentication
+request and never unlocks the key store. `config list` shows stored settings;
+`config get` resolves an existing path, masks API keys also in returned sections,
+and fails for unknown paths. The assistance-mode path is `assistance.mode`.
+
 GTK bindings come from the system packages; use `--system-site-packages` so the
 virtual environment can import them. Do not install the unrelated PyPI `gi`
 package.

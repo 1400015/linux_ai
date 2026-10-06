@@ -12,11 +12,27 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Function to add to automatic startup
 add_to_autostart() {
     echo -e "${YELLOW}Configuring automatic startup...${NC}"
+
+    # This is the explicit enable path: ensure the supplied icon is installed
+    # and reuse the correctly escaped command for this checkout.
+    bash "$SCRIPT_DIR/install-desktop.sh"
+    DESKTOP_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/linux-ai-assistant.desktop"
+    AUTOSTART_EXEC=""
+    while IFS= read -r line; do
+        if [[ "$line" == Exec=* ]]; then
+            AUTOSTART_EXEC="${line#Exec=}"
+            AUTOSTART_EXEC="${AUTOSTART_EXEC% --show}"
+            break
+        fi
+    done < "$DESKTOP_FILE"
+    if [ -z "$AUTOSTART_EXEC" ]; then
+        echo "Could not read the application startup command." >&2
+        return 1
+    fi
     
     # Autostart directory
     AUTOSTART_DIR="$HOME/.config/autostart"
@@ -31,8 +47,8 @@ Version=1.0
 Type=Application
 Name=Linux AI Assistant
 Comment=Permanent AI assistant for Linux
-Exec=bash "$PROJECT_DIR/run.sh"
-Icon=$PROJECT_DIR/assets/icon.png
+Exec=$AUTOSTART_EXEC
+Icon=io.github.linux_ai_assistant
 Terminal=false
 Categories=Utility;System;
 StartupWMClass=linux-ai-assistant

@@ -64,7 +64,6 @@ install_void_packages() {
         "python3-gobject"
         "python3-cairo"
         "libnotify"
-        "ImageMagick"  # To create the icon if needed
     )
     
     # Check for and install the missing packages
@@ -115,37 +114,7 @@ create_venv() {
 
 # Function to create the application shortcut
 create_desktop_entry() {
-    echo -e "${YELLOW}Creating the application shortcut...${NC}"
-    
-    # Directory for the .desktop files
-    DESKTOP_DIR="$HOME/.local/share/applications"
-    mkdir -p "$DESKTOP_DIR"
-    
-    # Create the .desktop file
-    DESKTOP_FILE="$DESKTOP_DIR/linux-ai-assistant.desktop"
-    
-    cat > "$DESKTOP_FILE" <<EOL
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Linux AI Assistant
-Comment=Permanent AI assistant for Linux
-Exec=bash "$PROJECT_DIR/run.sh" --show
-Icon=$PROJECT_DIR/assets/icon.png
-Terminal=false
-Categories=Utility;System;
-StartupWMClass=linux-ai-assistant
-EOL
-    
-    # Make it executable
-    chmod +x "$DESKTOP_FILE"
-    
-    # Update the application database
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "$DESKTOP_DIR"
-    fi
-    
-    echo -e "${GREEN}Shortcut created at $DESKTOP_FILE${NC}"
+    bash "$SCRIPT_DIR/install-desktop.sh"
 }
 
 # Function to create the run script
@@ -170,44 +139,6 @@ EOL
     chmod +x "$RUN_SCRIPT"
     
     echo -e "${GREEN}Run script created at $RUN_SCRIPT${NC}"
-}
-
-# Function to create the icon
-create_icon() {
-    echo -e "${YELLOW}Creating the icon...${NC}"
-    
-    ICON_DIR="$PROJECT_DIR/assets"
-    mkdir -p "$ICON_DIR"
-    
-    # Create a simple icon (if it does not exist)
-    if [ ! -f "$ICON_DIR/icon.png" ]; then
-        # Use a default system icon
-        if command -v convert >/dev/null 2>&1; then
-            # Create the icon with ImageMagick
-            convert -size 64x64 xc:black -fill white -draw "circle 32,32 32,16" "$ICON_DIR/icon.png"
-        else
-            # Try to copy the default Void icon
-            VOID_ICONS=(
-                "/usr/share/icons/hicolor/64x64/apps/system-run.png"
-                "/usr/share/pixmaps/system-run.png"
-                "/usr/local/share/icons/hicolor/64x64/apps/system-run.png"
-            )
-            
-            for icon in "${VOID_ICONS[@]}"; do
-                if [ -f "$icon" ]; then
-                    cp "$icon" "$ICON_DIR/icon.png"
-                    break
-                fi
-            done
-            
-            # If none was found, create a placeholder
-            if [ ! -f "$ICON_DIR/icon.png" ]; then
-                touch "$ICON_DIR/icon.png"
-            fi
-        fi
-    fi
-    
-    echo -e "${GREEN}Icon created at $ICON_DIR/icon.png${NC}"
 }
 
 # Function to create the configuration file
@@ -271,9 +202,6 @@ show_final_instructions() {
 main() {
     # Install the system dependencies
     install_void_packages
-    
-    # Create the icon
-    create_icon
     
     # Create the virtual environment
     create_venv

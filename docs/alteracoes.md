@@ -1,5 +1,14 @@
 # Registo de Alterações — linux_ai
 
+## Ícone da aplicação e diagnóstico de credenciais (2026-10-06, após v1.4.1)
+
+- O projeto inclui um ícone SVG usado no menu, na janela e na área de notificação. Instaladores, wheel e Flatpak incluem o ficheiro; deixam de depender de um PNG gerado por ImageMagick ou de um ícone do sistema que pode não existir.
+- `bash scripts/install-desktop.sh` atualiza apenas o ícone e o atalho do utilizador para a pasta atual. Conserva configuração e dependências, não ativa autostart e suporta caminhos com espaços e caracteres especiais. A identidade GTK coincide com o atalho nativo ou Flatpak.
+- `providers` passa a mostrar a disponibilidade da chave efetiva e a origem, incluindo substituições vazias. A presença de uma chave não valida autenticação; o diagnóstico não consulta a API nem desbloqueia o cofre. `config list` identifica os valores como guardados.
+- `config get` recusa caminhos inexistentes com código de saída não zero, conserva valores nulos reais e oculta chaves também em secções e listas. A consulta de uma chave usa a mesma precedência de ambiente/cofre/configuração que o cliente.
+- Cores hexadecimais de quatro ou oito dígitos usam uma cor de reserva compatível com o parser GTK3, evitando que um tema personalizado interrompa a aplicação do estilo. A ausência do portal em Wayland já terminava com erro quando não havia `grim`; não exigiu alteração de backend.
+- O fecho com **Ctrl+Q** devolve ao GTK que o atalho foi tratado. O retorno anterior permitia continuar a percorrer grupos de aceleradores depois da destruição da janela, provocando uma falha de segmentação reproduzida com a janela real. A regressão aciona o acelerador num processo separado.
+
 ## Correções de configuração online (2026-10-06, após v1.4.1)
 
 - O template de ambiente deixa as chaves não usadas como comentários. A interface identifica variáveis vazias que bloqueiam chaves guardadas e permite remover explicitamente uma atribuição vazia carregada do seu próprio `.env`, preservando o restante conteúdo. A prioridade das variáveis herdadas e das sobreposições intencionais mantém-se.

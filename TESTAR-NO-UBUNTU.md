@@ -12,6 +12,8 @@ deste teste é confirmar o resultado na tua sessão Ubuntu/GNOME.
 
 Esta cópia também corrige a configuração online e a consulta de modelos,
 incluindo atribuições vazias do `.env` criadas por instaladores anteriores.
+Inclui o ícone da aplicação e diagnósticos que distinguem chaves guardadas
+das chaves efetivamente disponíveis.
 
 ## Abrir a cópia nova
 
@@ -33,14 +35,23 @@ aplicação anterior funciona nessa máquina. A instalação via `pip`
 necessita de internet. O comando `--system-site-packages` permite ao
 ambiente virtual usar os bindings GTK instalados no Ubuntu.
 
-A cópia nova usa a tua configuração e o histórico existentes. Não
-é necessário reinstalar o atalho, modificar o `.env` ou apagar dados.
-Durante este teste, abre-a com o comando acima; o atalho antigo continua
-a apontar para a pasta anterior.
+A cópia nova usa a tua configuração e o histórico existentes. Para atualizar
+o ícone e fazer o menu do Ubuntu abrir esta pasta, executa no mesmo terminal:
+
+```bash
+bash scripts/install-desktop.sh
+```
+
+Este comando atualiza apenas o atalho e o ícone, sem instalar dependências,
+alterar a configuração ou ativar o arranque automático. Mantém a pasta
+extraída no mesmo sítio: o atalho aponta para o `run.sh` dessa pasta.
+Fecha e volta a abrir o menu de aplicações para verificar o ícone.
 
 ## O que verificar
 
 - Os ícones e as legendas ficam visíveis, incluindo nos temas claro e escuro.
+- O menu de aplicações do Ubuntu mostra o ícone verde e azul do assistente.
+- Fechar com **Ctrl+Q** termina sem falha de segmentação no terminal.
 - A caixa de escrita ocupa uma linha inteira, com os botões abaixo.
 - Consegues escrever `ajuda`, enviar com Enter e ler a resposta offline.
 - **Documentos locais** mostra os botões de adicionar, reindexar, remover e
@@ -63,7 +74,9 @@ Tesseract e os idiomas `por`/`eng` também devem estar instalados; a ausência d
 texto na imagem é diferente de uma falha de captura.
 
 Para voltar à cópia anterior, fecha esta aplicação e abre o `run.sh` da
-pasta anterior. Nos resultados do teste, indica a referência do download
+pasta anterior. Para repor também o atalho, executa
+`bash scripts/install-desktop.sh` nessa pasta, se o comando existir.
+Nos resultados do teste, indica a referência do download
 e se o problema apareceu no tema claro, escuro ou em ambos.
 
 ## Escolher um modelo online
@@ -84,3 +97,21 @@ Em **Assistência**, usa o modo automático ou remoto. Os modos local e
 offline impedem os pedidos a estes fornecedores. Se o fornecedor recusar
 a consulta, o aviso distingue chave rejeitada, permissões, quota e
 indisponibilidade do serviço.
+
+## Confirmar a configuração sem mostrar as chaves
+
+Na pasta desta cópia, usa o mesmo ambiente virtual que inicia a interface:
+
+```bash
+./venv/bin/python -m src.cli providers
+./venv/bin/python -m src.cli config get assistance.mode
+```
+
+`providers` mostra se a chave efetiva está disponível e a sua origem. Uma
+variável vazia aparece como bloqueio da chave guardada; uma chave presente
+não prova que o fornecedor a aceita. O comando não faz pedidos à API nem
+desbloqueia o cofre. `config list` mostra apenas a configuração guardada.
+
+O caminho do modo é `assistance.mode`. `api.assistance.mode` não existe e
+passa a produzir um erro explícito. Estes comandos não exigem apagar ou
+reconstruir o teu `config.json`.

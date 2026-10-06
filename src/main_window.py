@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 
 # Values coming from theme files are interpolated into GTK's CSS; validating
 # the format prevents a malicious JSON from injecting arbitrary style rules.
-_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+# GTK3 supports RGB hex colors; CSS4's RGBA hex forms fail its CSS parser.
+_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 _.,'-]{1,64}$")
 
 # Context budget: by default 12000 characters (~3k tokens) and 20 messages.
@@ -59,7 +60,7 @@ STREAM_FLUSH_INTERVAL = 0.08
 
 
 def safe_color(value, fallback="#1e1e1e"):
-    """Return a valid CSS color or `fallback`."""
+    """Return a hex color supported by GTK3 CSS or `fallback`."""
     if isinstance(value, str) and _COLOR_RE.match(value.strip()):
         return value.strip()
     if value is not None:
@@ -79,8 +80,8 @@ def safe_font_family(value, fallback="Monospace"):
 def contrasting_text_color(background):
     """Choose readable text for a validated theme accent, including light ones."""
     value = safe_color(background, '#4CAF50')[1:]
-    if len(value) in (3, 4):
-        value = ''.join(character * 2 for character in value[:3])
+    if len(value) == 3:
+        value = ''.join(character * 2 for character in value)
     channels = [int(value[offset:offset + 2], 16) / 255 for offset in (0, 2, 4)]
     linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
               for channel in channels]
@@ -106,6 +107,10 @@ class MainWindow(Gtk.Window):
 
     def __init__(self, app, config_manager, ai_client, system_utils, history_store=None):
         super().__init__(title="Linux AI Assistant")
+
+        from .desktop_icons import ICON_NAME, configure_application_icon
+        configure_application_icon()
+        self.set_icon_name(ICON_NAME)
 
         self.app = app
         self.config = config_manager
@@ -2538,7 +2543,7 @@ class MainWindow(Gtk.Window):
 
     def on_close_clicked(self):
         """Handler for closing the window."""
-        self.on_delete_event(None, None)
+        return self.on_delete_event(None, None)
 
     def on_delete_event(self, widget, event):
         """Handler for closing the window."""

@@ -59,6 +59,7 @@ version = { attr = "src._version.__version__" }
 [tool.setuptools.data-files]
 "share/linux-ai-assistant/themes" = ["themes/*.json"]
 "share/applications" = ["scripts/linux-ai-assistant.desktop"]
+"share/icons/hicolor/scalable/apps" = ["assets/io.github.linux_ai_assistant.svg"]
 
 [tool.ruff]
 line-length = 110

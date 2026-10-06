@@ -86,6 +86,8 @@ class LinuxAIAssistant:
         try:
             # Initialize GTK. init_check() reports failure (e.g. no
             # DISPLAY) instead of aborting the process like init() does.
+            from .desktop_icons import configure_desktop_identity, configure_application_icon
+            configure_desktop_identity()
             initialized = Gtk.init_check()
             # PyGObject returns (ok, argv) on older versions, bool on newer
             if isinstance(initialized, tuple):
@@ -94,6 +96,7 @@ class LinuxAIAssistant:
                 logger.error("GTK could not be initialized (no display?)")
                 return 1
             logger.info("GTK initialized")
+            configure_application_icon()
 
             from .history_recovery import open_history_store
             history = open_history_store()
