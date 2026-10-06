@@ -63,6 +63,28 @@ class QtShell(_BaseShell):
         layout.addWidget(status)
         self._build_chat(layout)
         self.setCentralWidget(central)
+        self._build_tray()
+
+    def toggle_visibility(self):
+        """Single toggle point for the Qt track (tray, future shortcut)."""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+        tray = getattr(self, "tray_icon", None)
+        if tray is not None:
+            tray.update_toggle_label(self.isVisible())
+
+    def _build_tray(self):
+        from .qt_tray import QT_AVAILABLE as TRAY_QT_AVAILABLE, QtTrayIcon
+        if not TRAY_QT_AVAILABLE or not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        try:
+            self.tray_icon = QtTrayIcon(self.config, self, self)
+        except Exception as error:
+            logger.warning("Qt tray icon unavailable: %s", type(error).__name__)
+            self.tray_icon = None
 
     def _build_chat(self, layout):
         from .qt_chat import QT_AVAILABLE as CHAT_QT_AVAILABLE, QtChatWidget

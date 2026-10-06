@@ -19,16 +19,7 @@ except (ImportError, ValueError):
     from gi.repository import Gtk, GdkPixbuf
 
 
-def toggle_on_click_enabled(config_manager, default=True) -> bool:
-    """Pure decision: whether a tray icon click should toggle the window.
-
-    Kept module-level (and GTK-free in spirit) so tests and future platform
-    backends can reuse it without instantiating the GTK-dependent class.
-    """
-    try:
-        return bool(config_manager.get("app.tray_toggle_on_click", default))
-    except Exception:
-        return default
+from .platform.tray_config import toggle_on_click_enabled  # noqa: F401
 
 
 class TrayIcon:
