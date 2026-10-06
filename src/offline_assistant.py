@@ -515,9 +515,9 @@ class OfflineAssistant:
         self._diagnostic = None
         # Probes follow the running platform: PowerShell on Windows host,
         # POSIX probes wrapped through the WSL bridge inside a distro.
-        from .platform import detect_platform, wsl_distro_name
+        from .platform import WINDOWS, detect_platform, wsl_distro_name
         self._platform = detect_platform()
-        self._wsl_distro = wsl_distro_name() if self._platform != "windows" else ""
+        self._wsl_distro = wsl_distro_name() if self._platform != WINDOWS else ""
 
     @property
     def distro(self) -> DistroInfo:
@@ -819,7 +819,8 @@ class OfflineAssistant:
         commands = {"links": "ip link show", "addresses": "ip addr show",
                     "routes": "ip route", "disk": "df -h", "inodes": "df -i",
                     "memory": "free -h"}
-        if self._platform != "linux":
+        from .platform import LINUX
+        if self._platform != LINUX:
             from .platform.probes import probe_argv_for
             argv = probe_argv_for(key, platform=self._platform,
                                   wsl_distro=self._wsl_distro or None)

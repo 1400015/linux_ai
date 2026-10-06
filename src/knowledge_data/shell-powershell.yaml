@@ -20,8 +20,9 @@ facts:
     and a configurable profile system.
   repositories: PowerShell Gallery is the central module repository; Install-Module
     fetches from it.
-  network: PowerShell networking cmdlets (Get-NetAdapter, Get-NetIPConfiguration,
-    Resolve-DnsName) read host configuration without network probes.
+  network: PowerShell networking cmdlets (Get-NetAdapter, Get-NetIPConfiguration)
+    read host configuration without network probes; Resolve-DnsName performs real
+    DNS queries and is a separate, explicit network test.
   logs: Get-WinEvent -LogName <logname> -MaxEvents <n> for a bounded event excerpt.
   hostname: $env:COMPUTERNAME; Rename-Computer changes it after a restart.
   locale: Get-Culture and Get-UICulture report the session locale.

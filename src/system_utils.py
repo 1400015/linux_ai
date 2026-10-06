@@ -336,9 +336,13 @@ class SystemUtils:
         # dedicated policy (allowlisted cmdlet, safe operands / re-validated
         # inner command). They remain read-only diagnostics.
         if cmd_base.lower() in ("powershell", "wsl.exe"):
-            if not self._validate_platform_probe(cmd_parts):
-                return False, f"Platform probe rejected: {cmd_base}"
-            return self._run_platform_probe(cmd_parts, timeout)
+            # The bypass is scoped to the Windows host track: elsewhere these
+            # binaries fall through to the normal allowlist like any command.
+            from .platform import WINDOWS, detect_platform
+            if detect_platform() == WINDOWS:
+                if not self._validate_platform_probe(cmd_parts):
+                    return False, f"Platform probe rejected: {cmd_base}"
+                return self._run_platform_probe(cmd_parts, timeout)
 
         # Check if the command is allowed
         if cmd_base not in self.allowed_commands:
@@ -383,6 +387,13 @@ class SystemUtils:
                 from .platform.shell_pwsh import validate_pwsh_arguments
                 return validate_pwsh_arguments(cmd_parts[2:])
             if base == "wsl.exe":
+                # The full argv shape is validated first: wsl.exe must receive
+                # exactly --distribution <name> --exec <inner...>. Anything else
+                # would let a middle token become the wsl.exe subcommand.
+                if (len(cmd_parts) < 5
+                        or str(cmd_parts[1]).lower() != "--distribution"
+                        or str(cmd_parts[3]).lower() != "--exec"):
+                    return False
                 from .platform.wsl_bridge import probe_argv as wsl_probe
                 return wsl_probe(str(cmd_parts[2]), cmd_parts[4:]) is not None
         except Exception:

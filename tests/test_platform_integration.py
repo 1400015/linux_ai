@@ -44,38 +44,59 @@ class TestSystemUtilsPlatformPath(unittest.TestCase):
         def fake_run(argv, timeout, limit):
             captured["argv"] = argv
             return 0, "Name  InterfaceDescription", ""
-        with patch("src.system_utils.run_bounded", side_effect=fake_run):
+        with patch("src.system_utils.run_bounded", side_effect=fake_run), \
+                patch("src.platform.detect_platform", return_value="windows"):
             ok, output = utils.execute_command(["powershell", "-Command", "Get-NetAdapter"], timeout=5)
         self.assertTrue(ok)
         self.assertIn("InterfaceDescription", output)
         self.assertEqual(captured["argv"][0], "powershell")
 
     def test_mutation_cmdlet_is_rejected(self):
-        ok, output = self.utils.execute_command(["powershell", "-Command", "Remove-Item", "-Path", "x"])
+        with patch("src.platform.detect_platform", return_value="windows"):
+            ok, output = self.utils.execute_command(["powershell", "-Command", "Remove-Item", "-Path", "x"])
         self.assertFalse(ok)
         self.assertIn("rejected", output)
 
     def test_injection_is_rejected(self):
-        ok, output = self.utils.execute_command(["powershell", "-Command", "Get-Service", "-Name", "a;rm"])
+        with patch("src.platform.detect_platform", return_value="windows"):
+            ok, output = self.utils.execute_command(["powershell", "-Command", "Get-Service", "-Name", "a;rm"])
         self.assertFalse(ok)
 
     def test_bare_powershell_without_command_is_rejected(self):
-        ok, output = self.utils.execute_command(["powershell"])
+        with patch("src.platform.detect_platform", return_value="windows"):
+            ok, output = self.utils.execute_command(["powershell"])
+        self.assertFalse(ok)
+
+    def test_powershell_probe_is_not_special_cased_off_windows(self):
+        # pwsh exists on Linux too; the bypass must not apply there.
+        ok, output = self.utils.execute_command(["powershell", "-Command", "Get-NetAdapter"])
         self.assertFalse(ok)
 
     def test_wsl_probe_with_validated_inner_command_runs(self):
         utils = self.utils
         def fake_run(argv, timeout, limit):
             return 0, "Filesystem Size Used", ""
-        with patch("src.system_utils.run_bounded", side_effect=fake_run):
+        with patch("src.system_utils.run_bounded", side_effect=fake_run), \
+                patch("src.platform.detect_platform", return_value="windows"):
             ok, output = utils.execute_command(
                 ["wsl.exe", "--distribution", "Ubuntu", "--exec", "df", "-h"], timeout=5)
         self.assertTrue(ok)
 
     def test_wsl_probe_with_unsafe_inner_command_is_rejected(self):
-        ok, output = self.utils.execute_command(
-            ["wsl.exe", "--distribution", "Ubuntu", "--exec", "bash", "-c", "id"])
+        with patch("src.platform.detect_platform", return_value="windows"):
+            ok, output = self.utils.execute_command(
+                ["wsl.exe", "--distribution", "Ubuntu", "--exec", "bash", "-c", "id"])
         self.assertFalse(ok)
+
+    def test_wsl_probe_with_wrong_wrapper_tokens_is_rejected(self):
+        # A middle token must never become the wsl.exe subcommand.
+        with patch("src.platform.detect_platform", return_value="windows"):
+            ok, _ = self.utils.execute_command(
+                ["wsl.exe", "malicious", "Ubuntu", "x", "ip", "route"])
+            self.assertFalse(ok)
+            ok, _ = self.utils.execute_command(
+                ["wsl.exe", "--distribution", "Ubuntu", "wrong", "ip"])
+            self.assertFalse(ok)
 
     def test_posix_allowlist_still_applies_to_normal_commands(self):
         ok, output = self.utils.execute_command(["ls"], timeout=5)
@@ -129,3 +150,44 @@ class TestOfflineAssistantPlatformProbe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReviewFixes(unittest.TestCase):
+    """Regression tests for the findings of the critical pass."""
+
+    def test_wsl_wrapper_tokens_must_match_exactly(self):
+        from src.system_utils import SystemUtils
+        utils = SystemUtils(SimpleNamespace(get=Mock(return_value={
+            "permissions": {"allowed_commands": ["df"]}})))
+        with patch("src.platform.detect_platform", return_value="windows"):
+            for argv in (["wsl.exe", "malicious", "Ubuntu", "x", "ip", "route"],
+                         ["wsl.exe", "--distribution", "Ubuntu", "wrong", "ip"],
+                         ["wsl.exe"]):
+                with self.subTest(argv=argv):
+                    ok, _ = utils.execute_command(argv, timeout=3)
+                    self.assertFalse(ok)
+
+    def test_file_reading_cmdlets_bypass_nothing(self):
+        from src.platform.shell_pwsh import validate_pwsh_arguments
+        for argv in (["Get-Content", "-Path", "C:\\secrets.txt"],
+                     ["Get-ChildItem", "-Recurse"],
+                     ["Get-Item", "-Path", "x"],
+                     ["Get-Acl", "-Path", "x"]):
+            with self.subTest(argv=argv):
+                self.assertFalse(validate_pwsh_arguments(argv))
+
+    def test_resolve_dnsname_is_not_a_local_probe(self):
+        from src.platform.shell_pwsh import validate_pwsh_arguments
+        self.assertFalse(validate_pwsh_arguments(["Resolve-DnsName", "example.com"]))
+
+    def test_get_winevent_keeps_local_log_reads(self):
+        from src.platform.shell_pwsh import validate_pwsh_arguments
+        self.assertTrue(validate_pwsh_arguments(
+            ["Get-WinEvent", "-LogName", "System", "-MaxEvents", "50"]))
+        self.assertFalse(validate_pwsh_arguments(
+            ["Get-WinEvent", "-LogName", "System", "-ComputerName", "other"]))
+
+    def test_qt_lock_file_path_is_deterministic(self):
+        import src.qt_app as qt_app
+        path = qt_app.lock_file_path(base_dir="/tmp/x")
+        self.assertTrue(path.endswith("qt-instance.lock"))

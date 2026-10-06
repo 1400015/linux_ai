@@ -137,6 +137,14 @@ class QtShell(_BaseShell):
         super().closeEvent(event)
 
 
+def lock_file_path(base_dir=None):
+    """Single-instance lock location for the Qt track."""
+    import os
+    directory = base_dir or os.path.join(
+        os.path.expanduser("~"), ".config", "linux_ai_assistant")
+    return os.path.join(directory, "qt-instance.lock")
+
+
 def run(config_manager, argv=None):
     """Start the minimal Qt shell. Returns a process exit code."""
     if not QT_AVAILABLE:
@@ -148,6 +156,13 @@ def run(config_manager, argv=None):
     argv = list(sys.argv[:1]) if argv is None else list(argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("linux-ai-assistant")
+    # Single-instance guard (the GTK track uses DesktopActivation): QLockFile
+    # also removes a stale lock left by a crashed process.
+    lock = QtCore.QLockFile(lock_file_path())
+    if not lock.tryLock(0):
+        print("Another Linux AI Assistant (Qt) instance is already running.",
+              file=sys.stderr)
+        return 1
     shell = QtShell(config_manager, platform_name)
     shell.show()
     logger.info("Starting Qt event loop (platform: %s)", platform_name)

@@ -69,7 +69,19 @@ class TestPowerShellPolicy(unittest.TestCase):
         self.assertTrue(validate_pwsh(["Get-Service", "-Name", "wuauserv"]))
         self.assertTrue(validate_pwsh(["Get-WinEvent", "-LogName", "System", "-MaxEvents", "50"]))
         self.assertTrue(validate_pwsh(["Get-ExecutionPolicy", "-List"]))
-        self.assertTrue(validate_pwsh(["Get-ChildItem", "-Recurse"]))
+
+    def test_file_reading_cmdlets_are_rejected(self):
+        # They bypass the allowed_edit_dirs sandbox; no probe needs them.
+        for argv in (["Get-Content", "-Path", "C:\\x"],
+                     ["Get-ChildItem", "-Recurse"],
+                     ["Get-Item", "-Path", "x"],
+                     ["Get-Acl", "-Path", "x"]):
+            with self.subTest(argv=argv):
+                self.assertFalse(validate_pwsh(argv))
+
+    def test_network_cmdlets_that_probe_are_rejected(self):
+        # Resolve-DnsName performs real DNS queries: not a local read.
+        self.assertFalse(validate_pwsh(["Resolve-DnsName", "example.com"]))
 
     def test_mutation_and_engine_cmdlets_are_rejected(self):
         for argv in (["Remove-Item", "-Path", "x"], ["Invoke-Expression", "x"],
