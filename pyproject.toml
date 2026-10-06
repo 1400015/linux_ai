@@ -31,6 +31,9 @@ dependencies = [
 encryption = ["cryptography>=42.0.2"]
 # Optional desktop keyring support; importing the client must not require it.
 secret-service = ["secretstorage>=3.3,<4"]
+# Qt shell (phase 4a of the Windows track): optional; src/qt_app.py degrades
+# gracefully and the GTK track does not import it.
+qt = ["PySide6>=6.6"]
 dev = [
     "ruff>=0.5",
     "mypy==2.4.0; python_version >= '3.10'",

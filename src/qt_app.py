@@ -1,0 +1,95 @@
+"""Minimal Qt shell for the Windows track (phase 4a).
+
+Foundation only: this module deliberately contains no chat logic, no
+dialogs and no tray behaviour. It proves the Qt event loop, the shared
+ConfigManager/i18n integration and the platform-aware startup, so later
+sub-phases (chat, tray, dialogs) migrate onto a working base.
+
+PySide6 is an optional dependency: when absent, ``available()`` is False and
+``run()`` reports the same missing-binding message style used for GTK.
+"""
+import logging
+import sys
+
+logger = logging.getLogger(__name__)
+
+QT_IMPORT_ERROR = None
+
+try:
+    from PySide6 import QtCore, QtWidgets
+    QT_AVAILABLE = True
+except ImportError as error:
+    QT_AVAILABLE = False
+    QT_IMPORT_ERROR = str(error)
+
+
+MIN_WINDOW_SIZE = (420, 260)
+
+
+def available() -> bool:
+    return QT_AVAILABLE
+
+
+def missing_dependency_message() -> str:
+    return (
+        "PySide6 is not installed. Install it with:\n"
+        "  pip install PySide6\n"
+        "or add the `qt` extra: pip install -e .[qt]"
+    )
+
+
+if QT_AVAILABLE:
+    _BaseShell = QtWidgets.QMainWindow
+else:
+    _BaseShell = object
+
+
+class QtShell(_BaseShell):
+    """Minimal main window: a status line and a close that ends the loop."""
+
+    def __init__(self, config_manager, platform_name):
+        if not QT_AVAILABLE:
+            raise RuntimeError(missing_dependency_message())
+        super().__init__()
+        self.config = config_manager
+        self.platform_name = platform_name
+        self.setWindowTitle("Linux AI Assistant")
+        self.resize(*MIN_WINDOW_SIZE)
+        central = QtWidgets.QWidget(self)
+        layout = QtWidgets.QVBoxLayout(central)
+        status = QtWidgets.QLabel(self._status_text(), central)
+        status.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(status)
+        self.setCentralWidget(central)
+
+    def _status_text(self):
+        from . import i18n
+        name = {"windows": "Windows", "wsl": "WSL", "linux": "Linux"}.get(
+            self.platform_name, self.platform_name)
+        title = i18n._("Welcome to Linux AI Assistant!")
+        return "{}\nQt shell (phase 4a) — platform: {}".format(title, name)
+
+    def closeEvent(self, event):
+        logger.info("Qt shell closed by the user")
+        super().closeEvent(event)
+
+
+def run(config_manager, argv=None):
+    """Start the minimal Qt shell. Returns a process exit code."""
+    if not QT_AVAILABLE:
+        print("\nError: {}\n\n{}".format(QT_IMPORT_ERROR, missing_dependency_message()),
+              file=sys.stderr)
+        return 1
+    from .platform import detect_platform
+    platform_name = detect_platform()
+    argv = list(sys.argv[:1]) if argv is None else list(argv)
+    app = QtWidgets.QApplication(argv)
+    app.setApplicationName("linux-ai-assistant")
+    shell = QtShell(config_manager, platform_name)
+    shell.show()
+    logger.info("Starting Qt event loop (platform: %s)", platform_name)
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(run(None))
