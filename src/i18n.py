@@ -1230,6 +1230,37 @@ TRANSLATIONS["pt"].update({
         "A consulta de modelos falhou. Verifica a chave, o modo e o endereço do fornecedor.",
     "Models listed. Select a model and save to apply it.":
         "Modelos consultados. Seleciona um modelo e guarda para o aplicar.",
+    "The API key is unavailable. Check its storage or unlock the key store.":
+        "A chave de API está indisponível. Verifica onde está guardada ou desbloqueia o cofre de chaves.",
+    "Use stored key (remove empty override from .env)":
+        "Usar chave guardada (remover substituição vazia do .env)",
+    "The {var} environment variable is empty and blocks the stored API key.":
+        "A variável de ambiente {var} está vazia e bloqueia a chave de API guardada.",
+    "Use the button below to remove this empty assignment from .env.":
+        "Usa o botão abaixo para remover esta atribuição vazia do .env.",
+    "Remove or fill this variable at its source, then restart the application.":
+        "Remove ou preenche esta variável na sua origem e reinicia a aplicação.",
+    "Empty .env override removed. The stored key or edited draft can now be used.":
+        "A substituição vazia do .env foi removida. Já podes usar a chave guardada ou a que escreveste.",
+    "The empty override could not be removed safely. The stored key was preserved.":
+        "Não foi possível remover a substituição vazia com segurança. A chave guardada foi preservada.",
+    "Configure a valid API key before listing models.":
+        "Configura uma chave de API válida antes de listar os modelos.",
+    "The provider rejected the API key (HTTP 401).":
+        "O fornecedor rejeitou a chave de API (HTTP 401).",
+    "The provider rejected the model-listing request (HTTP 400). Check the API key and endpoint.":
+        "O fornecedor rejeitou a consulta de modelos (HTTP 400). Verifica a chave de API e o endereço.",
+    "The provider denied access (HTTP 403). Check the API key permissions.":
+        "O fornecedor recusou o acesso (HTTP 403). Verifica as permissões da chave de API.",
+    "The model-listing endpoint was not found (HTTP 404).":
+        "O endereço de consulta de modelos não foi encontrado (HTTP 404).",
+    "The provider rate limit or quota was exceeded (HTTP 429). Try again later.":
+        "O limite de pedidos ou a quota do fornecedor foi excedido (HTTP 429). Tenta novamente mais tarde.",
+    "The provider service is unavailable (HTTP 5xx). Try again later.":
+        "O serviço do fornecedor está indisponível (HTTP 5xx). Tenta novamente mais tarde.",
+    "Model listing exceeded its deadline.": "A consulta de modelos excedeu o prazo.",
+    "Model listing failed; check the connection and provider settings.":
+        "A consulta de modelos falhou. Verifica a ligação e as definições do fornecedor.",
     "Enter a valid model identifier.": "Introduz um identificador de modelo válido.",
 })
 

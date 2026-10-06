@@ -1,5 +1,13 @@
 # Registo de Alterações — linux_ai
 
+## Correções de configuração online (2026-10-06, após v1.4.1)
+
+- O template de ambiente deixa as chaves não usadas como comentários. A interface identifica variáveis vazias que bloqueiam chaves guardadas e permite remover explicitamente uma atribuição vazia carregada do seu próprio `.env`, preservando o restante conteúdo. A prioridade das variáveis herdadas e das sobreposições intencionais mantém-se.
+- **Listar modelos** usa a chave escrita no diálogo para esse pedido, sem a guardar. Mudanças de chave cancelam a consulta anterior e descartam resultados antigos. O seletor apresenta os modelos devolvidos pelo fornecedor; **Aceitar** grava a escolha.
+- Falhas de consulta distinguem autenticação, permissões, endpoint, quota e serviço sem apresentar credenciais ou corpos de resposta. Os novos avisos têm tradução portuguesa.
+- As páginas das definições passam a ter deslocamento vertical, mantendo **Aceitar** visível em ecrãs pequenos mesmo com os avisos de credenciais.
+- O fornecedor Google envia o contexto de sistema em `systemInstruction`, separado das mensagens da conversa, tanto em chat como em streaming.
+
 ## Correções de interface GTK e captura Wayland (2026-10-06, após v1.4.1)
 
 - O tema da aplicação fica limitado ao conteúdo da janela principal. Diálogos, menus e decorações conservam o tema GTK nativo, evitando a mistura de texto e fundos claros/escuros.

@@ -295,6 +295,11 @@ replacing existing process environment variables. A canonical name such as
 `LINUX_AI_API_PROVIDERS_OPENROUTER_API_KEY` takes precedence even when its
 value is empty. Otherwise a nonempty legacy variable overrides the selected
 credential store; an empty legacy variable falls back to that store.
+The template leaves unused API-key variables commented out. If an older
+installation loaded an empty canonical assignment from its `.env`, Settings
+offers **Use stored key (remove empty override from .env)**. This explicit
+action removes only that unchanged empty assignment. An inherited environment
+override must be changed at its source, followed by an application restart.
 
 **Settings → API** shows the stored key, keeps edits for each provider until
 **OK**, and identifies an active environment override. Copying the effective
@@ -350,7 +355,9 @@ The shipped configuration template includes both shortcut settings, with
 These defaults apply to new configurations and missing fields; existing model
 choices are preserved. Model availability depends on the provider and account.
 In **Settings → API**, enter a model ID or explicitly click **List models**;
-listing runs in the background and changes no saved model until **OK**. Remote
+listing runs in the background, can use the key just entered without saving it,
+and changes no saved model until **OK**. Environment key overrides retain their
+priority. Remote
 listing uses supported standard HTTPS endpoints and is blocked in local/offline
 modes. Direct Google and OpenRouter model IDs are independent. See the
 [model selection guide](docs/credenciais-modelos.md#modelos-remotos).

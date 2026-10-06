@@ -10,6 +10,9 @@ Wayland. A interface foi verificada com GTK/Adwaita em Xvfb e o protocolo
 de captura com um portal simulado num barramento D-Bus real. O objetivo
 deste teste é confirmar o resultado na tua sessão Ubuntu/GNOME.
 
+Esta cópia também corrige a configuração online e a consulta de modelos,
+incluindo atribuições vazias do `.env` criadas por instaladores anteriores.
+
 ## Abrir a cópia nova
 
 1. Fecha completamente a aplicação antiga, usando **Ctrl+Q** na janela
@@ -62,3 +65,22 @@ texto na imagem é diferente de uma falha de captura.
 Para voltar à cópia anterior, fecha esta aplicação e abre o `run.sh` da
 pasta anterior. Nos resultados do teste, indica a referência do download
 e se o problema apareceu no tema claro, escuro ou em ambos.
+
+## Escolher um modelo online
+
+1. Abre **Configurações → API** e escolhe Google ou Mistral.
+2. Se o aviso disser que uma variável está vazia e bloqueia a chave,
+   carrega em **Usar chave guardada (remover substituição vazia do .env)**.
+   Esta ação retira apenas a linha vazia indicada. Se o botão estiver
+   desativado, segue a instrução do aviso para corrigir a variável na origem.
+3. Introduz a chave no campo **API Key**, ou conserva a chave já guardada.
+4. Carrega em **Listar modelos**, abre a lista de **Modelo remoto** e
+   seleciona o modelo que queres usar. A consulta usa a chave escrita sem
+   a guardar antes de confirmares.
+5. Carrega em **Aceitar** para guardar o fornecedor, a chave editada e o
+   modelo. Na janela principal, envia uma mensagem para testar a resposta.
+
+Em **Assistência**, usa o modo automático ou remoto. Os modos local e
+offline impedem os pedidos a estes fornecedores. Se o fornecedor recusar
+a consulta, o aviso distingue chave rejeitada, permissões, quota e
+indisponibilidade do serviço.

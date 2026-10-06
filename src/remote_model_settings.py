@@ -7,14 +7,15 @@ from gi.repository import Gtk, GLib
 
 from .i18n import _
 from .ai_client import AIClient
-from .remote_models import _model_name
+from .remote_models import ModelDiscoveryError, _model_name
 
 
 class RemoteModelSettings(Gtk.Box):
-    def __init__(self, config, client, provider_combo, mode_combo=None):
+    def __init__(self, config, client, provider_combo, mode_combo=None, credential_settings=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.config, self.client = config, client
         self.provider_combo, self.mode_combo = provider_combo, mode_combo
+        self.credential_settings = credential_settings
         self._provider, self._loading = None, False
         self._drafts = {}
         self._alive, self._generation = True, 0
@@ -31,6 +32,8 @@ class RemoteModelSettings(Gtk.Box):
         provider_combo.connect('changed', self._selected)
         if mode_combo:
             mode_combo.connect('changed', self._mode_changed)
+        if credential_settings is not None:
+            credential_settings.connect('probe-key-changed', self._key_changed)
         self.connect('destroy', self._destroyed)
         self._selected(provider_combo)
 
@@ -50,6 +53,16 @@ class RemoteModelSettings(Gtk.Box):
                 and self.config.get_assistance_mode() not in ('offline', 'local'))
 
     def _mode_changed(self, widget):
+        self._cancel_listing()
+        self._generation += 1
+        self.status.set_text(_('Connection not tested'))
+        self.button.set_sensitive(self._allowed())
+
+    def _key_changed(self, widget):
+        # The old request may still be draining. Its models must not be shown
+        # after the operator replaces the key or its effective source.
+        if not self._alive:
+            return
         self._cancel_listing()
         self._generation += 1
         self.status.set_text(_('Connection not tested'))
@@ -82,6 +95,15 @@ class RemoteModelSettings(Gtk.Box):
         self._cancel_listing()
         self._generation += 1
         generation, provider = self._generation, self._provider
+        options = {}
+        if isinstance(self.client, AIClient) and self.credential_settings is not None:
+            try:
+                # Read widgets on the GTK thread, use the draft for this probe
+                # only, and retain environment overrides. No key is saved here.
+                options['api_key'] = self.credential_settings.effective_key_for_probe(provider)
+            except Exception:
+                self.status.set_text(_('The API key is unavailable. Check its storage or unlock the key store.'))
+                return
         cancel_event = threading.Event()
         self._cancel_event = cancel_event
         button.set_sensitive(False)
@@ -90,11 +112,15 @@ class RemoteModelSettings(Gtk.Box):
         def worker():
             try:
                 if isinstance(self.client, AIClient):
-                    models = self.client.list_remote_models(provider, cancel_event=cancel_event)
+                    models = self.client.list_remote_models(provider, cancel_event=cancel_event, **options)
                 else:
                     # Preserve provider-only clients used by integrations/tests.
                     models = self.client.list_remote_models(provider)
                 GLib.idle_add(self._result, generation, models, False)
+            except ModelDiscoveryError as error:
+                # Discovery errors are fixed messages; response bodies and
+                # credential-bearing transport exceptions never reach the UI.
+                GLib.idle_add(self._result, generation, [], _(str(error)))
             except Exception:
                 GLib.idle_add(self._result, generation, [], True)
         threading.Thread(target=worker, daemon=True).start()
@@ -105,7 +131,8 @@ class RemoteModelSettings(Gtk.Box):
         self._cancel_event = None
         self.button.set_sensitive(self._allowed())
         if error:
-            self.status.set_text(_('Model listing failed. Check the key, mode and endpoint.'))
+            self.status.set_text(error if isinstance(error, str)
+                                 else _('Model listing failed. Check the key, mode and endpoint.'))
             return False
         self._loading = True
         current = self.model.get_child().get_text()

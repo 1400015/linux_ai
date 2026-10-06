@@ -1100,10 +1100,18 @@ class MainWindow(Gtk.Window):
 
         # Notebook for sections
         notebook = Gtk.Notebook()
-        content.add(notebook)
+        content.pack_start(notebook, True, True, 0)
         # Kept so on_themes_clicked can jump to the Themes tab instead of
         # reopening a second (nested) dialog.
         self._settings_notebook = notebook
+
+        def add_settings_page(box, title):
+            # Credential warnings and model lists can exceed a small desktop.
+            # Keep the dialog's confirmation button outside the scrolling page.
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.add(box)
+            notebook.append_page(scroll, Gtk.Label(label=_(title)))
 
         # API section
         api_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1127,11 +1135,12 @@ class MainWindow(Gtk.Window):
         credential_settings = APIKeySettings(self.config, provider_combo)
         api_box.pack_start(credential_settings, False, False, 0)
 
-        notebook.append_page(api_box, Gtk.Label(label=_("API")))
+        add_settings_page(api_box, "API")
         assistance_settings = ProviderSettings(self.config, self.ai_client)
-        model_settings = RemoteModelSettings(self.config, self.ai_client, provider_combo, assistance_settings.mode)
+        model_settings = RemoteModelSettings(self.config, self.ai_client, provider_combo,
+                                             assistance_settings.mode, credential_settings=credential_settings)
         api_box.pack_start(model_settings, False, False, 0)
-        notebook.append_page(assistance_settings, Gtk.Label(label=_("Assistance")))
+        add_settings_page(assistance_settings, "Assistance")
 
         # Appearance section
         ui_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1226,7 +1235,7 @@ class MainWindow(Gtk.Window):
         dock_edge_combo.set_active_id(self.config.get("app.dock_edge", "right"))
         ui_box.pack_start(dock_edge_combo, False, False, 0)
 
-        notebook.append_page(ui_box, Gtk.Label(label=_("Appearance")))
+        add_settings_page(ui_box, "Appearance")
 
         # Themes section
         themes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1257,7 +1266,7 @@ class MainWindow(Gtk.Window):
 
         themes_box.pack_start(theme_buttons, False, False, 0)
 
-        notebook.append_page(themes_box, Gtk.Label(label=_("Themes")))
+        add_settings_page(themes_box, "Themes")
 
         # Features section
         features_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1283,7 +1292,7 @@ class MainWindow(Gtk.Window):
         expert_check.set_active(self.config.get("features.expert_mode", True))
         features_box.pack_start(expert_check, False, False, 0)
 
-        notebook.append_page(features_box, Gtk.Label(label=_("Features")))
+        add_settings_page(features_box, "Features")
 
         # Show dialog
         dialog.show_all()

@@ -434,8 +434,13 @@ class AIClient:
         return self.config.get_api_key(provider)
 
     def list_remote_models(self, provider: Optional[str] = None, timeout: float = 8.0,
-                           cancel_event=None) -> List[str]:
-        """Explicit discovery only; local/offline policies prohibit remote probes."""
+                           cancel_event=None, *, api_key: Optional[str] = None) -> List[str]:
+        """Explicit discovery; a draft key is used only for this request.
+
+        ``None`` selects the configured key. An explicitly empty key remains
+        empty, so a cleared Settings field cannot fall back to an old key.
+        Local/offline policies still prohibit remote probes.
+        """
         from .remote_models import ModelDiscoveryError, discover_remote_models
         if self.get_assistance_mode() in ('offline', 'local'):
             raise ModelDiscoveryError('Remote model listing is disabled in offline and local modes.')
@@ -443,7 +448,8 @@ class AIClient:
         options = {'timeout': timeout}
         if cancel_event is not None:
             options['cancel_event'] = cancel_event
-        return discover_remote_models(selected, self._get_api_config(selected), self._get_api_key(selected), **options)
+        key = self._get_api_key(selected) if api_key is None else api_key
+        return discover_remote_models(selected, self._get_api_config(selected), key, **options)
 
     def get_supported_providers(self) -> List[str]:
         """Get list of supported providers"""
@@ -1368,6 +1374,31 @@ class AIClient:
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
+    def _google_payload(self, messages, temperature, max_tokens):
+        """Keep system instructions separate from Gemini conversation turns."""
+        contents = []
+        instructions = []
+        for message in messages:
+            part = {"text": message["content"]}
+            if message["role"] == "system":
+                instructions.append(part)
+            else:
+                contents.append({
+                    "role": "user" if message["role"] == "user" else "model",
+                    "parts": [part],
+                })
+        payload = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
+            },
+            "safetySettings": self._google_safety_settings(),
+        }
+        if instructions:
+            payload["systemInstruction"] = {"parts": instructions}
+        return payload
+
     def _chat_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
                                base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Communicate with the Google AI Studio API"""
@@ -1376,23 +1407,7 @@ class AIClient:
         url = f"{base_url}/models/{model}:generateContent"
         headers = {"x-goog-api-key": api_key}
 
-        # Convert messages to Google's format
-        google_messages = []
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            google_messages.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
-
-        payload = {
-            "contents": google_messages,
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens
-            },
-            "safetySettings": self._google_safety_settings()
-        }
+        payload = self._google_payload(messages, temperature, max_tokens)
 
         try:
             response = self._make_request(url, payload, headers, timeout)
@@ -1904,22 +1919,7 @@ class AIClient:
         url = f"{base_url}/models/{model}:streamGenerateContent?alt=sse"
         headers = {"x-goog-api-key": api_key}
 
-        google_messages = []
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            google_messages.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
-
-        payload = {
-            "contents": google_messages,
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens
-            },
-            "safetySettings": self._google_safety_settings()
-        }
+        payload = self._google_payload(messages, temperature, max_tokens)
 
         usage_events: List[Dict] = []
         received: List[str] = []
