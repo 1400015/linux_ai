@@ -45,7 +45,7 @@ else:
 
 
 class QtShell(_BaseShell):
-    """Minimal main window: a status line and a close that ends the loop."""
+    """Qt main window: status line plus the chat widget (phase 4b)."""
 
     def __init__(self, config_manager, platform_name):
         if not QT_AVAILABLE:
@@ -53,6 +53,7 @@ class QtShell(_BaseShell):
         super().__init__()
         self.config = config_manager
         self.platform_name = platform_name
+        self.chat = None
         self.setWindowTitle("Linux AI Assistant")
         self.resize(*MIN_WINDOW_SIZE)
         central = QtWidgets.QWidget(self)
@@ -60,7 +61,24 @@ class QtShell(_BaseShell):
         status = QtWidgets.QLabel(self._status_text(), central)
         status.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(status)
+        self._build_chat(layout)
         self.setCentralWidget(central)
+
+    def _build_chat(self, layout):
+        from .qt_chat import QT_AVAILABLE as CHAT_QT_AVAILABLE, QtChatWidget
+        if not CHAT_QT_AVAILABLE:
+            return
+        from .offline_assistant import OfflineAssistant
+        from .system_utils import SystemUtils
+        try:
+            system_utils = SystemUtils(self.config)
+            offline = OfflineAssistant(system_utils, self.config)
+        except Exception as error:
+            logger.warning("Offline assistant unavailable for the Qt shell: %s",
+                           type(error).__name__)
+            return
+        self.chat = QtChatWidget(self.config, offline, self)
+        layout.addWidget(self.chat, 1)
 
     def _status_text(self):
         from . import i18n
