@@ -76,6 +76,12 @@ _ENCRYPTED_PREFIX = "fernet:v1:"
 _DOTENV_MAX_BYTES = 128 * 1024
 _API_KEY_ENV_RE = re.compile(r"^LINUX_AI_API_PROVIDERS_[A-Z0-9_]+_API_KEY$")
 
+# Flags de ficheiro privado: garantia de produção no Linux; em plataformas
+# sem os flags (desenvolvimento em Windows) degradam para 0 em vez de
+# levantar AttributeError fora dos except previstos.
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
 
 def _dotenv_identity(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
@@ -84,13 +90,13 @@ def _dotenv_identity(info):
 def _read_owned_dotenv(path):
     """Read a bounded owned file and parent without following final links."""
     path = Path(path)
-    parent_descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    parent_descriptor = os.open(path.parent, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
     descriptor = None
     try:
         parent_info = os.fstat(parent_descriptor)
         if parent_info.st_uid != os.getuid() or parent_info.st_mode & 0o022:
             raise ValueError("The environment file cannot be safely changed.")
-        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+        descriptor = os.open(path.name, os.O_RDONLY | _O_NOFOLLOW | os.O_NONBLOCK,
                              dir_fd=parent_descriptor)
         before = os.fstat(descriptor)
         if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or before.st_mode & 0o022
@@ -348,7 +354,7 @@ class ConfigManager:
                           and binding.value == "" and counts[binding.key] == 1
                           and binding.key not in os.environ}
             self._dotenv_source_identity = identity
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError, UnicodeError, AttributeError):
             candidates = set()
         load_dotenv(self._dotenv_path, override=False)
         self._dotenv_empty_overrides = {name for name in candidates if os.environ.get(name) == ""}
@@ -919,6 +925,35 @@ class ConfigManager:
             return legacy_name
         return None
 
+    def api_key_env_var(self, provider: str) -> str:
+        """Canonical environment variable name that overrides this provider's key."""
+        return self._env_name(f"api.providers.{provider}.api_key")
+
+    def stored_key_shadowed_by_empty_env(self, provider: str) -> bool:
+        """True quando uma variável canónica VAZIA no ambiente desativa uma
+        chave armazenada (config.json ou cofre) do provedor.
+
+        Contrato do `.env`: uma variável canónica definida com valor vazio
+        DESACTIVA a chave guardada. Isto produziu o sintoma "sempre offline"
+        com uma instalação cujo `.env` copiava o exemplo da era v1.3.3
+        (placeholders vazios descomentados).
+        """
+        canonical = self._env_name(f"api.providers.{provider}.api_key")
+        if os.environ.get(canonical) != "":
+            return False
+        legacy = {"openrouter": "OPENROUTER_API_KEY",
+                  "google_ai_studio": "GOOGLE_AI_STUDIO_KEY"}.get(provider)
+        if legacy and os.environ.get(legacy) not in (None, ""):
+            return False  # override legacy não vazio ganha ao canónico vazio
+        stored = self.get_config_value(f"api.providers.{provider}.api_key")
+        if not stored:
+            try:
+                if self.get_api_key_storage(provider) == "secret-service":
+                    stored = self._api_key_store().lookup(provider)
+            except Exception:
+                stored = None
+        return bool(stored)
+
     def can_remove_empty_api_key_override(self, provider: str) -> bool:
         """Only this manager's unchanged, empty .env assignment is removable."""
         name = self._env_name(f"api.providers.{provider}.api_key")
@@ -930,7 +965,7 @@ class ConfigManager:
                 return False
             records = [record for record in _dotenv_bindings(contents) if record.key == name]
             return len(records) == 1 and records[0].value == ""
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError, UnicodeError, AttributeError):
             return False
 
     def remove_empty_api_key_override(self, provider: str) -> None:
@@ -954,7 +989,7 @@ class ConfigManager:
                 replacement = "".join(record.original.string if record.key != name else
                                       re.match(r"\s*", record.original.string).group(0)
                                       for record in records).encode("utf-8")
-                parent_descriptor = os.open(self._dotenv_path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                parent_descriptor = os.open(self._dotenv_path.parent, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
                 parent_info = os.fstat(parent_descriptor)
                 if parent_info.st_uid != os.getuid() or parent_info.st_mode & 0o022:
                     raise ValueError("The empty override could not be removed safely.")
@@ -985,7 +1020,7 @@ class ConfigManager:
                 # Other originally loaded placeholders remain removable after
                 # this manager's own successful edit, not after outside edits.
                 self._dotenv_source_identity = new_identity
-            except (OSError, ValueError, UnicodeError):
+            except (OSError, ValueError, UnicodeError, AttributeError):
                 raise ValueError("The empty override could not be removed safely.") from None
             finally:
                 if temporary_name is not None and parent_descriptor is not None:

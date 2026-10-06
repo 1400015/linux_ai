@@ -1824,6 +1824,24 @@ class MainWindow(Gtk.Window):
                 # No key for the selected provider: answer from local knowledge
                 # instead of failing with "API key not configured".
                 logger.info("No usable provider; using the offline assistant")
+                # Aviso acionável: uma chave armazenada pode estar a ser
+                # DESACTIVADA por um placeholder vazio no .env (contrato
+                # documentado) — o caso real que produziu "sempre offline"
+                # numa instalação com o .env antigo, sem nada na linha de
+                # estado a explicar o motivo.
+                try:
+                    shadow_provider = self.ai_client.active_provider()
+                    if shadow_provider and self.config.stored_key_shadowed_by_empty_env(shadow_provider):
+                        shadow_var = self.config.api_key_env_var(shadow_provider)
+                        GLib.idle_add(
+                            self._add_system_message,
+                            _("The stored key for {provider} is disabled by the empty "
+                              "{var} override in .env. Open Settings → API and use "
+                              "'Use stored key (remove empty override from .env)', "
+                              "or comment that line out.").format(
+                                  provider=shadow_provider, var=shadow_var))
+                except Exception:
+                    pass
                 offline_reply = offline.handle(message, get_language())
             else:
                 try:
