@@ -1,0 +1,166 @@
+schema_version: '0.1'
+id: distro-kali
+kind: distro
+requires:
+- linux-core
+- packages-apt
+- services-systemd
+match:
+  distro_ids:
+  - kali
+  components: []
+facts:
+- family: kali
+  display_name: Kali Linux
+  wiki_name: Kali Linux Documentation
+  wiki_url: https://www.kali.org/docs/
+  wiki_search_url: https://www.kali.org/search/?q={query}
+  docs_urls:
+  - https://www.kali.org/docs/
+  - https://gitlab.com/kalilinux/documentation
+  summary: Kali Linux is a Debian-based distribution aimed at security testing, with
+    a rolling release model and a large collection of preinstalled security tools.
+  repositories: /etc/apt/sources.list uses the Kali rolling repository; third-party
+    tool repositories are added with caution and pinned.
+  network: NetworkManager on desktop installs; plain ifupdown on minimal installs.
+    DNS in /etc/resolv.conf.
+  logs: systemd journal plus rsyslog; tool-specific logs live in their own
+    directories (for example /var/log/metasploit or tool homes).
+  hostname: /etc/hostname and hostnamectl; some tools embed the hostname in
+    generated payloads, so renaming has side effects.
+  locale: Standard Debian locale tooling; en_US.UTF-8 is the default.
+  firewall_tool: nftables (ufw optional)
+  firewall_status:
+  - - nft
+    - list
+    - ruleset
+  firewall_allow: 'ufw allow 22/tcp   (or: nft add rule ... tcp dport 22 accept)'
+  services_note: systemd; Kali also ships tools that run their own daemons, which
+    are separate from the system services.
+  distinct:
+  - Rolling release based on Debian testing; apt full-upgrade keeps the toolset
+    current.
+  - Default install is minimal; kali-linux-everything metapackages add tool sets.
+  - Security tools receive frequent updates that can change flags and output formats.
+  - Running as root was historically common; modern Kali encourages an unprivileged
+    user.
+  - Offensive tooling carries legal constraints; use only on systems you are
+    authorized to test.
+procedures:
+- id: kali-apt-rolling-errors
+  title:
+  - Erros de atualização no repositório rolling do Kali
+  - Kali rolling repository update errors
+  summary:
+  - Distingue chaves desatualizadas de espelhos indisponíveis antes de alterar fontes.
+  - Distinguish outdated keys from unavailable mirrors before changing sources.
+  keywords:
+  - kali
+  - apt
+  - rolling
+  - update
+  - key
+  - repositorio
+  - repositório
+  - mirror
+  steps:
+  - instruction:
+    - Verifica o erro exato do apt-get update.
+    - Check the exact apt-get update error.
+    interpretation:
+    - Erros NO_PUBKEY indicam a chave do repositório desatualizada; erros de ligação
+      indicam espelho ou rede. Trocar de espelho não corrige uma chave em falta.
+    - NO_PUBKEY errors mean an outdated repository key; connection errors mean a
+      mirror or network issue. Switching mirrors does not fix a missing key.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Mantém o sistema rolling atualizado com full-upgrade.
+    - Keep the rolling system current with full-upgrade.
+    interpretation:
+    - Kali rolling deve usar apt full-upgrade; dist-upgrade parcial pode deixar
+      dependências incoerentes entre pacotes de testes.
+    - Kali rolling should use apt full-upgrade; a partial upgrade can leave
+      incoherent dependencies between testing packages.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://www.kali.org/docs/general-use/updating-kali/
+  families:
+  - kali
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Alterar sources.list ou chaves deve guardar
+    cópia e ser revertível.
+  - These steps do not modify the system. Changing sources.list or keys must keep
+    a copy and be reversible.
+- id: kali-tool-missing
+  title:
+  - "Ferramenta de segurança em falta no Kali"
+  - Security tool missing on Kali
+  summary:
+  - Confirma o metapacote antes de instalar ferramentas individuais.
+  - Confirm the metapackage before installing individual tools.
+  keywords:
+  - kali
+  - ferramenta
+  - tool
+  - missing
+  - em falta
+  - metapackage
+  - metapacote
+  - install
+  steps:
+  - instruction:
+    - Identifica o metapacote que contém a ferramenta.
+    - Identify the metapackage containing the tool.
+    interpretation:
+    - Kali organiza ferramentas em metapacotes como kali-tools-*; instalar o metapacote
+      traz dependências coerentes em vez de pacotes soltos.
+    - Kali organizes tools into metapackages like kali-tools-*; installing the
+      metapackage brings coherent dependencies instead of loose packages.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Verifica o estado do pacote depois de instalar.
+    - Verify the package state after installing.
+    interpretation:
+    - dpkg -s confirma a versão instalada; ferramentas rolling podem mudar flags
+      entre versões, compara com a documentação da ferramenta.
+    - dpkg -s confirms the installed version; rolling tools can change flags
+      between versions, compare with the tool documentation.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://www.kali.org/docs/general-use/metapackages/
+  families:
+  - kali
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Instalações podem ser revertidas com apt
+    remove; regista o que foi instalado.
+  - These steps do not modify the system. Installations can be reverted with apt
+    remove; record what was installed.
+action_ids: []
+provenance:
+  origin: Kali Linux documentation reviewed 2026-10-02
+  verification: documentation_review
+  sources:
+  - https://www.kali.org/docs/
+  - https://www.kali.org/docs/general-use/updating-kali/

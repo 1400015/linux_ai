@@ -54,6 +54,37 @@ def _k(**kwargs) -> DistroKnowledge:
 # ---------------------------------------------------------------------------
 
 KNOWLEDGE_BASE: Dict[str, DistroKnowledge] = {
+    "kali": _k(
+        family="kali",
+        display_name="Kali Linux",
+        wiki_name="Kali Linux Documentation",
+        wiki_url="https://www.kali.org/docs/",
+        wiki_search_url="https://www.kali.org/search/?q={query}",
+        docs_urls=("https://www.kali.org/docs/",
+                   "https://gitlab.com/kalilinux/documentation"),
+        summary=("Kali Linux is a Debian-based, rolling-release distribution "
+                 "aimed at security testing with a large toolset."),
+        repositories=("/etc/apt/sources.list with the Kali rolling "
+                      "repository; pin third-party tool repositories with care."),
+        network=("NetworkManager on desktop installs; plain ifupdown on "
+                 "minimal installs. DNS in /etc/resolv.conf."),
+        logs=("systemd journal plus rsyslog; security tools keep their own "
+              "logs (for example Metasploit under ~/.msf4 or tool homes)."),
+        hostname=("'hostnamectl set-hostname NAME'; some tools embed the "
+                  "hostname in generated payloads."),
+        locale="Standard Debian locale tooling; en_US.UTF-8 default.",
+        firewall_tool="nftables (ufw optional)",
+        firewall_status=(("nft", "list", "ruleset"),),
+        firewall_allow="ufw allow 22/tcp   (or: nft add rule ... tcp dport 22 accept)",
+        services_note=("systemd; several security tools run their own daemons "
+                       "separately from system services."),
+        distinct=(
+            "Rolling release based on Debian testing; 'apt full-upgrade'.",
+            "Minimal default install; kali-linux-* metapackages add tool sets.",
+            "Tool updates are frequent and can change flags/output.",
+            "Modern Kali encourages an unprivileged user, not root.",
+        ),
+    ),
     "ubuntu": _k(
         family="ubuntu",
         display_name="Ubuntu",
@@ -351,7 +382,7 @@ _FAMILY_BY_ID: Dict[str, str] = {
     "ubuntu": "ubuntu",
     "linuxmint": "mint",
     "pop": "ubuntu", "elementary": "ubuntu",
-    "raspbian": "debian", "kali": "debian",
+    "raspbian": "debian", "kali": "kali",
     "arch": "arch",
     "manjaro": "manjaro",
     "artix": "arch",

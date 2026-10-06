@@ -1,0 +1,269 @@
+schema_version: '0.1'
+id: wsl-core
+kind: platform
+requires:
+- windows-core
+match:
+  distro_ids:
+  - windows
+  components: []
+facts:
+- family: wsl
+  display_name: Windows Subsystem for Linux
+  wiki_name: Microsoft Learn WSL documentation
+  wiki_url: https://learn.microsoft.com/windows/wsl/
+  wiki_search_url: https://learn.microsoft.com/search/?search={query}&category=WSL
+  docs_urls:
+  - https://learn.microsoft.com/windows/wsl/
+  - https://learn.microsoft.com/windows/wsl/wsl-config
+  summary: Windows Subsystem for Linux runs real Linux distributions beside the
+    Windows session, with per-distro configuration in /etc/wsl.conf and global
+    options in .wslconfig.
+  repositories: Each distro keeps its native package manager (apt, xbps); Windows
+    applications come from winget.
+  network: Default NAT mode gives the distro a private subnet; mirrored mode (Windows
+    11 22H2+) shares the host interfaces. Port forwarding is configured on the host.
+  logs: Distro-side logs are native Linux logs; wsl.exe itself logs through Windows
+    Event Viewer and dmesg works inside the distro.
+  hostname: The distro hostname defaults to the Windows computer name; /etc/wsl.conf
+    can set it per distro.
+  locale: Distro locales are native Linux locales; /etc/wsl.conf can control locale
+    sharing with Windows.
+  firewall_tool: Windows Defender Firewall governs the host; NAT'd distro traffic
+    appears as host traffic.
+  firewall_status:
+  - - powershell
+    - -Command
+    - Get-NetFirewallProfile | Select-Object Name, Enabled
+  firewall_allow: Windows-side netsh portproxy or New-NetFirewallRule (requires
+    elevation and explicit confirmation)
+  services_note: systemd can be enabled per distro with [boot] systemd=true in
+    /etc/wsl.conf; otherwise service managers are unavailable inside WSL.
+  distinct:
+  - wsl.exe --list --verbose enumerates installed distributions and their states.
+  - /etc/wsl.conf configures per-distro behaviour; .wslconfig sets global limits.
+  - wsl.exe --update updates the WSL platform itself, not the distro packages.
+  - Windows paths are reachable under /mnt/c; Linux paths from Windows via \\wsl$.
+  - Interop can run Windows binaries from Linux; it is configurable per distro.
+procedures:
+- id: wsl-distro-not-starting
+  title:
+  - "Distribuição WSL não arranca"
+  - WSL distribution does not start
+  summary:
+  - Verifica o estado da distribuição e da plataforma WSL antes de a reinstalar.
+  - Check the distribution and WSL platform state before reinstalling it.
+  keywords:
+  - wsl
+  - distro
+  - distribuicao
+  - distribuição
+  - not starting
+  - nao arranca
+  - stuck
+  steps:
+  - instruction:
+    - Lista as distribuições instaladas e o estado de cada uma.
+    - List the installed distributions and their states.
+    interpretation:
+    - Usa wsl.exe --list --verbose. Um estado Stopped pode ser normal; Installing
+      ou um nome ausente indica problemas de instalação ou registo da distribuição.
+    - Use wsl.exe --list --verbose. A Stopped state can be normal; Installing or
+      a missing name indicates installation or distribution registration problems.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Verifica a versão da plataforma WSL.
+    - Check the WSL platform version.
+    interpretation:
+    - wsl.exe --version mostra a plataforma; uma versão desatualizada pode impedir
+      distros novas de arrancarem. wsl.exe --update corrige a plataforma no host.
+    - wsl.exe --version shows the platform; an outdated version can prevent new
+      distros from starting. wsl.exe --update fixes the platform on the host.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/windows/wsl/
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Reinstalar uma distribuição destrói os seus
+    dados; exporta-a primeiro com wsl.exe --export.
+  - These steps do not modify the system. Reinstalling a distribution destroys its
+    data; export it first with wsl.exe --export.
+- id: wsl-network-unreachable
+  title:
+  - Rede indisponível dentro da WSL
+  - Network unreachable inside WSL
+  summary:
+  - Distingue problemas do lado Linux dos limites do modo NAT do host.
+  - Distinguish Linux-side problems from host NAT mode limits.
+  keywords:
+  - wsl
+  - network
+  - rede
+  - nat
+  - mirrored
+  - dns
+  - internet
+  steps:
+  - instruction:
+    - Verifica a configuração IP dentro da distribuição.
+    - Check the IP configuration inside the distribution.
+    interpretation:
+    - Em modo NAT, o endereço da distro é privado e o gateway é o host; sem endereço,
+      o problema é do lado Linux. Em modo mirrored, a distro partilha as interfaces
+      do host.
+    - In NAT mode the distro address is private and the gateway is the host; without
+      an address the problem is Linux-side. In mirrored mode the distro shares the
+      host interfaces.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Confirma os servidores DNS da distribuição.
+    - Confirm the distribution DNS servers.
+    interpretation:
+    - Em NAT, o WSL gera /etc/resolv.conf a partir do host; gerar stubs do Windows
+      podem causar falhas de resolução. wsl.conf pode fixar nameservers dentro da distro.
+    - In NAT, WSL generates /etc/resolv.conf from the host; Windows resolver stubs
+      can cause resolution failures. wsl.conf can pin nameservers inside the distro.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/windows/wsl/networking
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Alterar o modo de rede ou o resolv.conf deve
+    registar a configuração anterior.
+  - These steps do not modify the system. Changing the network mode or resolv.conf
+    must record the previous configuration.
+- id: wsl-systemd-not-running
+  title:
+  - systemd não corre dentro da WSL
+  - systemd does not run inside WSL
+  summary:
+  - Confirma se o systemd foi ativado na distribuição antes de investigar serviços.
+  - Confirm whether systemd was enabled in the distribution before investigating services.
+  keywords:
+  - wsl
+  - systemd
+  - services
+  - servicos
+  - serviços
+  - boot
+  steps:
+  - instruction:
+    - Verifica se o systemd está ativado na configuração da distribuição.
+    - Check whether systemd is enabled in the distribution configuration.
+    interpretation:
+    - O systemd exige [boot] systemd=true em /etc/wsl.conf e um reinício da distro
+      (wsl.exe --terminate). Sem isto, systemctl não funciona por design.
+    - systemd requires [boot] systemd=true in /etc/wsl.conf and a distro restart
+      (wsl.exe --terminate). Without it, systemctl does not work by design.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Confirma a versão da plataforma WSL.
+    - Confirm the WSL platform version.
+    interpretation:
+    - O systemd dentro do WSL exige uma plataforma recente; wsl.exe --version confirma
+      a versão antes de ativar a configuração.
+    - systemd inside WSL requires a recent platform; wsl.exe --version confirms the
+      version before enabling the configuration.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/windows/wsl/systemd
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Terminar a distro (wsl.exe --terminate) interrompe
+    os processos em curso dentro dela.
+  - These steps do not modify the system. Terminating the distro (wsl.exe --terminate)
+    interrupts its running processes.
+- id: wsl-file-permissions
+  title:
+  - Permissões de ficheiros entre Windows e WSL
+  - File permissions between Windows and WSL
+  summary:
+  - Compreende a tradução de permissões antes de a alterar.
+  - Understand the permission translation before changing it.
+  keywords:
+  - wsl
+  - permissions
+  - permissoes
+  - permissões
+  - /mnt/c
+  - metadata
+  - chmod
+  steps:
+  - instruction:
+    - Verifica se a montagem usa metadados de Linux.
+    - Check whether the mount uses Linux metadata.
+    interpretation:
+    - Em /mnt/c sem a opção metadata, todos os ficheiros aparecem com permissões
+      0777; isso não reflete as permissões reais do Windows nem é um erro.
+    - On /mnt/c without the metadata option every file appears with 0777 permissions;
+      that does not reflect real Windows permissions and is not an error.
+    command: ''
+    probe_key: ''
+  - instruction:
+    - Trabalha dentro do sistema de ficheiros da distro quando precisares de permissões
+      reais de Linux.
+    - Work inside the distro filesystem when you need real Linux permissions.
+    interpretation:
+    - Alterar chmod em /mnt/c pode criar entradas de metadados inconsistentes; os
+      ficheiros da distro (por baixo de /) seguem semânticas nativas.
+    - Changing chmod on /mnt/c can create inconsistent metadata entries; distro
+      files (under /) follow native semantics.
+    command: ''
+    probe_key: ''
+  sources:
+  - https://learn.microsoft.com/windows/wsl/file-permissions
+  families: []
+  component: ''
+  versions: []
+  reviewed_at: '2026-10-02'
+  verification: documentation_review
+  tested_versions: []
+  version_scope:
+  - ""
+  - ""
+  effects: read_only_guidance
+  recovery:
+  - Estes passos não alteram o sistema. Montagens com metadata devem ser configuradas
+    no fstab da distro e revertíveis.
+  - These steps do not modify the system. Metadata mounts must be configured in the
+    distro fstab and reversible.
+action_ids: []
+provenance:
+  origin: Microsoft Learn WSL documentation reviewed 2026-10-02
+  verification: documentation_review
+  sources:
+  - https://learn.microsoft.com/windows/wsl/
+  - https://learn.microsoft.com/windows/wsl/wsl-config
