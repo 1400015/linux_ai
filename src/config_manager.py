@@ -161,6 +161,7 @@ class ConfigManager:
             "dock_mode": "float",
             "dock_edge": "right",
             "button_edge": "right",
+            "tray_toggle_on_click": True,
             "expert_mode": False,
             "language": ""
         },
@@ -281,6 +282,7 @@ class ConfigManager:
             "dock_mode": str,
             "dock_edge": str,
             "button_edge": str,
+            "tray_toggle_on_click": bool,
             "expert_mode": bool,
             "language": str
         },

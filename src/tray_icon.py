@@ -19,8 +19,25 @@ except (ImportError, ValueError):
     from gi.repository import Gtk, GdkPixbuf
 
 
+def toggle_on_click_enabled(config_manager, default=True) -> bool:
+    """Pure decision: whether a tray icon click should toggle the window.
+
+    Kept module-level (and GTK-free in spirit) so tests and future platform
+    backends can reuse it without instantiating the GTK-dependent class.
+    """
+    try:
+        return bool(config_manager.get("app.tray_toggle_on_click", default))
+    except Exception:
+        return default
+
+
 class TrayIcon:
-    """System tray icon for the application"""
+    """System tray icon for the application.
+
+    With ``app.tray_toggle_on_click`` enabled (the default), clicking the
+    icon toggles the main window like a drawer: the first click shows it,
+    the next click hides it. The menu remains available separately.
+    """
 
     def __init__(self, app, config_manager, main_window):
         self.app = app
@@ -52,6 +69,12 @@ class TrayIcon:
                 self.indicator.set_icon_theme_path(str(path.parent))
             self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
             self.indicator.set_attention_icon("dialog-information")
+
+            # AppIndicator3 exposes no left-click signal: any click opens the
+            # menu. secondary_activate (middle click) toggles the drawer when
+            # the user enabled tray_toggle_on_click.
+            if self._toggle_on_click_enabled():
+                self.indicator.connect("secondary_activate", self.on_tray_clicked)
 
             # Create menu
             self._create_menu()
@@ -144,8 +167,14 @@ class TrayIcon:
         self.menu.show_all()
         logger.debug("System tray menu created")
 
-    def on_tray_clicked(self, icon):
-        """Handler for system tray icon click"""
+    def _toggle_on_click_enabled(self) -> bool:
+        """Whether clicking the tray icon should toggle the window."""
+        return toggle_on_click_enabled(self.config)
+
+    def on_tray_clicked(self, icon, *args):
+        """Handler for a tray icon click: toggle the drawer when enabled."""
+        if not self._toggle_on_click_enabled():
+            return
         self.on_toggle_window(None)
 
     def on_tray_menu(self, icon, button, time):
