@@ -40,6 +40,7 @@ from .conversation_actions import ConversationActions
 from .document_context import MAX_DOCUMENT_CONTEXT_CHARS, display_document_context, with_document_context
 from .document_store import DocumentStore
 from .image_attachments import prepare_image
+from .request_preparation import RequestPreparationError, prepare_request
 
 logger = logging.getLogger(__name__)
 
@@ -901,6 +902,35 @@ Examples:
             self._save_history()
         return reply.exit_code
 
+    @staticmethod
+    def _read_document_context(text, max_chars):
+        """Read reviewed excerpts from the local index, closing it afterwards."""
+        store = DocumentStore()
+        try:
+            return store.context(text, max_chars=max_chars)
+        finally:
+            store.close()
+
+    @staticmethod
+    def _confirm_cli_image(attachment, provider, model, args):
+        """Print the exact snapshot destination; only --send-image approves it."""
+        print(_("Image: {name} ({width} × {height}); destination: {provider}, {model}.")
+              .format(name=attachment.filename, width=attachment.width, height=attachment.height,
+                      provider=provider, model=model))
+        if getattr(args, 'send_image', False):
+            return True
+        print(_("Review the original image, then repeat with --send-image to send this normalized snapshot."))
+        return False
+
+    @staticmethod
+    def _confirm_cli_documents(context, args):
+        """Print the exact excerpts; only --send-document-context approves them."""
+        if getattr(args, 'send_document_context', False):
+            return True
+        print(display_document_context(context))
+        print(_("Review these excerpts, then repeat with --send-document-context to send them to the model."))
+        return False
+
     def handle_chat(self, args):
         """Process the chat command. Devolve exit code (0 sucesso, 1 falha)."""
         image_path = getattr(args, 'image', None)
@@ -914,34 +944,29 @@ Examples:
         if image_path is not None and not getattr(args, 'message', None) and not getattr(args, 'stdin', False) and not getattr(args, 'input', None):
             args.message = [_("Describe this image.")]
         message = self._message_from_args(args)
-        images = ()
-        document_context = ''
         try:
-            if image_path is not None:
-                image = prepare_image(image_path)
-                provider, model = self.ai_client.validate_image_request((image,), args.provider, args.model)
-                print(_("Image: {name} ({width} × {height}); destination: {provider}, {model}.")
-                      .format(name=image.filename, width=image.width, height=image.height, provider=provider, model=model))
-                if not getattr(args, 'send_image', False):
-                    print(_("Review the original image, then repeat with --send-image to send this normalized snapshot."))
-                    return 0
-                images = (image,)
-            if use_documents:
-                store = DocumentStore()
-                try:
-                    document_context = store.context(message, max_chars=MAX_DOCUMENT_CONTEXT_CHARS)
-                finally:
-                    store.close()
-                if not document_context:
-                    print(_("No matching passages in the selected documents."))
-                    return 1
-                if self.ai_client.provider_ready(args.provider) and not getattr(args, 'send_document_context', False):
-                    print(display_document_context(document_context))
-                    print(_("Review these excerpts, then repeat with --send-document-context to send them to the model."))
-                    return 0
-        except (OSError, ValueError, AIProviderError) as error:
+            plan = prepare_request(
+                message,
+                ai_client=self.ai_client,
+                image=prepare_image(image_path) if image_path is not None else None,
+                provider=getattr(args, 'provider', None),
+                model=getattr(args, 'model', None),
+                documents_enabled=use_documents,
+                resolve_route=image_path is not None or use_documents,
+                read_document_context=self._read_document_context,
+                confirm_image=lambda attachment, provider, model:
+                    self._confirm_cli_image(attachment, provider, model, args),
+                confirm_documents=lambda context, provider:
+                    self._confirm_cli_documents(context, args),
+            )
+        except (OSError, ValueError, AIProviderError, RequestPreparationError) as error:
             print(str(error), file=sys.stderr)
             return 1
+        if plan is None:
+            return 0
+        message = plan.text
+        images = plan.images
+        document_context = plan.document_context
 
         self._prepare_conversation(args)
 
