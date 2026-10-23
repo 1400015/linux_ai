@@ -1,4 +1,3 @@
-import gi
 import os
 import json
 import time
@@ -8,14 +7,23 @@ from typing import Optional, Dict
 from pathlib import Path
 
 try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except (ImportError, ValueError) as _gtk_error:
+    gi = None
+    Gtk = None
+    GLib = None
+    GTK_AVAILABLE = False
+    GTK_IMPORT_ERROR = _gtk_error
+
+try:
     import notify2
 except ImportError:
     notify2 = None
 
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-
-from gi.repository import Gtk, GLib
 import logging
 
 from . import device_dialogs, dock, file_actions, offline_assistant
@@ -26,81 +34,36 @@ from .history_store import HistoryStore, MAX_HISTORY_MESSAGES, MAX_MESSAGE_CHARS
 from .i18n import _, get_language
 from .assistant_context import build_system_message
 from .conversation_dialog import show_conversations
+from .app_settings_dialogs import build_settings_dialog, populate_themes_list
+
 from .conversation_actions import ConversationActions
 from .change_journal import ChangeJournal
 from .change_dialog import show_file_changes
 from .diagnostic_dialog import show_diagnostic_report
 from .trial_dialog import show_trials
-from .provider_settings import ProviderSettings, MODE_LABELS, STATUS_LABELS
-from .credential_settings import APIKeySettings
-from .remote_model_settings import RemoteModelSettings
-from .document_context import MAX_DOCUMENT_CONTEXT_CHARS, display_document_context, with_document_context
+from .provider_settings import MODE_LABELS, STATUS_LABELS
+from .document_context import display_document_context, with_document_context
 from .document_store import DocumentStore
 from .document_review import review_document_context
+from .request_preparation import RequestPreparationError, prepare_request
 from .image_dialog import pick_image, review_image
 from .image_attachments import prepare_image
+from .theme_style import (
+    MAX_CONTEXT_CHARS,
+    MAX_CONTEXT_MESSAGES,
+    STREAM_FLUSH_INTERVAL,
+    safe_color,
+    safe_number,
+    app_style_css,
+    valid_chat_style,
+)
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
-# Values coming from theme files are interpolated into GTK's CSS; validating
-# the format prevents a malicious JSON from injecting arbitrary style rules.
-# GTK3 supports RGB hex colors; CSS4's RGBA hex forms fail its CSS parser.
-_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-_FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 _.,'-]{1,64}$")
-
-# Context budget: by default 12000 characters (~3k tokens) and 20 messages.
-MAX_CONTEXT_CHARS = 12000
-MAX_CONTEXT_MESSAGES = 20
-
-# Intervalo mínimo entre flushes de chunks streaming para a UI (segundos).
-# Coalesce os chunks recebidos entre flushes: sem isto, cada chunk agendava
-# um idle próprio (+ um de scroll), milhares por resposta rápida.
-STREAM_FLUSH_INTERVAL = 0.08
-
-
-def safe_color(value, fallback="#1e1e1e"):
-    """Return a hex color supported by GTK3 CSS or `fallback`."""
-    if isinstance(value, str) and _COLOR_RE.match(value.strip()):
-        return value.strip()
-    if value is not None:
-        logger.warning(f"Invalid theme color ignored: {value!r}")
-    return fallback
-
-
-def safe_font_family(value, fallback="Monospace"):
-    """Return a safe font-family name for CSS."""
-    if isinstance(value, str) and _FONT_FAMILY_RE.match(value.strip()):
-        return value.strip()
-    if value is not None:
-        logger.warning(f"Invalid theme font family ignored: {value!r}")
-    return fallback
-
-
-def contrasting_text_color(background):
-    """Choose readable text for a validated theme accent, including light ones."""
-    value = safe_color(background, '#4CAF50')[1:]
-    if len(value) == 3:
-        value = ''.join(character * 2 for character in value)
-    channels = [int(value[offset:offset + 2], 16) / 255 for offset in (0, 2, 4)]
-    linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
-              for channel in channels]
-    luminance = sum(channel * weight for channel, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
-    return '#000000' if (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) else '#ffffff'
-
-
-def safe_number(value, fallback, cast, minimum=None, maximum=None):
-    """Convert `value` to a number with bounds, or return `fallback`."""
-    try:
-        number = cast(value)
-    except (TypeError, ValueError):
-        return fallback
-    if minimum is not None and number < minimum:
-        return fallback
-    if maximum is not None and number > maximum:
-        return fallback
-    return number
-
+# Theme validation regexes for CSS-safe colors and font families live in
+# src/theme_style.py alongside the helpers that use them; do not redefine them
+# here just to hold a local copy.
 
 class MainWindow(Gtk.Window):
     """Application main window"""
@@ -339,6 +302,8 @@ class MainWindow(Gtk.Window):
 
     def _setup_style(self):
         """Set up window CSS styling"""
+        if Gtk is None:
+            return
         # A screen provider also sees dialogs, menus and window decorations.
         # Scope every rule to our content so those keep their native GTK theme.
         self.get_style_context().add_class('linux-ai-main')
@@ -367,165 +332,27 @@ class MainWindow(Gtk.Window):
             theme_ui = theme_info['ui']
 
         # Usar valores validados do theme (ver safe_color/safe_font_family)
-        bg_color = safe_color(colors.get('background'), '#1e1e1e')
-        text_color = safe_color(colors.get('text'), '#e0e0e0')
-        accent_color = safe_color(colors.get('accent'), '#4CAF50')
-        secondary_color = safe_color(colors.get('secondary'), '#2d2d2d')
-        tertiary_color = safe_color(colors.get('tertiary'), '#252525')
-        accent_text = contrasting_text_color(accent_color)
-        expert_text = contrasting_text_color('#2196F3')
-        danger_text = contrasting_text_color('#f44336')
-
-        font_family = safe_font_family(
-            theme_ui.get('font_family') or self.config.get('ui.font_family'),
-            'Monospace',
+        style = valid_chat_style(
+            theme_colors=colors,
+            theme_info=theme_info,
+            config_get=self.config.get,
+            syntax_colors=syntax_colors,
+            ui=theme_ui,
         )
-        font_size = safe_number(
-            theme_ui.get('font_size') or self.config.get('ui.font_size'),
-            12, int, minimum=4, maximum=72,
-        )
-        border_radius = safe_number(
-            theme_ui.get('border_radius') or self.config.get('ui.border_radius'),
-            10, int, minimum=0, maximum=64,
-        )
-
-        # Cores de syntax highlighting
-        user_msg_color = safe_color(syntax_colors.get('user_message'), text_color)
-        ai_msg_color = safe_color(syntax_colors.get('ai_message'), text_color)
-        system_msg_color = safe_color(syntax_colors.get('system_message'), text_color)
         if hasattr(self, 'chat_view'):
-            self.chat_view.set_style(font_family, font_size, {
-                'user': user_msg_color, 'ai': ai_msg_color, 'system': system_msg_color,
-                'code': safe_color(syntax_colors.get('code'), text_color),
-                'code_background': secondary_color,
-            })
+            self.chat_view.set_style(
+                style['font_family'],
+                style['font_size'],
+                {
+                    'user': style['user_msg_color'],
+                    'ai': style['ai_msg_color'],
+                    'system': style['system_msg_color'],
+                    'code': safe_color(syntax_colors.get('code'), style['text_color']),
+                    'code_background': style['secondary_color'],
+                },
+            )
 
-        css = f"""
-        .linux-ai-main #main-box {{
-            background-color: {bg_color};
-            color: {text_color};
-            border-radius: {border_radius}px;
-            padding: 10px;
-            margin: 5px;
-        }}
-
-        .linux-ai-main #header {{
-            background-color: {secondary_color};
-            border-radius: {border_radius}px {border_radius}px 0 0;
-            padding: 8px;
-            margin-bottom: 10px;
-        }}
-
-        .linux-ai-main #chat-area {{
-            background-color: {tertiary_color};
-            border-radius: 5px;
-            padding: 10px;
-            margin-bottom: 10px;
-            min-height: 300px;
-        }}
-
-        .linux-ai-main #input-area {{
-            background-color: {secondary_color};
-            border-radius: 5px;
-            padding: 10px;
-        }}
-
-        .linux-ai-main #main-box textview,
-        .linux-ai-main #main-box textview text {{
-            font-family: {font_family};
-            font-size: {font_size}pt;
-            background-color: {tertiary_color};
-            color: {text_color};
-            border: none;
-            padding: 5px;
-        }}
-
-        .linux-ai-main #main-box button {{
-            background-color: {accent_color};
-            background-image: none;
-            color: {accent_text};
-            text-shadow: none;
-            -gtk-icon-shadow: none;
-            box-shadow: none;
-            border-radius: 5px;
-            padding: 5px 10px;
-            font-family: {font_family};
-            font-size: 10pt;
-            border: none;
-            min-width: 32px;
-        }}
-
-        .linux-ai-main #main-box button:hover {{
-            opacity: 0.9;
-        }}
-
-        .linux-ai-main #main-box button:active {{
-            opacity: 0.7;
-        }}
-
-        .linux-ai-main #main-box button.expert {{
-            background-color: #2196F3;
-            color: {expert_text};
-        }}
-
-        .linux-ai-main #main-box button.expert:hover {{
-            background-color: #0b7dda;
-        }}
-
-        .linux-ai-main #main-box button.danger {{
-            background-color: #f44336;
-            color: {danger_text};
-        }}
-
-        .linux-ai-main #main-box button.danger:hover {{
-            background-color: #da190b;
-        }}
-
-        .linux-ai-main #main-box button:disabled {{
-            background-color: {secondary_color};
-            color: {text_color};
-            opacity: 0.6;
-        }}
-
-        .linux-ai-main #main-box entry {{
-            background-color: {secondary_color};
-            background-image: none;
-            color: {text_color};
-            border-radius: 5px;
-            padding: 5px;
-            font-family: {font_family};
-            font-size: {font_size}pt;
-            border: 1px solid transparent;
-            box-shadow: none;
-            caret-color: {text_color};
-        }}
-
-        .linux-ai-main #main-box entry:focus {{
-            border: 1px solid {accent_color};
-        }}
-
-        .linux-ai-main #main-box entry selection,
-        .linux-ai-main #main-box textview text selection {{
-            background-color: {accent_color};
-            color: {accent_text};
-        }}
-
-        .linux-ai-main #main-box scrolledwindow {{
-            background-color: {tertiary_color};
-            border-radius: 5px;
-            border: none;
-        }}
-
-        .linux-ai-main #main-box .loading {{
-            opacity: 0.7;
-            font-style: italic;
-        }}
-
-        .linux-ai-main #main-box .expert-mode {{
-            border-left: 3px solid #2196F3;
-            padding-left: 10px;
-        }}
-        """
+        css = app_style_css(style)
 
         style_provider.load_from_data(css.encode())
         Gtk.StyleContext.add_provider_for_screen(
@@ -534,7 +361,7 @@ class MainWindow(Gtk.Window):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
         self._style_provider = style_provider
-        logger.debug("CSS style applied with theme: " + self.config.get("app.theme", "dark"))
+        logger.debug("CSS style applied with theme: %s", self.config.get("app.theme", "dark"))
 
     def _create_ui(self):
         """Create the window interface"""
@@ -766,6 +593,136 @@ class MainWindow(Gtk.Window):
         """Open settings window"""
         self._show_config_dialog()
 
+    def _show_config_dialog(self):
+        """Open the settings dialog.
+
+        Widget construction is delegated to build_settings_dialog() so the GTK
+        layout for API / Appearance / Themes / Features lives in one place.
+        This method owns only the window-specific behavior: provider selection,
+        language, expert-mode side effects, saving, and post-save refreshes.
+        """
+        state = build_settings_dialog(self)
+        dialog = state.dialog
+
+        # Keep a handle on the notebook so on_themes_clicked can switch tabs
+        # instead of stacking a second nested dialog.
+        self._settings_notebook = state.notebook
+        # The theme buttons in the dialog operate on this listbox.
+        self.themes_listbox = state.themes_listbox
+
+        # Keep app-global shortcut status in sync while the dialog is open.
+        previous_shortcut_callback = getattr(self.app, 'global_shortcut_status_changed', None)
+        shortcut_status_label = state.global_shortcut_status
+
+        def update_shortcut_status(status):
+            shortcut_status_label.set_text(_(status))
+            if callable(previous_shortcut_callback):
+                previous_shortcut_callback(status)
+
+        self.app.global_shortcut_status_changed = update_shortcut_status
+        dialog.connect(
+            'destroy',
+            lambda widget: setattr(
+                self.app, 'global_shortcut_status_changed', previous_shortcut_callback,
+            ),
+        )
+
+        while True:
+            response = dialog.run()
+            if response != Gtk.ResponseType.OK:
+                break
+
+            try:
+                # ---- assistance mode / local model draft ----
+                current_local_settings = self.config.get_local_model_settings()
+                draft = state.assistance_settings.draft()
+                if (state.assistance_settings.mode.get_active_id() != self.config.get_assistance_mode()
+                        or draft != {key: current_local_settings.get(key) for key in draft}):
+                    # A different mode/model starts a clean session instead of
+                    # mixing answers produced under the previous configuration.
+                    self._cancel_for_session_change()
+                # These save unconditionally: editing only an API key or a
+                # model list must persist even when the mode did not change.
+                state.assistance_settings.save()
+                state.model_settings.save()
+                if not state.credential_settings.save():
+                    continue
+
+                # ---- provider ----
+                new_provider = state.provider_combo.get_active_id()
+                if new_provider:
+                    self.config.set("api.default_provider", new_provider)
+
+                # ---- UI / appearance ----
+                opacity = state.opacity_scale.get_value()
+                self.config.set("app.opacity", opacity)
+                self.set_opacity(opacity)
+
+                always_on_top = state.always_on_top_check.get_active()
+                self.config.set("app.always_on_top", always_on_top)
+                self.set_keep_above(always_on_top)
+
+                # ---- global shortcut ----
+                shortcut = state.global_shortcut_entry.get_text().strip()
+                self.config.set('app.global_shortcut_enabled', state.global_shortcut_check.get_active())
+                self.config.set('app.global_shortcut', shortcut)
+                configure_shortcut = getattr(self.app, 'configure_global_shortcut', None)
+                if configure_shortcut is not None:
+                    status = configure_shortcut(state.global_shortcut_check.get_active(), shortcut)
+                    self._add_system_message(_(status))
+
+                # ---- theme ----
+                theme = state.theme_combo.get_active_id()
+                if theme:
+                    self.config.set("app.theme", theme)
+                    self._setup_style()
+
+                # ---- language ----
+                from .i18n import set_language as set_app_language
+                new_lang = state.lang_combo.get_active_id()
+                if new_lang:
+                    set_app_language(new_lang, self.config)
+
+                # ---- features ----
+                self.config.set("features.screen_capture", state.screen_capture_check.get_active())
+                self.config.set("features.ocr_enabled", state.ocr_check.get_active())
+                self.config.set("features.expert_mode", state.expert_check.get_active())
+                if not state.expert_check.get_active() and self.expert_mode:
+                    self.expert_mode = False
+                    self.config.set("app.expert_mode", False)
+                    self.expert_btn.get_style_context().remove_class("expert")
+                    tray = getattr(self.app, "tray_icon", None)
+                    if tray is not None:
+                        tray.update_expert_mode(False)
+                self._apply_feature_toggles()
+
+                # ---- dock ----
+                self.config.set("app.dock_mode", "dock" if state.dock_check.get_active() else "float")
+                self.config.set("app.dock_edge", state.dock_edge_combo.get_active_id() or "right")
+                self._reapply_dock()
+
+                self.config.save()
+                self._refresh_mode_status()
+                self.show_notification("Linux AI Assistant", _("Settings saved successfully"))
+
+                break
+
+            except ValueError as error:
+                warning = Gtk.MessageDialog(
+                    transient_for=dialog, modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK, text=str(error),
+                )
+                warning.run()
+                warning.destroy()
+
+        dialog.destroy()
+        self._settings_notebook = None
+        # O diálogo foi destruído: não deixar widgets pendentes a um widget
+        # morto (qualquer uso futuro operaria sobre o objeto destruído).
+        if hasattr(self, 'themes_listbox'):
+            self.themes_listbox = None
+
     def _get_document_store(self):
         if self._document_store is None:
             self._document_store = DocumentStore()
@@ -942,7 +899,8 @@ class MainWindow(Gtk.Window):
 
     def on_remove_theme_clicked(self, button):
         """Remove the selected theme"""
-        selected_row = self.themes_listbox.get_selected_row()
+        listbox = getattr(self, 'themes_listbox', None)
+        selected_row = listbox.get_selected_row() if listbox is not None else None
         if not selected_row:
             self.show_notification("Linux AI Assistant", _("No theme selected"))
             return
@@ -989,38 +947,10 @@ class MainWindow(Gtk.Window):
                 self.show_notification("Linux AI Assistant", f"Error removing theme: {e}")
 
     def _populate_themes_list(self):
-        """Populate the themes list"""
-        # Clear list
-        for child in self.themes_listbox.get_children():
-            self.themes_listbox.remove(child)
-
-        # Get available themes
-        available_themes = self.config.get_available_themes()
-
-        for theme_name in available_themes:
-            theme_info = self.config.get_theme_info(theme_name)
-            display_name = theme_info.get("name", theme_name) if theme_info else theme_name
-            description = theme_info.get("description", "") if theme_info else ""
-
-            row = Gtk.ListBoxRow()
-            # Keep the file stem on the row: the visible label is the
-            # display name, which may differ from the file name.
-            row._theme_id = theme_name
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-
-            name_label = Gtk.Label(label=display_name)
-            name_label.set_halign(Gtk.Align.START)
-            box.pack_start(name_label, False, False, 0)
-
-            desc_label = Gtk.Label(label=description)
-            desc_label.set_halign(Gtk.Align.START)
-            desc_label.set_xalign(0)
-            desc_label.get_style_context().add_class(Gtk.STYLE_CLASS_DIM_LABEL)
-            box.pack_start(desc_label, False, False, 0)
-
-            row.add(box)
-            self.themes_listbox.add(row)
-            row.show_all()
+        """Populate the themes listbox from the configured themes."""
+        listbox = getattr(self, 'themes_listbox', None)
+        if listbox is not None:
+            populate_themes_list(listbox, self.config)
 
     def on_history_clicked(self, item):
         """Show conversation history"""
@@ -1088,313 +1018,6 @@ class MainWindow(Gtk.Window):
 
     def _show_history_dialog(self):
         show_conversations(self)
-
-    def _show_config_dialog(self):
-        """Show settings dialog"""
-        dialog = Gtk.Dialog(
-            title=_("Settings - Linux AI Assistant"),
-            parent=self,
-            flags=0,
-            buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
-        )
-
-        dialog.set_default_size(500, 400)
-
-        # Create dialog content
-        content = dialog.get_content_area()
-
-        # Notebook for sections
-        notebook = Gtk.Notebook()
-        content.pack_start(notebook, True, True, 0)
-        # Kept so on_themes_clicked can jump to the Themes tab instead of
-        # reopening a second (nested) dialog.
-        self._settings_notebook = notebook
-
-        def add_settings_page(box, title):
-            # Credential warnings and model lists can exceed a small desktop.
-            # Keep the dialog's confirmation button outside the scrolling page.
-            scroll = Gtk.ScrolledWindow()
-            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scroll.add(box)
-            notebook.append_page(scroll, Gtk.Label(label=_(title)))
-
-        # API section
-        api_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        api_box.set_border_width(10)
-
-        api_label = Gtk.Label(label="<b>" + _("API Configuration") + "</b>")
-        api_label.set_use_markup(True)
-        api_box.pack_start(api_label, False, False, 0)
-
-        # Provider
-        provider_label = Gtk.Label(label=_("AI Provider:"))
-        api_box.pack_start(provider_label, False, False, 0)
-
-        provider_combo = Gtk.ComboBoxText()
-        for provider_name in self.config.get("api.providers", {}).keys():
-            provider_combo.append(provider_name, provider_name)
-        current_provider = self.config.get("api.default_provider", "openrouter")
-        provider_combo.set_active_id(current_provider)
-        api_box.pack_start(provider_combo, False, False, 0)
-
-        credential_settings = APIKeySettings(self.config, provider_combo)
-        api_box.pack_start(credential_settings, False, False, 0)
-
-        add_settings_page(api_box, "API")
-        assistance_settings = ProviderSettings(self.config, self.ai_client)
-        model_settings = RemoteModelSettings(self.config, self.ai_client, provider_combo,
-                                             assistance_settings.mode, credential_settings=credential_settings)
-        api_box.pack_start(model_settings, False, False, 0)
-        add_settings_page(assistance_settings, "Assistance")
-
-        # Appearance section
-        ui_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        ui_box.set_border_width(10)
-
-        ui_label = Gtk.Label(label="<b>" + _("UI Configuration") + "</b>")
-        ui_label.set_use_markup(True)
-        ui_box.pack_start(ui_label, False, False, 0)
-
-        # Opacity
-        opacity_label = Gtk.Label(label=_("Window opacity:"))
-        ui_box.pack_start(opacity_label, False, False, 0)
-
-        opacity_scale = Gtk.Scale.new_with_range(
-            Gtk.Orientation.HORIZONTAL,
-            0.1, 1.0, 0.1
-        )
-        opacity_scale.set_value(self.config.get("app.opacity", 0.9))
-        ui_box.pack_start(opacity_scale, False, False, 0)
-
-        # Always visible
-        always_on_top_check = Gtk.CheckButton(label=_("Always visible"))
-        always_on_top_check.set_active(self.config.get("app.always_on_top", True))
-        ui_box.pack_start(always_on_top_check, False, False, 0)
-
-        global_shortcut_check = Gtk.CheckButton(label=_("Enable global shortcut to open the assistant"))
-        global_shortcut_check.set_active(self.config.get('app.global_shortcut_enabled', False))
-        ui_box.pack_start(global_shortcut_check, False, False, 0)
-        global_shortcut_entry = Gtk.Entry()
-        global_shortcut_entry.set_max_length(100)
-        global_shortcut_entry.set_text(self.config.get('app.global_shortcut', '<Ctrl><Alt>space'))
-        global_shortcut_entry.set_placeholder_text('<Ctrl><Alt>space')
-        ui_box.pack_start(global_shortcut_entry, False, False, 0)
-        global_shortcut_status = Gtk.Label(label=_(getattr(self.app, 'global_shortcut_status', 'Global shortcut disabled')),
-                                          wrap=True, xalign=0)
-        ui_box.pack_start(global_shortcut_status, False, False, 0)
-        previous_shortcut_callback = getattr(self.app, 'global_shortcut_status_changed', None)
-
-        def update_shortcut_status(status):
-            global_shortcut_status.set_text(_(status))
-            if callable(previous_shortcut_callback):
-                previous_shortcut_callback(status)
-
-        self.app.global_shortcut_status_changed = update_shortcut_status
-        dialog.connect('destroy', lambda widget: setattr(self.app, 'global_shortcut_status_changed', previous_shortcut_callback))
-
-        # Theme
-        theme_label = Gtk.Label(label=_("Theme:"))
-        ui_box.pack_start(theme_label, False, False, 0)
-
-        theme_combo = Gtk.ComboBoxText()
-        # Load available themes
-        available_themes = self.config.get_available_themes()
-        for theme in available_themes:
-            theme_info = self.config.get_theme_info(theme)
-            display_name = theme_info.get("name", theme) if theme_info else theme
-            theme_combo.append(theme, display_name)
-
-        theme_combo.set_active_id(self.config.get("app.theme", "dark"))
-        ui_box.pack_start(theme_combo, False, False, 0)
-
-        # Language selector: qualquer língua não suportada recai em inglês
-        # (i18n.normalize_language); aqui o utilizador redefine explicitamente.
-        lang_label = Gtk.Label(label=_("Language:"))
-        ui_box.pack_start(lang_label, False, False, 0)
-
-        from .i18n import available_languages, LANGUAGE_NAMES
-        lang_combo = Gtk.ComboBoxText()
-        for code in available_languages():
-            lang_combo.append(code, LANGUAGE_NAMES.get(code, code))
-        lang_combo.set_active_id(get_language() if get_language() in
-                                 available_languages() else "en")
-        ui_box.pack_start(lang_combo, False, False, 0)
-
-        # Button to manage themes
-        themes_btn = Gtk.Button(label=_("Manage Themes"))
-        themes_btn.connect("clicked", self.on_themes_clicked)
-        ui_box.pack_start(themes_btn, False, False, 0)
-
-        # Docked mode (dock)
-        dock_check = Gtk.CheckButton(label=_("Docked (reserves screen space)"))
-        dock_check.set_active(self.config.get("app.dock_mode", "float") == "dock")
-        ui_box.pack_start(dock_check, False, False, 0)
-
-        dock_edge_label = Gtk.Label(label=_("Dock edge:"))
-        ui_box.pack_start(dock_edge_label, False, False, 0)
-
-        dock_edge_combo = Gtk.ComboBoxText()
-        for edge_id, edge_name in [("right", _("Right")), ("left", _("Left")),
-                                   ("top", _("Top")), ("bottom", _("Bottom"))]:
-            dock_edge_combo.append(edge_id, edge_name)
-        dock_edge_combo.set_active_id(self.config.get("app.dock_edge", "right"))
-        ui_box.pack_start(dock_edge_combo, False, False, 0)
-
-        add_settings_page(ui_box, "Appearance")
-
-        # Themes section
-        themes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        themes_box.set_border_width(10)
-
-        themes_label = Gtk.Label(label="<b>" + _("Custom Themes") + "</b>")
-        themes_label.set_use_markup(True)
-        themes_box.pack_start(themes_label, False, False, 0)
-
-        # Theme list
-        self.themes_listbox = Gtk.ListBox()
-        # SINGLE (not NONE): with NONE the rows can never be selected and
-        # "Remove Theme" always reports "No theme selected".
-        self.themes_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self._populate_themes_list()
-        themes_box.pack_start(self.themes_listbox, True, True, 0)
-
-        # Theme buttons
-        theme_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-
-        add_theme_btn = Gtk.Button(label=_("Add Theme"))
-        add_theme_btn.connect("clicked", self.on_add_theme_clicked)
-        theme_buttons.pack_start(add_theme_btn, False, False, 0)
-
-        remove_theme_btn = Gtk.Button(label=_("Remove Theme"))
-        remove_theme_btn.connect("clicked", self.on_remove_theme_clicked)
-        theme_buttons.pack_start(remove_theme_btn, False, False, 0)
-
-        themes_box.pack_start(theme_buttons, False, False, 0)
-
-        add_settings_page(themes_box, "Themes")
-
-        # Features section
-        features_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        features_box.set_border_width(10)
-
-        features_label = Gtk.Label(label="<b>" + _("Features") + "</b>")
-        features_label.set_use_markup(True)
-        features_box.pack_start(features_label, False, False, 0)
-
-        # Screen capture
-        screen_capture_check = Gtk.CheckButton(label=_("Screen capture"))
-        screen_capture_check.set_active(self.config.get("features.screen_capture", True))
-        features_box.pack_start(screen_capture_check, False, False, 0)
-
-        # OCR
-        ocr_check = Gtk.CheckButton(label=_("OCR (text recognition)"))
-        ocr_check.set_active(self.config.get("features.ocr_enabled", True))
-        features_box.pack_start(ocr_check, False, False, 0)
-
-        # Expert mode button visibility (the active/inactive mode is toggled
-        # from the window button or the tray menu and stored in app.expert_mode)
-        expert_check = Gtk.CheckButton(label=_("Show Expert Mode button"))
-        expert_check.set_active(self.config.get("features.expert_mode", True))
-        features_box.pack_start(expert_check, False, False, 0)
-
-        add_settings_page(features_box, "Features")
-
-        # Show dialog
-        dialog.show_all()
-
-        # Validate the draft before saving; Cancel never persists probe settings.
-        while True:
-            response = dialog.run()
-            if response != Gtk.ResponseType.OK:
-                break
-            try:
-                if (assistance_settings.mode.get_active_id() != self.config.get_assistance_mode()
-                        or assistance_settings.draft() != {
-                            key: self.config.get_local_model_settings()[key]
-                            for key in assistance_settings.draft()
-                        }):
-                    self._cancel_for_session_change()
-                assistance_settings.save()
-                model_settings.save()
-                if not credential_settings.save():
-                    continue
-                break
-            except ValueError as error:
-                warning = Gtk.MessageDialog(transient_for=dialog, modal=True,
-                                            message_type=Gtk.MessageType.ERROR,
-                                            buttons=Gtk.ButtonsType.OK, text=str(error))
-                warning.run()
-                warning.destroy()
-        if response == Gtk.ResponseType.OK:
-            # Save provider (get_active_id() is None when nothing matches)
-            new_provider = provider_combo.get_active_id()
-            if new_provider:
-                self.config.set("api.default_provider", new_provider)
-
-            # Save opacity
-            opacity = opacity_scale.get_value()
-            self.config.set("app.opacity", opacity)
-            self.set_opacity(opacity)
-
-            # Save always on top
-            always_on_top = always_on_top_check.get_active()
-            self.config.set("app.always_on_top", always_on_top)
-            self.set_keep_above(always_on_top)
-            shortcut = global_shortcut_entry.get_text().strip()
-            self.config.set('app.global_shortcut_enabled', global_shortcut_check.get_active())
-            self.config.set('app.global_shortcut', shortcut)
-            configure_shortcut = getattr(self.app, 'configure_global_shortcut', None)
-            if configure_shortcut is not None:
-                status = configure_shortcut(global_shortcut_check.get_active(), shortcut)
-                self._add_system_message(_(status))
-
-            # Save theme
-            theme = theme_combo.get_active_id()
-            if theme:
-                self.config.set("app.theme", theme)
-                # Rebuild the CSS so the new theme takes effect now
-                self._setup_style()
-
-            # Save language (normalizada: não suportada -> inglês). Os textos
-            # novos (mensagens, diálogos) aplicam-se de imediato; os rótulos
-            # já desenhados aplicam-se após reiniciar.
-            from .i18n import set_language as set_app_language
-            new_lang = lang_combo.get_active_id()
-            if new_lang:
-                set_app_language(new_lang, self.config)
-
-            # Save features
-            self.config.set("features.screen_capture", screen_capture_check.get_active())
-            self.config.set("features.ocr_enabled", ocr_check.get_active())
-            self.config.set("features.expert_mode", expert_check.get_active())
-            if not expert_check.get_active() and self.expert_mode:
-                # Hiding the button must not leave an invisible active mode.
-                self.expert_mode = False
-                self.config.set("app.expert_mode", False)
-                self.expert_btn.get_style_context().remove_class("expert")
-                tray = getattr(self.app, "tray_icon", None)
-                if tray is not None:
-                    tray.update_expert_mode(False)
-            self._apply_feature_toggles()
-
-            # Save docked mode
-            self.config.set("app.dock_mode", "dock" if dock_check.get_active() else "float")
-            self.config.set("app.dock_edge", dock_edge_combo.get_active_id() or "right")
-            # Apply the new dock/float setting immediately
-            self._reapply_dock()
-
-            # Save settings
-            self.config.save()
-            self._refresh_mode_status()
-
-            # Show notification
-            self.show_notification("Linux AI Assistant", _("Settings saved successfully"))
-
-        dialog.destroy()
-        self._settings_notebook = None
-        # O diálogo foi destruído: não deixar o listbox pendente a um widget
-        # morto (qualquer uso futuro operaria sobre o objeto destruído).
-        self.themes_listbox = None
 
     def toggle_visibility(self):
         """Alterna a visibilidade da janela e sincroniza o estado visível.
@@ -1693,44 +1316,40 @@ class MainWindow(Gtk.Window):
             return
 
         image = getattr(self, '_pending_image', None)
-        text = self.input_entry.get_text().strip()
-        if not text and image is not None:
-            text = _("Describe this image.")
-        if not text:
-            return
 
-        if len(text) > MAX_MESSAGE_CHARS:
-            self._add_system_message(_("Message exceeds the local history limit. Shorten it before sending."))
-            return
+        def confirm_image(attachment, destination_provider, destination_model):
+            """Ask only when the destination changed since the last approval."""
+            if (destination_provider, destination_model) == getattr(self, '_pending_image_destination', None):
+                return True
+            if not review_image(self, attachment, destination_provider, destination_model):
+                return False
+            self._pending_image_destination = (destination_provider, destination_model)
+            return True
 
+        documents_check = getattr(self, 'documents_check', None)
         try:
-            provider = self.ai_client.active_provider()
-            route = {'provider': provider, 'ready': self.ai_client.provider_ready(provider)}
-        except AIProviderError:
-            route = {'provider': None, 'ready': False}
-        images = ()
-        document_context = ''
-        try:
-            if image is not None:
-                provider, model = self.ai_client.validate_image_request((image,))
-                if not route['ready']:
-                    raise AIImageRequestError(_("Configure a usable OpenRouter provider before sending an image."))
-                if ((provider, model) != getattr(self, '_pending_image_destination', None)
-                        and not review_image(self, image, provider, model)):
-                    return
-                route.update(provider=provider, model=model)
-                images = (image,)
-            documents_check = getattr(self, 'documents_check', None)
-            if documents_check is not None and documents_check.get_active():
-                document_context = self._get_document_store().context(text, max_chars=MAX_DOCUMENT_CONTEXT_CHARS)
-                if not document_context:
-                    self._add_system_message(_("No matching passages in the selected documents. Add documents or refine your question."))
-                    return
-                if route['ready'] and not review_document_context(self, document_context, route['provider']):
-                    return
-        except (OSError, ValueError, AIProviderError) as error:
+            plan = prepare_request(
+                self.input_entry.get_text(),
+                ai_client=self.ai_client,
+                image=image,
+                documents_enabled=documents_check is not None and documents_check.get_active(),
+                read_document_context=lambda question, max_chars:
+                    self._get_document_store().context(question, max_chars=max_chars),
+                confirm_image=confirm_image,
+                confirm_documents=lambda context, provider:
+                    review_document_context(self, context, provider),
+            )
+        except (OSError, ValueError, AIProviderError, RequestPreparationError) as error:
             self._add_system_message(str(error))
             return
+        if plan is None:
+            return
+        text = plan.text
+        images = plan.images
+        document_context = plan.document_context
+        route = {'provider': plan.provider, 'ready': plan.provider_ready}
+        if images:
+            route['model'] = plan.model
 
         try:
             history_text = text
