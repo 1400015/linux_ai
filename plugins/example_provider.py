@@ -68,7 +68,7 @@ def register_provider(ai_client):
             return data.get("response", "")
 
         except Exception as e:
-            logger.error(f"Erro no provedor customizado: {e}")
+            logger.error("Erro no provedor customizado: %s", e)
             return None
 
     def my_custom_provider_stream(messages, model, api_key, base_url, temperature, max_tokens, timeout):
@@ -121,7 +121,7 @@ def register_provider(ai_client):
                                 except json.JSONDecodeError:
                                     continue
         except Exception as e:
-            logger.error(f"Erro no stream do provedor customizado: {e}")
+            logger.error("Erro no stream do provedor customizado: %s", e)
             yield f"Erro: {e}"
 
     # Registrar o provedor

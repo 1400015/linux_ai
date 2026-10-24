@@ -56,7 +56,7 @@ class TestKnowledgeBaseConsistency(unittest.TestCase):
                 self.assertTrue(kb.distinct, family)
 
     def test_urls_are_https(self):
-        for family, kb in KNOWLEDGE_BASE.items():
+        for _, kb in KNOWLEDGE_BASE.items():
             for url in (kb.wiki_url, *kb.docs_urls):
                 if url:
                     self.assertTrue(url.startswith("https://"), url)

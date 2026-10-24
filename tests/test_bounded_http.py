@@ -313,7 +313,7 @@ class BoundedHTTPShimTests(unittest.TestCase):
     def test_request_network_failure_kind_retains_no_original_exception(self):
         for error_type, expected in ((requests.exceptions.Timeout, "timeout"),
                                      (requests.exceptions.ConnectionError, "connection")):
-            def request():
+            def request(error_type=error_type):
                 raise error_type("https://synthetic-url/?secret=must-not-be-reported")
 
             with self.subTest(error_type=error_type), self.assertRaises(HTTPReadError) as result:

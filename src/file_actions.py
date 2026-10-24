@@ -330,29 +330,6 @@ def confirm_and_write(parent, block, allowed_dirs=None, journal=None, session_id
         return ("error", str(e))
 
 
-def offer_file_blocks(parent, reply_text, notify, allowed_dirs=None, journal=None, session_id=''):
-    """Detect file blocks in the response and offer writing.
-
-    Ignores replies with more than 3 blocks (probably just
-    code examples). `notify(msg)` is called in the UI context.
-    `allowed_dirs` is forwarded to confirm_and_write() as the sandbox.
-    """
-    blocks = FileBlock.parse_all(reply_text)
-    if not blocks:
-        return
-    if len(blocks) > 3:
-        return
-    for block in blocks:
-        try:
-            status, msg = confirm_and_write(parent, block, allowed_dirs, journal, session_id)
-        except Exception as e:
-            status, msg = "error", str(e)
-        if status == "written":
-            notify(_("File written: {path}").format(path=msg))
-        elif status == "error":
-            notify(_("Error writing file: {detail}").format(detail=msg))
-
-
 class FileOffer:
     """Review sequentially on GTK and perform file I/O in workers.
 

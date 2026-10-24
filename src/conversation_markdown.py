@@ -78,7 +78,7 @@ def import_markdown(text, max_messages, max_message_chars):
         raise ValueError("Conversation Markdown title does not match its metadata")
     position += len(heading)
     messages = []
-    for unused in range(count):
+    for _ in range(count):
         metadata, position = _metadata(text, position, MESSAGE_PREFIX)
         if set(metadata) not in ({"role", "characters"}, {"role", "characters", "timestamp"}):
             raise ValueError("Invalid conversation Markdown message metadata")

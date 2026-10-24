@@ -192,8 +192,10 @@ def _xrandr_snapshot(query, verbose):
                 rows = [line.split("Transform:", 1)[1]] + lines[index + 1:index + 3]
                 try:
                     matrix = tuple(float(item) for row in rows for item in row.split())
-                except ValueError:
-                    raise ValueError("Invalid RandR transform.")
+                except ValueError as error:
+                    # Keep the failing parse as the cause; the message below is
+                    # the one callers show to the user.
+                    raise ValueError("Invalid RandR transform.") from error
                 if len(matrix) != 9 or not all(_number(item, -32768, 32768) for item in matrix):
                     raise ValueError("Invalid RandR transform.")
                 # RandR stores transforms as 16.16 fixed point, while xrandr

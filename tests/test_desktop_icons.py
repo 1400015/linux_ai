@@ -40,7 +40,7 @@ class TestGtkDesktopIcons(unittest.TestCase):
             gi.require_version('Gtk', '3.0')
             from gi.repository import Gtk
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         if not Gtk.init_check()[0]:
             raise unittest.SkipTest('GTK display unavailable; run with xvfb-run')
         cls.Gtk = Gtk

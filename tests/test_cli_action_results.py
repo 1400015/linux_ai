@@ -242,6 +242,31 @@ class TestCliActionResults(unittest.TestCase):
         self.assertEqual(app.conversation_history, [])
         app._save_history.assert_not_called()
 
+    def test_config_set_missing_arguments_fails_with_exit_one(self):
+        # The ✗ used to be followed by a bare `return`, so the shell saw 0 and
+        # `config set && ...` chains treated the failed write as a success.
+        app = CLIApp.__new__(CLIApp)
+        app.config = Mock()
+        for key, value in ((None, None), ("context.max_messages", None), (None, "30")):
+            with self.subTest(key=key, value=value):
+                with patch("sys.stdout", io.StringIO()) as output:
+                    code = app.handle_config(SimpleNamespace(
+                        config_command="set", key=key, value=value))
+                self.assertEqual(code, 1)
+                self.assertIn("✗", output.getvalue())
+        app.config.set.assert_not_called()
+        app.config.flush.assert_not_called()
+
+    def test_config_set_success_returns_zero(self):
+        app = CLIApp.__new__(CLIApp)
+        app.config = Mock()
+        with patch("sys.stdout", io.StringIO()):
+            code = app.handle_config(SimpleNamespace(
+                config_command="set", key="context.max_messages", value="30"))
+        self.assertEqual(code, 0)
+        app.config.set.assert_called_once_with("context.max_messages", 30)
+        app.config.flush.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

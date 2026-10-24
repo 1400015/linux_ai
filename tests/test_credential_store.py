@@ -10,6 +10,8 @@ from src.credential_store import APPLICATION_ID, CredentialStoreError, SecretSer
 PROFILE = 'test-profile-47'
 PROVIDER = 'openrouter'
 SECRET = 'synthetic-credential-not-for-production-ß'
+# Evaluated once: a call in a default argument is what B008 rejects.
+SECRET_BYTES = SECRET.encode('utf-8')
 
 
 class LockedException(Exception):
@@ -83,7 +85,7 @@ class FakeCollection:
         self.creates.append((label, dict(attributes), secret, replace))
         return self.add_item(attributes, secret)
 
-    def add_item(self, attributes, secret=SECRET.encode('utf-8'), locked=False):
+    def add_item(self, attributes, secret=SECRET_BYTES, locked=False):
         item = FakeItem(self, attributes, secret, locked=locked)
         self.items.append(item)
         return item
@@ -277,10 +279,10 @@ class CredentialStoreTests(unittest.TestCase):
     def test_invalid_identifiers_and_credentials_do_not_contact_backend(self):
         for identifier in ('', 'contains spaces', '../path', '-prefix', 'ß', 'x' * 129, None):
             with self.subTest(identifier_type=type(identifier).__name__):
-                self.assert_reason('invalid', lambda: SecretServiceCredentialStore(identifier))
-                self.assert_reason('invalid', lambda: self.store.lookup(identifier))
+                self.assert_reason('invalid', lambda identifier=identifier: SecretServiceCredentialStore(identifier))
+                self.assert_reason('invalid', lambda identifier=identifier: self.store.lookup(identifier))
         for secret in ('', None, b'bytes', '\ud800'):
-            self.assert_reason('invalid', lambda: self.store.store(PROVIDER, secret))
+            self.assert_reason('invalid', lambda secret=secret: self.store.store(PROVIDER, secret))
         self.connector.assert_not_called()
 
     def test_backend_error_contents_are_suppressed_and_reason_is_stable(self):

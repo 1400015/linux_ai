@@ -35,10 +35,10 @@ class TestBackupPolicy(unittest.TestCase):
 
     def test_helpers_reject_backup_targets_before_opening_files(self):
         for path in ACCOUNT_BACKUPS:
-            operations = (lambda: write_file('/fixture/source', path, None, (0, 0)),
-                          lambda: remove_file(path, 'digest', (0, 0)),
-                          lambda: inspect_file(path, 'digest', (0, 0)),
-                          lambda: _backup_file(999, '/etc/hostname', path))
+            operations = (lambda path=path: write_file('/fixture/source', path, None, (0, 0)),
+                          lambda path=path: remove_file(path, 'digest', (0, 0)),
+                          lambda path=path: inspect_file(path, 'digest', (0, 0)),
+                          lambda path=path: _backup_file(999, '/etc/hostname', path))
             for index, operation in enumerate(operations):
                 with self.subTest(path=path, operation=index), \
                         patch('src.privileged_write.os.open') as opening:
@@ -64,7 +64,7 @@ class TestBackupPolicy(unittest.TestCase):
                         patch.object(journal, '_identity', return_value=(0, 0)), \
                         patch('src.change_journal.file_digest') as digest, \
                         patch.object(journal, '_write') as writing:
-                    for operation in (lambda: journal.apply('/fixture/source', path, None, ['/']),
+                    for operation in (lambda path=path: journal.apply('/fixture/source', path, None, ['/']),
                                       lambda: journal.preview_restore('fixture', ['/']),
                                       lambda: journal.restore('fixture', ['/'])):
                         with self.assertRaises(PermissionError):

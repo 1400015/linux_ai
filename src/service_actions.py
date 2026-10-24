@@ -188,9 +188,11 @@ class ServiceService:
                 try:
                     after = self.status(fresh.name)
                     break
-                except (OSError, ValueError):
+                except (OSError, ValueError) as error:
                     if time.monotonic() >= deadline:
-                        raise ValueError('The enabled service did not enter supervision')
+                        # The last failure is the reason supervision never
+                        # appeared; keep it as the cause of the timeout.
+                        raise ValueError('The enabled service did not enter supervision') from error
                     time.sleep(0.2)
         else:
             after = self.status(fresh.name)

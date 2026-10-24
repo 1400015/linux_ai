@@ -1,0 +1,20 @@
+# Keeps the `>=` ranges in requirements.txt/pyproject.toml honest: Dependabot
+# opens a PR when a newer release exists (including security fixes), which is
+# what makes a deliberately unpinned dependency set safe to run.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"

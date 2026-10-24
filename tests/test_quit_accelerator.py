@@ -74,7 +74,7 @@ class TestQuitAccelerator(unittest.TestCase):
             if not Gtk.init_check()[0]:
                 raise unittest.SkipTest('GTK display unavailable')
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
 
     def test_ctrl_q_is_handled_and_closes_real_application_without_accelerator_crash(self):
         environment = os.environ.copy()

@@ -301,8 +301,8 @@ class TestRealPortalBus(unittest.TestCase):
     def setUpClass(cls):
         try:
             from gi.repository import Gio  # noqa: F401
-        except ImportError:
-            raise unittest.SkipTest("Gio unavailable")
+        except ImportError as error:
+            raise unittest.SkipTest("Gio unavailable") from error
         if not shutil.which("dbus-run-session"):
             raise unittest.SkipTest("dbus-run-session unavailable")
 

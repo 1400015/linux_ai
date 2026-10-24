@@ -17,8 +17,6 @@ TRANSLATIONS = {
         "Note: the {var} environment variable overrides this key.":
             "Nota: a variável de ambiente {var} substitui esta chave.",
         "Reload saved keys": "Recarregar chaves guardadas",
-        "Copy effective key to config": "Copiar chave efetiva para o config",
-        "Key copied to config.json": "Chave copiada para o config.json",
         "User": "Utilizador",
         "AI": "IA",
         "System": "Sistema",
@@ -65,7 +63,6 @@ TRANSLATIONS = {
         "Settings saved successfully": "Configurações guardadas com sucesso",
         "Settings - Linux AI Assistant": "Configurações - Linux AI Assistant",
         "Statistics - Linux AI Assistant": "Estatísticas - Linux AI Assistant",
-        "Conversation History - Linux AI Assistant": "Histórico de Conversas - Linux AI Assistant",
         "New file": "Novo ficheiro",
         "Proposed changes": "Alterações propostas",
         "Cancel": "Cancelar",
@@ -117,6 +114,419 @@ TRANSLATIONS = {
             "AVISO: pré-visualização truncada a 1 MB; o ficheiro é maior e este diff NÃO está completo.",
         "File changed since the preview was shown; review it again: {path}":
             "O ficheiro mudou desde a pré-visualização; reveja novamente: {path}",
+
+        # --- display changes, conversations and diagnostics (ex-fragment) ---
+        "Keep this display change? [y/N] ": "Manter esta alteração do monitor? [s/N] ",
+        "Keep display configuration?": "Manter configuração do monitor?",
+        "Revert": "Reverter",
+        "Keep": "Manter",
+        "Reverting in {seconds} seconds unless you keep this configuration.":
+            "A configuração será revertida dentro de {seconds} segundos se não a mantiveres.",
+        "Conversations": "Conversas",
+        "New conversation": "Nova conversa",
+        "Previous conversations": "Histórico anterior",
+        "Conversation name": "Nome da conversa",
+        "Search all conversations": "Pesquisar em todas as conversas",
+        "Archived": "Arquivada",
+        "Resume": "Retomar",
+        "Rename": "Renomear",
+        "Archive / restore": "Arquivar / restaurar",
+        "Delete": "Eliminar",
+        "Delete this conversation?": "Eliminar esta conversa?",
+        "Export conversation": "Exportar conversa",
+        "Export Markdown": "Exportar Markdown",
+        "Export JSON": "Exportar JSON",
+        "No matches": "Sem resultados",
+        "Assistance": "Assistência",
+        "Assistance mode": "Modo de assistência",
+        "Automatic (local guides if unavailable)": "Automático (guias locais se a IA estiver indisponível)",
+        "Local guides (no AI model)": "Guias locais (sem modelo de IA)",
+        "Local AI model": "Modelo de IA local",
+        "Remote AI provider": "Fornecedor de IA remoto",
+        "Local guides available": "Guias locais disponíveis",
+        "Provider is not configured": "Fornecedor não configurado",
+        "Configured; connection not tested": "Configurado; ligação não testada",
+        "Local model ready": "Modelo local disponível",
+        "Local server is unavailable": "Servidor local indisponível",
+        "Selected model is not installed": "O modelo selecionado não está instalado",
+        "Configuration is incompatible with this mode": "Configuração incompatível com este modo",
+        "Connection test failed": "O teste de ligação falhou",
+        "Local server URL": "Endereço do servidor local",
+        "Local model": "Modelo local",
+        "Strict local mode (loopback server and local models)": "Modo local estrito (servidor nesta máquina e modelos locais)",
+        "Models must already be installed. A localhost address alone does not guarantee local inference.":
+            "Os modelos precisam de estar instalados. Um endereço localhost, por si só, não garante inferência local.",
+        "Test connection and list installed models": "Testar ligação e listar modelos instalados",
+        "Connection not tested": "Ligação não testada",
+        "Testing local connection…": "A testar a ligação local…",
+        "Showing the latest 100 messages. Export to view the full conversation.": "A mostrar as últimas 100 mensagens. Exporta para consultar a conversa completa.",
+        "Diagnostic report": "Relatório de diagnóstico",
+        "File changes": "Alterações a ficheiros",
+        "Path": "Caminho",
+        "Created": "Criada em",
+        "Conversation": "Conversa",
+        "Original SHA256": "SHA256 original",
+        "Written SHA256": "SHA256 escrito",
+        "Original backup": "Cópia original",
+        "Recovered": "Reposta em",
+        "Recovery backup": "Cópia de recuperação",
+        "Describe the symptom": "Descreve o sintoma",
+        "Paste a log excerpt (up to 64 KiB)": "Cola um excerto do registo (até 64 KiB)",
+        "Select local read checks to collect. No checks are selected by default.": "Seleciona as verificações locais de leitura a recolher. Nenhuma vem selecionada.",
+        "Prepare report": "Preparar relatório",
+        "Export report": "Exportar relatório",
+        "Reports stay on this machine. Review redacted data before sharing; unknown secrets may remain.":
+            "Os relatórios ficam nesta máquina. Revê os dados antes de partilhar; podem restar segredos não reconhecidos.",
+        "Diagnostic input exceeds 64 KiB": "A entrada de diagnóstico excede 64 KiB",
+        "Preparing local report…": "A preparar o relatório local…",
+        "Review the preview before export. Automatic redaction is partial.":
+            "Revê o resultado antes de exportar. A ocultação automática é parcial.",
+        "Report exported: {path}": "Relatório exportado: {path}",
+        "Show changes from all conversations": "Mostrar alterações de todas as conversas",
+        "Include archived file changes": "Incluir alterações de ficheiros arquivadas",
+        "Archive": "Arquivo",
+        "uncertain": "incerta",
+        "recovery_pending": "recuperação pendente",
+        "recovery_uncertain": "recuperação incerta",
+        "Review recovery": "Rever recuperação",
+        "Only approved file writes are recorded. Command effects are not automatically reversible.":
+            "Só são registadas escritas de ficheiros aprovadas. Os efeitos de comandos não são automaticamente reversíveis.",
+        "No file changes recorded.": "Sem alterações a ficheiros registadas.",
+        "Remove this newly created file and retain a recovery copy.":
+            "Remover este ficheiro criado e conservar uma cópia de recuperação.",
+        "Backup exceeds the recovery preview limit (1 MiB). Review it manually.":
+            "A cópia de segurança excede o limite de pré-visualização (1 MiB). Revê-a manualmente.",
+        "Confirm file recovery": "Confirmar recuperação do ficheiro",
+        "Restore file": "Repor ficheiro",
+        "File recovered. Recovery backup: {path}": "Ficheiro reposto. Cópia de recuperação: {path}",
+        "Looking up Wi-Fi networks…": "A procurar redes Wi-Fi…",
+        "Looking up printers…": "A procurar impressoras…",
+        "Looking up scanners…": "A procurar scanners…",
+        "Available Wi-Fi networks": "Redes Wi-Fi disponíveis",
+        "Password": "Palavra-passe",
+        "Connect": "Ligar",
+        "The password is sent only to NetworkManager and is not written in the chat.":
+            "A palavra-passe segue só para o NetworkManager e não fica escrita na conversa.",
+        "No Wi-Fi networks found.": "Não encontrei redes Wi-Fi.",
+        "Connected to {ssid}.": "Ligado a {ssid}.",
+        "Could not connect to {ssid}.": "Não foi possível ligar a {ssid}.",
+        "Add printer": "Adicionar impressora",
+        "Queue name": "Nome da fila",
+        "No printers found.": "Não encontrei impressoras.",
+        "This device needs a driver. I will not add it automatically.":
+            "Este aparelho precisa de um driver. Não o adiciono automaticamente.",
+        "Printer {name} added.": "Impressora {name} adicionada.",
+        "Could not add printer {name}.": "Não foi possível adicionar a impressora {name}.",
+        "No scanners found.": "Não encontrei scanners.",
+        "Install {pkg}": "Instalar {pkg}",
+        "Could not install {pkg}.": "Não foi possível instalar {pkg}.",
+        "In use": "Em uso",
+        "Run these commands? [y/N] ": "Executar estes comandos? [s/N] ",
+        "This step needs an interactive terminal.": "Este passo precisa de um terminal interativo.",
+        "Number (Enter cancels): ": "Número (Enter cancela): ",
+        "Queue name [{name}]: ": "Nome da fila [{name}]: ",
+        "Password: ": "Palavra-passe: ",
+        "pending": "pendente",
+        "applied": "aplicada",
+        "restored": "reposta",
+        "failed": "falhou",
+        "Actions": "Ações",
+        "Details": "Detalhes",
+        "Status": "Estado",
+        "No actions recorded.": "Ainda não há ações registadas.",
+        "Cannot read the operation audit.": "Não foi possível ler o registo de ações.",
+
+        # --- trials / local debug cases (ex-fragment) ---
+        "Trials / Debug": "Ensaios / Debug",
+        "Trials / Debug — open case {case}": "Ensaios / Debug — caso aberto {case}",
+        "Not specified": "Não especificado",
+        "Virtual machine": "Máquina virtual",
+        "Physical machine": "Máquina física",
+        "WSL smoke test": "Verificação básica em WSL",
+        "Simulated fixture": "Cenário simulado",
+        "Local collection only. Start a case, test in the main window, then record its result. Closing this panel keeps an open case.":
+            "Recolha apenas local. Inicia um caso, testa na janela principal e regista o resultado. Fechar este painel mantém o caso aberto.",
+        "Open selected trial": "Abrir ensaio selecionado",
+        "Refresh": "Atualizar",
+        "Trial title": "Título do ensaio",
+        "Environment ID": "ID do ambiente",
+        "Build revision": "Revisão da build",
+        "Test environment": "Ambiente de ensaio",
+        "Start new trial": "Iniciar novo ensaio",
+        "Finish trial": "Concluir ensaio",
+        "Case ID": "ID do caso",
+        "Case variant / attempt": "Variante / tentativa",
+        "Operation ID (optional)": "ID da operação (opcional)",
+        "Explicit notes only; conversations are not copied automatically.":
+            "Só as notas que escreveres são incluídas; as conversas não são copiadas automaticamente.",
+        "Begin case": "Iniciar caso",
+        "Record result": "Registar resultado",
+        "Include bounded app log excerpt (may include other conversations)":
+            "Incluir excerto limitado do registo da aplicação (pode conter outras conversas)",
+        "Log excerpts and automatic redaction are partial. They may contain sensitive data.":
+            "Os excertos do registo e a ocultação automática são parciais. Podem conter dados sensíveis.",
+        "Result": "Resultado",
+        "Conversation ID": "ID da conversa",
+        "Attachment": "Anexo",
+        "Type": "Tipo",
+        "Add local evidence": "Adicionar evidência local",
+        "View attachment": "Ver anexo",
+        "Exclude attachment": "Excluir anexo",
+        "Choose only relevant text or PNG/JPEG images. Images are not redacted automatically and are never sent to AI by this panel.":
+            "Escolhe apenas texto ou imagens PNG/JPEG relevantes. Este painel não oculta automaticamente dados nas imagens nem as envia à IA.",
+        "I reviewed the exported content and all attachments": "Revi o conteúdo a exportar e todos os anexos",
+        "Refresh export preview": "Atualizar pré-visualização da exportação",
+        "Export reviewed ZIP": "Exportar ZIP revisto",
+        "Opening local trials…": "A abrir os ensaios locais…",
+        "Open case": "Caso aberto",
+        "Case {case} is tied to conversation {session}; switching conversations does not change it.":
+            "O caso {case} está associado à conversa {session}; mudar de conversa não altera esta associação.",
+        "Trial {id} — {state}": "Ensaio {id} — {state}",
+        "Finished": "Concluído",
+        "Ready to begin a case": "Pronto para iniciar um caso",
+        "No trial selected. Start a new trial or open an existing one.":
+            "Nenhum ensaio selecionado. Inicia um novo ensaio ou abre um existente.",
+        "Review all exported texts below and view every image before confirming export. Nothing is uploaded.":
+            "Revê os textos a exportar abaixo e visualiza todas as imagens antes de confirmar a exportação. Os dados ficam locais.",
+        "Record the open case result to prepare an export preview.":
+            "Regista o resultado do caso aberto para preparar a pré-visualização da exportação.",
+        "Rendering export preview…": "A apresentar a pré-visualização da exportação…",
+        "Refreshing local preview…": "A atualizar a pré-visualização local…",
+        "Opening selected trial…": "A abrir o ensaio selecionado…",
+        "Starting local trial…": "A iniciar o ensaio local…",
+        "Beginning case…": "A iniciar o caso…",
+        "Recording result and local evidence…": "A registar o resultado e a evidência local…",
+        "Finishing trial…": "A concluir o ensaio…",
+        "Adding private local evidence…": "A adicionar evidência local privada…",
+        "Excluding attachment from export…": "A excluir o anexo da exportação…",
+        "Opening attachment preview…": "A abrir a pré-visualização do anexo…",
+        "Attachment preview": "Pré-visualização do anexo",
+        "Scaled image preview. Review the original pixels and image metadata before export; neither is redacted automatically.":
+            "Pré-visualização reduzida. Revê os píxeis e metadados da imagem original antes de exportar; estes dados não são ocultados automaticamente.",
+        "Exporting reviewed local package…": "A exportar o pacote local revisto…",
+        "Trial exported locally: {path}": "Ensaio exportado localmente: {path}",
+        "Open": "Abrir",
+        "Save": "Guardar",
+
+        # --- history limits and remote model listing (ex-fragment) ---
+        "Message exceeds the local history limit. Shorten it before sending.":
+            "A mensagem excede o limite do histórico local. Encurta-a antes de enviar.",
+        "Could not save the message: {error}": "Não foi possível guardar a mensagem: {error}",
+        "Could not save the response: {error}": "Não foi possível guardar a resposta: {error}",
+        "Could not save the operation result: {error}":
+            "Não foi possível guardar o resultado da operação: {error}",
+        "AI response exceeds the local history limit. The incomplete response was not saved; ask for a shorter response.":
+            "A resposta da IA excede o limite do histórico local. A resposta incompleta não foi guardada; pede uma resposta mais curta.",
+        "Running confirmed commands…": "A executar os comandos confirmados…",
+        "Running confirmed commands. Cancellation stops later commands; an operation already started may still finish.":
+            "A executar os comandos confirmados. Cancelar impede os comandos seguintes; uma operação já iniciada pode ainda terminar.",
+        "Cancellation requested. An operation already started may still finish; its result will be shown here.":
+            "Cancelamento pedido. Uma operação já iniciada pode ainda terminar; o resultado será apresentado aqui.",
+        "Operation completed after cancellation. Check its result below; cancellation did not undo it.":
+            "A operação terminou depois do cancelamento. Verifica o resultado abaixo; o cancelamento não a desfez.",
+        "The operation result could not be determined. Check the target before trying again.":
+            "Não foi possível determinar o resultado da operação. Verifica o alvo antes de tentar novamente.",
+        "Remote model": "Modelo remoto",
+        "List models": "Listar modelos",
+        "Listing models…": "A listar os modelos…",
+        "Model listing failed. Check the key, mode and endpoint.":
+            "A consulta de modelos falhou. Verifica a chave, o modo e o endereço do fornecedor.",
+        "Models listed. Select a model and save to apply it.":
+            "Modelos consultados. Seleciona um modelo e guarda para o aplicar.",
+        "The API key is unavailable. Check its storage or unlock the key store.":
+            "A chave de API está indisponível. Verifica onde está guardada ou desbloqueia o cofre de chaves.",
+        "Use stored key (remove empty override from .env)":
+            "Usar chave guardada (remover substituição vazia do .env)",
+        "The {var} environment variable is empty and blocks the stored API key.":
+            "A variável de ambiente {var} está vazia e bloqueia a chave de API guardada.",
+        "Use the button below to remove this empty assignment from .env.":
+            "Usa o botão abaixo para remover esta atribuição vazia do .env.",
+        "Remove or fill this variable at its source, then restart the application.":
+            "Remove ou preenche esta variável na sua origem e reinicia a aplicação.",
+        "Empty .env override removed. The stored key or edited draft can now be used.":
+            "A substituição vazia do .env foi removida. Já podes usar a chave guardada ou a que escreveste.",
+        "The empty override could not be removed safely. The stored key was preserved.":
+            "Não foi possível remover a substituição vazia com segurança. A chave guardada foi preservada.",
+        "Configure a valid API key before listing models.":
+            "Configura uma chave de API válida antes de listar os modelos.",
+        "The provider rejected the API key (HTTP 401).":
+            "O fornecedor rejeitou a chave de API (HTTP 401).",
+        "The provider rejected the model-listing request (HTTP 400). Check the API key and endpoint.":
+            "O fornecedor rejeitou a consulta de modelos (HTTP 400). Verifica a chave de API e o endereço.",
+        "The provider denied access (HTTP 403). Check the API key permissions.":
+            "O fornecedor recusou o acesso (HTTP 403). Verifica as permissões da chave de API.",
+        "The model-listing endpoint was not found (HTTP 404).":
+            "O endereço de consulta de modelos não foi encontrado (HTTP 404).",
+        "The provider rate limit or quota was exceeded (HTTP 429). Try again later.":
+            "O limite de pedidos ou a quota do fornecedor foi excedido (HTTP 429). Tenta novamente mais tarde.",
+        "The provider service is unavailable (HTTP 5xx). Try again later.":
+            "O serviço do fornecedor está indisponível (HTTP 5xx). Tenta novamente mais tarde.",
+        "Model listing exceeded its deadline.": "A consulta de modelos excedeu o prazo.",
+        "Model listing failed; check the connection and provider settings.":
+            "A consulta de modelos falhou. Verifica a ligação e as definições do fornecedor.",
+        "Enter a valid model identifier.": "Introduz um identificador de modelo válido.",
+
+        # --- image attachment, documents and global shortcuts (ex-fragment) ---
+        "Preview conversation import": "Pré-visualizar importação da conversa",
+        "Import conversation": "Importar conversa",
+        "The stored key for {provider} is disabled by the empty {var} environment variable.":
+            "A chave guardada de {provider} está desativada pela variável de ambiente vazia {var}.",
+        "Open Settings → API and choose '{button}' to remove the empty assignment from .env.":
+            "Abre Definições → API e escolhe '{button}' para remover a atribuição vazia do .env.",
+        "Conversation exports (*.md, *.json)": "Conversas exportadas (*.md, *.json)",
+        "Conversation: {title}\nMessages: {count}\nFormat: {format}":
+            "Conversa: {title}\nMensagens: {count}\nFormato: {format}",
+        "Only conversation text is imported into a new conversation. Actions, tasks and diagnostic progress are not restored.":
+            "Só o texto é importado para uma nova conversa. As ações, tarefas e o progresso de diagnóstico não são repostos.",
+        "Review this conversation, then repeat the import with --yes.":
+            "Revê esta conversa e depois repete a importação com --yes.",
+        "Attach an image for the next question": "Anexar uma imagem à próxima pergunta",
+        "Capture an image for AI": "Capturar uma imagem para a IA",
+        "Choose an image": "Escolher uma imagem",
+        "PNG, JPEG and WebP images": "Imagens PNG, JPEG e WebP",
+        "Review image for AI": "Rever imagem para a IA",
+        "Attach to next request": "Anexar ao próximo pedido",
+        "Destination": "Destino",
+        "Model": "Modelo",
+        "Remove image": "Remover imagem",
+        "Describe this image.": "Descreve esta imagem.",
+        "Image ready for the next question: {name} ({width} × {height})":
+            "Imagem pronta para a próxima pergunta: {name} ({width} × {height})",
+        "Could not attach image: {error}": "Não foi possível anexar a imagem: {error}",
+        "This client does not support reviewed images.": "Este cliente não suporta o envio de imagens revistas.",
+        "Configure a usable OpenRouter provider before sending an image.":
+            "Configura um fornecedor OpenRouter disponível antes de enviar uma imagem.",
+        "The image request cannot be answered offline.": "O pedido com imagem precisa de um modelo remoto disponível.",
+        "The model returned no answer for the image.": "O modelo não devolveu uma resposta para a imagem.",
+        "[Image attached for this request; pixels are not stored.]":
+            "[Imagem anexada a este pedido; os pixels não são guardados.]",
+        "Only the next request will include this image. OpenRouter and the selected model's provider will receive its pixels. Check for private information before attaching. Metadata has been removed; visible secrets have not. The image is not saved in conversation history.":
+            "Só o próximo pedido inclui esta imagem. O OpenRouter e o fornecedor do modelo escolhido recebem os pixels. Revê a informação privada antes de anexar. Os metadados foram removidos; os segredos visíveis permanecem. A imagem não é guardada no histórico da conversa.",
+        "Choose an image with --image before using --send-image.": "Escolhe uma imagem com --image antes de usar --send-image.",
+        "Image: {name} ({width} × {height}); destination: {provider}, {model}.":
+            "Imagem: {name} ({width} × {height}); destino: {provider}, {model}.",
+        "Review the original image, then repeat with --send-image to send this normalized snapshot.":
+            "Revê a imagem original e repete com --send-image para enviar esta cópia preparada.",
+        "Enable global shortcut to open the assistant": "Ativar atalho global para abrir o assistente",
+        "Global shortcut disabled": "Atalho global desativado",
+        "Waiting for desktop shortcut approval": "A aguardar a aprovação do atalho no ambiente gráfico",
+        "Global shortcut active through the desktop portal": "Atalho global ativo pelo portal do ambiente gráfico",
+        "Global shortcut active on X11": "Atalho global ativo em X11",
+        "Global shortcut unavailable. Configure your desktop shortcut to run: linux-ai-assistant --show":
+            "Atalho global indisponível. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
+        "Global shortcut unavailable or permission denied. Configure your desktop shortcut to run: linux-ai-assistant --show":
+            "Atalho global indisponível ou não autorizado. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
+        "Global shortcut disconnected. Configure your desktop shortcut to run: linux-ai-assistant --show":
+            "O atalho global foi desligado. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
+        "Global shortcut unavailable. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
+            "Atalho global indisponível. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
+        "Global shortcut unavailable or permission denied. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
+            "Atalho global indisponível ou não autorizado. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
+        "Global shortcut disconnected. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
+            "O atalho global foi desligado. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
+        "Use selected documents": "Consultar documentos escolhidos",
+        "Manage selected documents": "Gerir documentos escolhidos",
+        "Local documents": "Documentos locais",
+        "Review matching excerpts before sending them to the model. Offline mode shows local matches.":
+            "Revê os excertos encontrados antes de os enviar ao modelo. O modo offline mostra resultados locais.",
+        "Could not open documents: {error}": "Não foi possível abrir os documentos: {error}",
+        "No matching passages in the selected documents. Add documents or refine your question.":
+            "Não encontrei excertos relevantes nos documentos escolhidos. Adiciona documentos ou reformula a pergunta.",
+        "No matching passages in the selected documents.": "Não encontrei excertos relevantes nos documentos escolhidos.",
+        "Review document excerpts": "Rever excertos dos documentos",
+        "Use these excerpts": "Usar estes excertos",
+        "These excerpts will be sent with your next question to {provider}.":
+            "Estes excertos serão enviados com a próxima pergunta para {provider}.",
+        "Local document matches (no model request):": "Excertos locais encontrados (sem pedido a um modelo):",
+        "The model is unavailable. Local document matches:": "O modelo está indisponível. Excertos locais encontrados:",
+        "These local excerpts are not saved in conversation history.": "Estes excertos locais não são guardados no histórico da conversa.",
+        "Local document matches were shown. Excerpts remain only in the local document index.":
+            "Foram apresentados excertos locais. Os excertos permanecem apenas no índice local de documentos.",
+        "Only files you choose are indexed. The index contains private snapshots; source changes are read only when you reindex.":
+            "Só são indexados os ficheiros que escolhes. O índice contém cópias privadas; as alterações à origem só são lidas quando atualizas o índice.",
+        "Add documents": "Adicionar documentos",
+        "Choose local documents": "Escolher documentos locais",
+        "UTF-8 text documents": "Documentos de texto UTF-8",
+        "Reindex selected document": "Atualizar o documento escolhido",
+        "Remove selected document": "Remover o documento escolhido",
+        "Clear document index": "Limpar o índice de documentos",
+        "Document ID": "ID do documento",
+        "Lines": "Linhas",
+        "Snapshot imported": "Cópia importada",
+        "No documents indexed.": "Não há documentos indexados.",
+        "Search works locally. Sending excerpts to an AI provider requires enabling documents for the conversation and reviewing the excerpts before sending.":
+            "A pesquisa funciona localmente. Para enviar excertos a um fornecedor de IA, ativa os documentos nesta conversa e revê os excertos antes do envio.",
+        "Document snapshots imported. Sources will not refresh automatically.":
+            "Cópias dos documentos importadas. A origem não será atualizada automaticamente.",
+        "Selected document snapshot refreshed.": "A cópia do documento escolhido foi atualizada.",
+        "Document removed from the local index. The source file was preserved.":
+            "Documento removido do índice local. O ficheiro original foi preservado.",
+        "Delete all document snapshots from the local index?": "Eliminar todas as cópias de documentos do índice local?",
+        "The original files will be preserved.": "Os ficheiros originais serão preservados.",
+        "Document index cleared. Original files were preserved.": "Índice de documentos limpo. Os ficheiros originais foram preservados.",
+        "Document snapshot removed.": "Cópia do documento removida.",
+        "Document snapshot not found.": "Não encontrei a cópia do documento.",
+        "(excerpt truncated)": "(excerto truncado)",
+        "All document snapshots removed.": "Todas as cópias de documentos foram removidas.",
+        "Use documents clear --yes to remove all local snapshots.": "Usa documents clear --yes para remover todas as cópias locais.",
+        "Use --documents before approving document context.": "Usa --documents antes de aprovar o envio dos excertos.",
+        "Review these excerpts, then repeat with --send-document-context to send them to the model.":
+            "Revê estes excertos e repete com --send-document-context para os enviar ao modelo.",
+
+        # --- conversation history recovery (ex-fragment) ---
+        "Recover history": "Recuperar histórico",
+        "Recover conversation history": "Recuperar histórico de conversas",
+        "Conversation history could not be saved. Recover it before continuing; pending messages have not been discarded.":
+            "Não foi possível guardar o histórico. Recupere-o antes de continuar; as mensagens pendentes não foram descartadas.",
+        "History recovered. Original backup: {path}": "Histórico recuperado. Cópia do original: {path}",
+        "Could not recover history: {error}": "Não foi possível recuperar o histórico: {error}",
+        "The conversation history exceeds the size or nesting limit (16 MiB / 128 levels).":
+            "O histórico excede o limite de tamanho ou profundidade (16 MiB / 128 níveis).",
+        "The conversation history has an invalid or unsupported format.":
+            "O histórico de conversas tem um formato inválido ou não suportado.",
+        "The conversation history could not be read or saved.": "Não foi possível ler ou guardar o histórico de conversas.",
+        "Opening conversation history…": "A abrir o histórico de conversas…",
+        "Back up and start new history": "Fazer backup e iniciar novo histórico",
+        "The original file will be preserved in a private backup before a new history is created. Unknown formats are not converted. Cancelling keeps the original file unchanged.":
+            "O ficheiro original será preservado numa cópia privada antes de criar um novo histórico. Formatos desconhecidos não são convertidos. Cancelar mantém o ficheiro original intacto.",
+        "Preserving the original history and starting a new one…": "A preservar o histórico original e a iniciar um novo…",
+        "Conversation history recovery failed.": "A recuperação do histórico de conversas falhou.",
+        "The original history was preserved at: {path}": "O histórico original foi preservado em: {path}",
+        "The history could not be backed up. It was not reset.": "Não foi possível criar a cópia do histórico. O histórico não foi reposto.",
+        "File operation completed in another conversation: {message}": "Operação de ficheiro concluída noutra conversa: {message}",
+        "Wait for the approved file operation to finish before recovering history.":
+            "Aguarde a conclusão da operação de ficheiro aprovada antes de recuperar o histórico.",
+        "Writing approved file…": "A escrever o ficheiro aprovado…",
+        "Loading file changes…": "A carregar as alterações de ficheiros…",
+        "Preparing recovery review…": "A preparar a revisão da recuperação…",
+        "Recovering approved file…": "A recuperar o ficheiro aprovado…",
+        "Recovery failed: {detail}": "A recuperação falhou: {detail}",
+
+        # --- credential storage settings (key store / .env override) ---
+        "Configuration file": "Ficheiro de configuração",
+        "Linux Secret Service": "Serviço de Segredos do Linux",
+        "Unlock system key store": "Desbloquear o cofre de chaves do sistema",
+        "Copy effective key to selected storage": "Copiar a chave efetiva para o armazenamento escolhido",
+        "Move stored key to selected storage": "Mover a chave guardada para o armazenamento escolhido",
+        "Stored key unavailable. Unlock the key store or restore the encryption key.":
+            "Chave guardada indisponível. Desbloqueia o cofre de chaves ou restaura a chave de encriptação.",
+        "The credential storage configuration is invalid.":
+            "A configuração do armazenamento de credenciais é inválida.",
+        "System key store unlocked.": "Cofre de chaves do sistema desbloqueado.",
+        "The system key store could not be unlocked. No key was copied.":
+            "Não foi possível desbloquear o cofre de chaves do sistema. Nenhuma chave foi copiada.",
+        "Effective key copied to storage.": "Chave efetiva copiada para o armazenamento.",
+        "The key could not be copied. Check the storage and unlock it if necessary.":
+            "Não foi possível copiar a chave. Verifica o armazenamento e desbloqueia-o se necessário.",
+        "Save or reload the edited key before moving storage.":
+            "Guarda ou recarrega a chave editada antes de mudar o armazenamento.",
+        "Stored key moved and verified.": "Chave guardada movida e verificada.",
+        "Storage migration failed. The previous credential was preserved.":
+            "A migração do armazenamento falhou. A credencial anterior foi preservada.",
+        "The key could not be saved. The settings dialog remains open.":
+            "Não foi possível guardar a chave. O diálogo de definições continua aberto.",
+        "The stored key is shown; the environment key is not saved automatically.":
+            "A chave guardada é mostrada; a chave do ambiente não é guardada automaticamente.",
     },
     "es": {
         "Ready": "Listo",
@@ -125,8 +535,6 @@ TRANSLATIONS = {
         "Note: the {var} environment variable overrides this key.":
             "Nota: la variable de entorno {var} sustituye esta clave.",
         "Reload saved keys": "Recargar claves guardadas",
-        "Copy effective key to config": "Copiar clave efectiva al config",
-        "Key copied to config.json": "Clave copiada a config.json",
         "User": "Usuario",
         "AI": "IA",
         "System": "Sistema",
@@ -172,7 +580,6 @@ TRANSLATIONS = {
         "Settings saved successfully": "Ajustes guardados correctamente",
         "Settings - Linux AI Assistant": "Ajustes - Linux AI Assistant",
         "Statistics - Linux AI Assistant": "Estadísticas - Linux AI Assistant",
-        "Conversation History - Linux AI Assistant": "Historial de conversaciones - Linux AI Assistant",
         "New file": "Nuevo archivo",
         "Proposed changes": "Cambios propuestos",
         "Cancel": "Cancelar",
@@ -232,8 +639,6 @@ TRANSLATIONS = {
         "Note: the {var} environment variable overrides this key.":
             "Remarque : la variable d'environnement {var} remplace cette clé.",
         "Reload saved keys": "Recharger les clés enregistrées",
-        "Copy effective key to config": "Copier la clé effective dans la config",
-        "Key copied to config.json": "Clé copiée dans config.json",
         "User": "Utilisateur",
         "AI": "IA",
         "System": "Système",
@@ -279,7 +684,6 @@ TRANSLATIONS = {
         "Settings saved successfully": "Paramètres enregistrés avec succès",
         "Settings - Linux AI Assistant": "Paramètres - Linux AI Assistant",
         "Statistics - Linux AI Assistant": "Statistiques - Linux AI Assistant",
-        "Conversation History - Linux AI Assistant": "Historique des conversations - Linux AI Assistant",
         "New file": "Nouveau fichier",
         "Proposed changes": "Modifications proposées",
         "Cancel": "Annuler",
@@ -339,8 +743,6 @@ TRANSLATIONS = {
         "Note: the {var} environment variable overrides this key.":
             "Hinweis: Die Umgebungsvariable {var} überschreibt diesen Schlüssel.",
         "Reload saved keys": "Gespeicherte Schlüssel neu laden",
-        "Copy effective key to config": "Effektiven Schlüssel in die Konfiguration kopieren",
-        "Key copied to config.json": "Schlüssel in config.json kopiert",
         "User": "Benutzer",
         "AI": "KI",
         "System": "System",
@@ -386,7 +788,6 @@ TRANSLATIONS = {
         "Settings saved successfully": "Einstellungen erfolgreich gespeichert",
         "Settings - Linux AI Assistant": "Einstellungen - Linux AI Assistant",
         "Statistics - Linux AI Assistant": "Statistiken - Linux AI Assistant",
-        "Conversation History - Linux AI Assistant": "Unterhaltungsverlauf - Linux AI Assistant",
         "New file": "Neue Datei",
         "Proposed changes": "Vorgeschlagene Änderungen",
         "Cancel": "Abbrechen",
@@ -1008,395 +1409,3 @@ def offline_service_action(lang, action):
     """Localized verb for a service action, English fallback."""
     catalog = OFFLINE_SERVICE_ACTIONS.get(lang) or OFFLINE_SERVICE_ACTIONS["en"]
     return catalog[action]
-
-
-TRANSLATIONS["pt"].update({
-    "Keep this display change? [y/N] ": "Manter esta alteração do monitor? [s/N] ",
-    "Keep display configuration?": "Manter configuração do monitor?",
-    "Revert": "Reverter",
-    "Keep": "Manter",
-    "Reverting in {seconds} seconds unless you keep this configuration.":
-        "A configuração será revertida dentro de {seconds} segundos se não a mantiveres.",
-    "Conversations": "Conversas",
-    "New conversation": "Nova conversa",
-    "Previous conversations": "Histórico anterior",
-    "Conversation name": "Nome da conversa",
-    "Search all conversations": "Pesquisar em todas as conversas",
-    "Archived": "Arquivada",
-    "Resume": "Retomar",
-    "Rename": "Renomear",
-    "Archive / restore": "Arquivar / restaurar",
-    "Delete": "Eliminar",
-    "Delete this conversation?": "Eliminar esta conversa?",
-    "Export conversation": "Exportar conversa",
-    "Export Markdown": "Exportar Markdown",
-    "Export JSON": "Exportar JSON",
-    "Import JSON": "Importar JSON",
-    "Import JSON conversation": "Importar conversa JSON",
-    "No matches": "Sem resultados",
-    "Assistance": "Assistência",
-    "Assistance mode": "Modo de assistência",
-    "Automatic (local guides if unavailable)": "Automático (guias locais se a IA estiver indisponível)",
-    "Local guides (no AI model)": "Guias locais (sem modelo de IA)",
-    "Local AI model": "Modelo de IA local",
-    "Remote AI provider": "Fornecedor de IA remoto",
-    "Local guides available": "Guias locais disponíveis",
-    "Provider is not configured": "Fornecedor não configurado",
-    "Configured; connection not tested": "Configurado; ligação não testada",
-    "Local model ready": "Modelo local disponível",
-    "Local server is unavailable": "Servidor local indisponível",
-    "Selected model is not installed": "O modelo selecionado não está instalado",
-    "Configuration is incompatible with this mode": "Configuração incompatível com este modo",
-    "Connection test failed": "O teste de ligação falhou",
-    "Local server URL": "Endereço do servidor local",
-    "Local model": "Modelo local",
-    "Strict local mode (loopback server and local models)": "Modo local estrito (servidor nesta máquina e modelos locais)",
-    "Models must already be installed. A localhost address alone does not guarantee local inference.": "Os modelos precisam de estar instalados. Um endereço localhost, por si só, não garante inferência local.",
-    "Test connection and list installed models": "Testar ligação e listar modelos instalados",
-    "Connection not tested": "Ligação não testada",
-    "Testing local connection…": "A testar a ligação local…",
-    "Showing the latest 100 messages. Export to view the full conversation.": "A mostrar as últimas 100 mensagens. Exporta para consultar a conversa completa.",
-    "Diagnostic report": "Relatório de diagnóstico",
-    "File changes": "Alterações a ficheiros",
-    "Path": "Caminho",
-    "Created": "Criada em",
-    "Conversation": "Conversa",
-    "Original SHA256": "SHA256 original",
-    "Written SHA256": "SHA256 escrito",
-    "Original backup": "Cópia original",
-    "Recovered": "Reposta em",
-    "Recovery backup": "Cópia de recuperação",
-    "Describe the symptom": "Descreve o sintoma",
-    "Paste a log excerpt (up to 64 KiB)": "Cola um excerto do registo (até 64 KiB)",
-    "Select local read checks to collect. No checks are selected by default.": "Seleciona as verificações locais de leitura a recolher. Nenhuma vem selecionada.",
-    "Prepare report": "Preparar relatório",
-    "Export report": "Exportar relatório",
-    "Reports stay on this machine. Review redacted data before sharing; unknown secrets may remain.": "Os relatórios ficam nesta máquina. Revê os dados antes de partilhar; podem restar segredos não reconhecidos.",
-    "Diagnostic input exceeds 64 KiB": "A entrada de diagnóstico excede 64 KiB",
-    "Preparing local report…": "A preparar o relatório local…",
-    "Review the preview before export. Automatic redaction is partial.": "Revê o resultado antes de exportar. A ocultação automática é parcial.",
-    "Report exported: {path}": "Relatório exportado: {path}",
-    "Show changes from all conversations": "Mostrar alterações de todas as conversas",
-    "Include archived file changes": "Incluir alterações de ficheiros arquivadas",
-    "Archive": "Arquivo",
-    "uncertain": "incerta",
-    "recovery_pending": "recuperação pendente",
-    "recovery_uncertain": "recuperação incerta",
-    "Review recovery": "Rever recuperação",
-    "Only approved file writes are recorded. Command effects are not automatically reversible.": "Só são registadas escritas de ficheiros aprovadas. Os efeitos de comandos não são automaticamente reversíveis.",
-    "No file changes recorded.": "Sem alterações a ficheiros registadas.",
-    "Remove this newly created file and retain a recovery copy.": "Remover este ficheiro criado e conservar uma cópia de recuperação.",
-    "Backup exceeds the recovery preview limit (1 MiB). Review it manually.": "A cópia de segurança excede o limite de pré-visualização (1 MiB). Revê-a manualmente.",
-    "Confirm file recovery": "Confirmar recuperação do ficheiro",
-    "Restore file": "Repor ficheiro",
-    "File recovered. Recovery backup: {path}": "Ficheiro reposto. Cópia de recuperação: {path}",
-    "Looking up Wi-Fi networks…": "A procurar redes Wi-Fi…",
-    "Looking up printers…": "A procurar impressoras…",
-    "Looking up scanners…": "A procurar scanners…",
-    "Available Wi-Fi networks": "Redes Wi-Fi disponíveis",
-    "Password": "Palavra-passe",
-    "Connect": "Ligar",
-    "The password is sent only to NetworkManager and is not written in the chat.": "A palavra-passe segue só para o NetworkManager e não fica escrita na conversa.",
-    "No Wi-Fi networks found.": "Não encontrei redes Wi-Fi.",
-    "Connected to {ssid}.": "Ligado a {ssid}.",
-    "Could not connect to {ssid}.": "Não foi possível ligar a {ssid}.",
-    "Add printer": "Adicionar impressora",
-    "Queue name": "Nome da fila",
-    "No printers found.": "Não encontrei impressoras.",
-    "This device needs a driver. I will not add it automatically.": "Este aparelho precisa de um driver. Não o adiciono automaticamente.",
-    "Printer {name} added.": "Impressora {name} adicionada.",
-    "Could not add printer {name}.": "Não foi possível adicionar a impressora {name}.",
-    "Scanners": "Scanners",
-    "No scanners found.": "Não encontrei scanners.",
-    "Install scanner support": "Instalar suporte de scanner",
-    "Install {pkg}": "Instalar {pkg}",
-    "Scanner support installed.": "Suporte de scanner instalado.",
-    "Could not install {pkg}.": "Não foi possível instalar {pkg}.",
-    "In use": "Em uso",
-    "Run these commands? [y/N] ": "Executar estes comandos? [s/N] ",
-    "This step needs an interactive terminal.": "Este passo precisa de um terminal interativo.",
-    "Number (Enter cancels): ": "Número (Enter cancela): ",
-    "Queue name [{name}]: ": "Nome da fila [{name}]: ",
-    "Password: ": "Palavra-passe: ",
-    "Cancel": "Cancelar",
-    "pending": "pendente",
-    "applied": "aplicada",
-    "restored": "reposta",
-    "failed": "falhou",
-    "Actions": "Ações",
-    "Details": "Detalhes",
-    "Status": "Estado",
-    "No actions recorded.": "Ainda não há ações registadas.",
-    "Cannot read the operation audit.": "Não foi possível ler o registo de ações.",
-})
-
-
-TRANSLATIONS["pt"].update({
-    "Trials / Debug": "Ensaios / Debug",
-    "Trials / Debug — open case {case}": "Ensaios / Debug — caso aberto {case}",
-    "Not specified": "Não especificado",
-    "Virtual machine": "Máquina virtual",
-    "Physical machine": "Máquina física",
-    "WSL smoke test": "Verificação básica em WSL",
-    "Simulated fixture": "Cenário simulado",
-    "Local collection only. Start a case, test in the main window, then record its result. Closing this panel keeps an open case.":
-        "Recolha apenas local. Inicia um caso, testa na janela principal e regista o resultado. Fechar este painel mantém o caso aberto.",
-    "Open selected trial": "Abrir ensaio selecionado",
-    "Refresh": "Atualizar",
-    "Trial title": "Título do ensaio",
-    "Environment ID": "ID do ambiente",
-    "Build revision": "Revisão da build",
-    "Test environment": "Ambiente de ensaio",
-    "Start new trial": "Iniciar novo ensaio",
-    "Finish trial": "Concluir ensaio",
-    "Case ID": "ID do caso",
-    "Case variant / attempt": "Variante / tentativa",
-    "Operation ID (optional)": "ID da operação (opcional)",
-    "Explicit notes only; conversations are not copied automatically.":
-        "Só as notas que escreveres são incluídas; as conversas não são copiadas automaticamente.",
-    "Begin case": "Iniciar caso",
-    "Record result": "Registar resultado",
-    "Include bounded app log excerpt (may include other conversations)":
-        "Incluir excerto limitado do registo da aplicação (pode conter outras conversas)",
-    "Log excerpts and automatic redaction are partial. They may contain sensitive data.":
-        "Os excertos do registo e a ocultação automática são parciais. Podem conter dados sensíveis.",
-    "Result": "Resultado",
-    "Conversation ID": "ID da conversa",
-    "Attachment": "Anexo",
-    "Type": "Tipo",
-    "Add local evidence": "Adicionar evidência local",
-    "View attachment": "Ver anexo",
-    "Exclude attachment": "Excluir anexo",
-    "Choose only relevant text or PNG/JPEG images. Images are not redacted automatically and are never sent to AI by this panel.":
-        "Escolhe apenas texto ou imagens PNG/JPEG relevantes. Este painel não oculta automaticamente dados nas imagens nem as envia à IA.",
-    "I reviewed the exported content and all attachments": "Revi o conteúdo a exportar e todos os anexos",
-    "Refresh export preview": "Atualizar pré-visualização da exportação",
-    "Export reviewed ZIP": "Exportar ZIP revisto",
-    "Opening local trials…": "A abrir os ensaios locais…",
-    "Open case": "Caso aberto",
-    "Case {case} is tied to conversation {session}; switching conversations does not change it.":
-        "O caso {case} está associado à conversa {session}; mudar de conversa não altera esta associação.",
-    "Trial {id} — {state}": "Ensaio {id} — {state}",
-    "Finished": "Concluído",
-    "Ready to begin a case": "Pronto para iniciar um caso",
-    "No trial selected. Start a new trial or open an existing one.":
-        "Nenhum ensaio selecionado. Inicia um novo ensaio ou abre um existente.",
-    "Review all exported texts below and view every image before confirming export. Nothing is uploaded.":
-        "Revê os textos a exportar abaixo e visualiza todas as imagens antes de confirmar a exportação. Os dados ficam locais.",
-    "Record the open case result to prepare an export preview.":
-        "Regista o resultado do caso aberto para preparar a pré-visualização da exportação.",
-    "Rendering export preview…": "A apresentar a pré-visualização da exportação…",
-    "Refreshing local preview…": "A atualizar a pré-visualização local…",
-    "Opening selected trial…": "A abrir o ensaio selecionado…",
-    "Starting local trial…": "A iniciar o ensaio local…",
-    "Beginning case…": "A iniciar o caso…",
-    "Recording result and local evidence…": "A registar o resultado e a evidência local…",
-    "Finishing trial…": "A concluir o ensaio…",
-    "Adding private local evidence…": "A adicionar evidência local privada…",
-    "Excluding attachment from export…": "A excluir o anexo da exportação…",
-    "Opening attachment preview…": "A abrir a pré-visualização do anexo…",
-    "Attachment preview": "Pré-visualização do anexo",
-    "Scaled image preview. Review the original pixels and image metadata before export; neither is redacted automatically.":
-        "Pré-visualização reduzida. Revê os píxeis e metadados da imagem original antes de exportar; estes dados não são ocultados automaticamente.",
-    "Exporting reviewed local package…": "A exportar o pacote local revisto…",
-    "Trial exported locally: {path}": "Ensaio exportado localmente: {path}",
-    "Open": "Abrir",
-    "Save": "Guardar",
-})
-
-TRANSLATIONS["pt"].update({
-    "Message exceeds the local history limit. Shorten it before sending.":
-        "A mensagem excede o limite do histórico local. Encurta-a antes de enviar.",
-    "Could not save the message: {error}": "Não foi possível guardar a mensagem: {error}",
-    "Could not save the response: {error}": "Não foi possível guardar a resposta: {error}",
-    "Could not save the operation result: {error}":
-        "Não foi possível guardar o resultado da operação: {error}",
-    "AI response exceeds the local history limit. The incomplete response was not saved; ask for a shorter response.":
-        "A resposta da IA excede o limite do histórico local. A resposta incompleta não foi guardada; pede uma resposta mais curta.",
-    "Running confirmed commands…": "A executar os comandos confirmados…",
-    "Running confirmed commands. Cancellation stops later commands; an operation already started may still finish.":
-        "A executar os comandos confirmados. Cancelar impede os comandos seguintes; uma operação já iniciada pode ainda terminar.",
-    "Cancellation requested. An operation already started may still finish; its result will be shown here.":
-        "Cancelamento pedido. Uma operação já iniciada pode ainda terminar; o resultado será apresentado aqui.",
-    "Operation completed after cancellation. Check its result below; cancellation did not undo it.":
-        "A operação terminou depois do cancelamento. Verifica o resultado abaixo; o cancelamento não a desfez.",
-    "The operation result could not be determined. Check the target before trying again.":
-        "Não foi possível determinar o resultado da operação. Verifica o alvo antes de tentar novamente.",
-    "Remote model": "Modelo remoto",
-    "List models": "Listar modelos",
-    "Listing models…": "A listar os modelos…",
-    "Connection not tested": "Ligação não testada",
-    "Model listing failed. Check the key, mode and endpoint.":
-        "A consulta de modelos falhou. Verifica a chave, o modo e o endereço do fornecedor.",
-    "Models listed. Select a model and save to apply it.":
-        "Modelos consultados. Seleciona um modelo e guarda para o aplicar.",
-    "The API key is unavailable. Check its storage or unlock the key store.":
-        "A chave de API está indisponível. Verifica onde está guardada ou desbloqueia o cofre de chaves.",
-    "Use stored key (remove empty override from .env)":
-        "Usar chave guardada (remover substituição vazia do .env)",
-    "The {var} environment variable is empty and blocks the stored API key.":
-        "A variável de ambiente {var} está vazia e bloqueia a chave de API guardada.",
-    "Use the button below to remove this empty assignment from .env.":
-        "Usa o botão abaixo para remover esta atribuição vazia do .env.",
-    "Remove or fill this variable at its source, then restart the application.":
-        "Remove ou preenche esta variável na sua origem e reinicia a aplicação.",
-    "Empty .env override removed. The stored key or edited draft can now be used.":
-        "A substituição vazia do .env foi removida. Já podes usar a chave guardada ou a que escreveste.",
-    "The empty override could not be removed safely. The stored key was preserved.":
-        "Não foi possível remover a substituição vazia com segurança. A chave guardada foi preservada.",
-    "Configure a valid API key before listing models.":
-        "Configura uma chave de API válida antes de listar os modelos.",
-    "The provider rejected the API key (HTTP 401).":
-        "O fornecedor rejeitou a chave de API (HTTP 401).",
-    "The provider rejected the model-listing request (HTTP 400). Check the API key and endpoint.":
-        "O fornecedor rejeitou a consulta de modelos (HTTP 400). Verifica a chave de API e o endereço.",
-    "The provider denied access (HTTP 403). Check the API key permissions.":
-        "O fornecedor recusou o acesso (HTTP 403). Verifica as permissões da chave de API.",
-    "The model-listing endpoint was not found (HTTP 404).":
-        "O endereço de consulta de modelos não foi encontrado (HTTP 404).",
-    "The provider rate limit or quota was exceeded (HTTP 429). Try again later.":
-        "O limite de pedidos ou a quota do fornecedor foi excedido (HTTP 429). Tenta novamente mais tarde.",
-    "The provider service is unavailable (HTTP 5xx). Try again later.":
-        "O serviço do fornecedor está indisponível (HTTP 5xx). Tenta novamente mais tarde.",
-    "Model listing exceeded its deadline.": "A consulta de modelos excedeu o prazo.",
-    "Model listing failed; check the connection and provider settings.":
-        "A consulta de modelos falhou. Verifica a ligação e as definições do fornecedor.",
-    "Enter a valid model identifier.": "Introduz um identificador de modelo válido.",
-})
-
-TRANSLATIONS["pt"].update({
-    "Preview conversation import": "Pré-visualizar importação da conversa",
-    "Import conversation": "Importar conversa",
-    "The stored key for {provider} is disabled by the empty {var} environment variable.":
-        "A chave guardada de {provider} está desativada pela variável de ambiente vazia {var}.",
-    "Open Settings → API and choose '{button}' to remove the empty assignment from .env.":
-        "Abre Definições → API e escolhe '{button}' para remover a atribuição vazia do .env.",
-    "Conversation exports (*.md, *.json)": "Conversas exportadas (*.md, *.json)",
-    "Conversation: {title}\nMessages: {count}\nFormat: {format}":
-        "Conversa: {title}\nMensagens: {count}\nFormato: {format}",
-    "Only conversation text is imported into a new conversation. Actions, tasks and diagnostic progress are not restored.":
-        "Só o texto é importado para uma nova conversa. As ações, tarefas e o progresso de diagnóstico não são repostos.",
-    "Review this conversation, then repeat the import with --yes.":
-        "Revê esta conversa e depois repete a importação com --yes.",
-    "Attach an image for the next question": "Anexar uma imagem à próxima pergunta",
-    "Capture an image for AI": "Capturar uma imagem para a IA",
-    "Choose an image": "Escolher uma imagem",
-    "PNG, JPEG and WebP images": "Imagens PNG, JPEG e WebP",
-    "Review image for AI": "Rever imagem para a IA",
-    "Attach to next request": "Anexar ao próximo pedido",
-    "Destination": "Destino",
-    "Model": "Modelo",
-    "Remove image": "Remover imagem",
-    "Describe this image.": "Descreve esta imagem.",
-    "Image ready for the next question: {name} ({width} × {height})":
-        "Imagem pronta para a próxima pergunta: {name} ({width} × {height})",
-    "Could not attach image: {error}": "Não foi possível anexar a imagem: {error}",
-    "This client does not support reviewed images.": "Este cliente não suporta o envio de imagens revistas.",
-    "Configure a usable OpenRouter provider before sending an image.":
-        "Configura um fornecedor OpenRouter disponível antes de enviar uma imagem.",
-    "The image request cannot be answered offline.": "O pedido com imagem precisa de um modelo remoto disponível.",
-    "The model returned no answer for the image.": "O modelo não devolveu uma resposta para a imagem.",
-    "[Image attached for this request; pixels are not stored.]":
-        "[Imagem anexada a este pedido; os pixels não são guardados.]",
-    "Only the next request will include this image. OpenRouter and the selected model's provider will receive its pixels. Check for private information before attaching. Metadata has been removed; visible secrets have not. The image is not saved in conversation history.":
-        "Só o próximo pedido inclui esta imagem. O OpenRouter e o fornecedor do modelo escolhido recebem os pixels. Revê a informação privada antes de anexar. Os metadados foram removidos; os segredos visíveis permanecem. A imagem não é guardada no histórico da conversa.",
-    "Choose an image with --image before using --send-image.": "Escolhe uma imagem com --image antes de usar --send-image.",
-    "Image: {name} ({width} × {height}); destination: {provider}, {model}.":
-        "Imagem: {name} ({width} × {height}); destino: {provider}, {model}.",
-    "Review the original image, then repeat with --send-image to send this normalized snapshot.":
-        "Revê a imagem original e repete com --send-image para enviar esta cópia preparada.",
-    "Enable global shortcut to open the assistant": "Ativar atalho global para abrir o assistente",
-    "Global shortcut disabled": "Atalho global desativado",
-    "Waiting for desktop shortcut approval": "A aguardar a aprovação do atalho no ambiente gráfico",
-    "Global shortcut active through the desktop portal": "Atalho global ativo pelo portal do ambiente gráfico",
-    "Global shortcut active on X11": "Atalho global ativo em X11",
-    "Global shortcut unavailable. Configure your desktop shortcut to run: linux-ai-assistant --show":
-        "Atalho global indisponível. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
-    "Global shortcut unavailable or permission denied. Configure your desktop shortcut to run: linux-ai-assistant --show":
-        "Atalho global indisponível ou não autorizado. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
-    "Global shortcut disconnected. Configure your desktop shortcut to run: linux-ai-assistant --show":
-        "O atalho global foi desligado. Configura um atalho no ambiente gráfico para executar: linux-ai-assistant --show",
-    "Global shortcut unavailable. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
-        "Atalho global indisponível. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
-    "Global shortcut unavailable or permission denied. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
-        "Atalho global indisponível ou não autorizado. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
-    "Global shortcut disconnected. Configure your desktop shortcut to run: flatpak run io.github.linux_ai_assistant --show":
-        "O atalho global foi desligado. Configura um atalho no ambiente gráfico para executar: flatpak run io.github.linux_ai_assistant --show",
-    "Use selected documents": "Consultar documentos escolhidos",
-    "Manage selected documents": "Gerir documentos escolhidos",
-    "Local documents": "Documentos locais",
-    "Review matching excerpts before sending them to the model. Offline mode shows local matches.":
-        "Revê os excertos encontrados antes de os enviar ao modelo. O modo offline mostra resultados locais.",
-    "Could not open documents: {error}": "Não foi possível abrir os documentos: {error}",
-    "No matching passages in the selected documents. Add documents or refine your question.":
-        "Não encontrei excertos relevantes nos documentos escolhidos. Adiciona documentos ou reformula a pergunta.",
-    "No matching passages in the selected documents.": "Não encontrei excertos relevantes nos documentos escolhidos.",
-    "Review document excerpts": "Rever excertos dos documentos",
-    "Use these excerpts": "Usar estes excertos",
-    "These excerpts will be sent with your next question to {provider}.":
-        "Estes excertos serão enviados com a próxima pergunta para {provider}.",
-    "Local document matches (no model request):": "Excertos locais encontrados (sem pedido a um modelo):",
-    "The model is unavailable. Local document matches:": "O modelo está indisponível. Excertos locais encontrados:",
-    "These local excerpts are not saved in conversation history.": "Estes excertos locais não são guardados no histórico da conversa.",
-    "Local document matches were shown. Excerpts remain only in the local document index.":
-        "Foram apresentados excertos locais. Os excertos permanecem apenas no índice local de documentos.",
-    "Only files you choose are indexed. The index contains private snapshots; source changes are read only when you reindex.":
-        "Só são indexados os ficheiros que escolhes. O índice contém cópias privadas; as alterações à origem só são lidas quando atualizas o índice.",
-    "Add documents": "Adicionar documentos",
-    "Choose local documents": "Escolher documentos locais",
-    "UTF-8 text documents": "Documentos de texto UTF-8",
-    "Reindex selected document": "Atualizar o documento escolhido",
-    "Remove selected document": "Remover o documento escolhido",
-    "Clear document index": "Limpar o índice de documentos",
-    "Document ID": "ID do documento",
-    "Lines": "Linhas",
-    "Snapshot imported": "Cópia importada",
-    "No documents indexed.": "Não há documentos indexados.",
-    "Search works locally. Sending excerpts to an AI provider requires enabling documents for the conversation and reviewing the excerpts before sending.":
-        "A pesquisa funciona localmente. Para enviar excertos a um fornecedor de IA, ativa os documentos nesta conversa e revê os excertos antes do envio.",
-    "Document snapshots imported. Sources will not refresh automatically.": "Cópias dos documentos importadas. A origem não será atualizada automaticamente.",
-    "Selected document snapshot refreshed.": "A cópia do documento escolhido foi atualizada.",
-    "Document removed from the local index. The source file was preserved.": "Documento removido do índice local. O ficheiro original foi preservado.",
-    "Delete all document snapshots from the local index?": "Eliminar todas as cópias de documentos do índice local?",
-    "The original files will be preserved.": "Os ficheiros originais serão preservados.",
-    "Document index cleared. Original files were preserved.": "Índice de documentos limpo. Os ficheiros originais foram preservados.",
-    "Document snapshot removed.": "Cópia do documento removida.",
-    "Document snapshot not found.": "Não encontrei a cópia do documento.",
-    "(excerpt truncated)": "(excerto truncado)",
-    "All document snapshots removed.": "Todas as cópias de documentos foram removidas.",
-    "Use documents clear --yes to remove all local snapshots.": "Usa documents clear --yes para remover todas as cópias locais.",
-    "Use --documents before approving document context.": "Usa --documents antes de aprovar o envio dos excertos.",
-    "Review these excerpts, then repeat with --send-document-context to send them to the model.":
-        "Revê estes excertos e repete com --send-document-context para os enviar ao modelo.",
-})
-
-
-TRANSLATIONS["pt"].update({
-    "Recover history": "Recuperar histórico",
-    "Recover conversation history": "Recuperar histórico de conversas",
-    "Conversation history could not be saved. Recover it before continuing; pending messages have not been discarded.":
-        "Não foi possível guardar o histórico. Recupere-o antes de continuar; as mensagens pendentes não foram descartadas.",
-    "History recovered. Original backup: {path}": "Histórico recuperado. Cópia do original: {path}",
-    "Could not recover history: {error}": "Não foi possível recuperar o histórico: {error}",
-    "The conversation history exceeds the size or nesting limit (16 MiB / 128 levels).":
-        "O histórico excede o limite de tamanho ou profundidade (16 MiB / 128 níveis).",
-    "The conversation history has an invalid or unsupported format.":
-        "O histórico de conversas tem um formato inválido ou não suportado.",
-    "The conversation history could not be read or saved.": "Não foi possível ler ou guardar o histórico de conversas.",
-    "Opening conversation history…": "A abrir o histórico de conversas…",
-    "Back up and start new history": "Fazer backup e iniciar novo histórico",
-    "The original file will be preserved in a private backup before a new history is created. Unknown formats are not converted. Cancelling keeps the original file unchanged.":
-        "O ficheiro original será preservado numa cópia privada antes de criar um novo histórico. Formatos desconhecidos não são convertidos. Cancelar mantém o ficheiro original intacto.",
-    "Preserving the original history and starting a new one…": "A preservar o histórico original e a iniciar um novo…",
-    "Conversation history recovery failed.": "A recuperação do histórico de conversas falhou.",
-    "The original history was preserved at: {path}": "O histórico original foi preservado em: {path}",
-    "The history could not be backed up. It was not reset.": "Não foi possível criar a cópia do histórico. O histórico não foi reposto.",
-    "File operation completed in another conversation: {message}": "Operação de ficheiro concluída noutra conversa: {message}",
-    "Wait for the approved file operation to finish before recovering history.":
-        "Aguarde a conclusão da operação de ficheiro aprovada antes de recuperar o histórico.",
-    "Writing approved file…": "A escrever o ficheiro aprovado…",
-    "Loading file changes…": "A carregar as alterações de ficheiros…",
-    "Preparing recovery review…": "A preparar a revisão da recuperação…",
-    "Recovering approved file…": "A recuperar o ficheiro aprovado…",
-    "Recovery failed: {detail}": "A recuperação falhou: {detail}",
-})

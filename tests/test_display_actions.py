@@ -514,7 +514,7 @@ class TestDisplayService(unittest.TestCase):
         cases.append(json.dumps(outputs))
         for reply in cases:
             with self.subTest(reply=reply):
-                self.service._runner = lambda argv, timeout: (True, reply)
+                self.service._runner = lambda argv, timeout, reply=reply: (True, reply)
                 self.assertIsNone(self.service.apply_mode(self.mode_from_fixture())[0])
 
 

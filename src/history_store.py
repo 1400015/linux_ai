@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import uuid
+from typing import Optional
 
 from .storage import JsonLimitError, atomic_json_write, json_lock, read_json, update_json
 from .task_state import validate_task_state
@@ -301,7 +302,7 @@ class HistoryStore:
         """Normalized provider context: no timestamps or other conversations."""
         return [{"role": entry["role"], "content": entry["content"]} for entry in self.load_entries(session_id)]
 
-    def append(self, role: str, content: str, timestamp: float = None, session_id=None):
+    def append(self, role: str, content: str, timestamp: Optional[float] = None, session_id=None):
         if role not in ("user", "assistant") or not isinstance(content, str) or not content:
             raise ValueError("Invalid conversation message")
         if len(content) > MAX_MESSAGE_CHARS:

@@ -56,8 +56,8 @@ class TestPortalShortcut(unittest.TestCase):
             import gi
             gi.require_version('Gtk', '3.0')
             from gi.repository import GLib
-        except (ImportError, ValueError):
-            raise unittest.SkipTest('GTK3 bindings unavailable')
+        except (ImportError, ValueError) as error:
+            raise unittest.SkipTest('GTK3 bindings unavailable') from error
         cls.GLib = GLib
 
     def setUp(self):
@@ -147,8 +147,8 @@ class TestDesktopActivation(unittest.TestCase):
             from gi.repository import Gtk
             if not Gtk.init_check()[0]:
                 raise unittest.SkipTest('GTK display unavailable; run with xvfb-run')
-        except (ImportError, ValueError):
-            raise unittest.SkipTest('GTK3 unavailable')
+        except (ImportError, ValueError) as error:
+            raise unittest.SkipTest('GTK3 unavailable') from error
 
     def test_show_command_cross_process_activates_primary_without_a_new_app(self):
         root = Path(__file__).resolve().parents[1]

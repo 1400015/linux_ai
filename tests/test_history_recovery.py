@@ -78,7 +78,7 @@ class TestBoundedHistoryRecovery(unittest.TestCase):
     def test_nesting_limit_applies_to_writes_and_ignores_quoted_brackets(self):
         self.path.write_text('[]')
         value = 'leaf'
-        for unused in range(129):
+        for _ in range(129):
             value = [value]
         with self.assertRaises(JsonLimitError):
             atomic_json_write(self.path, value, max_bytes=65536)

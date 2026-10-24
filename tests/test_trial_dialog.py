@@ -76,7 +76,7 @@ class TestTrialDialog(unittest.TestCase):
                 raise unittest.SkipTest('GTK display unavailable')
             from src.trial_dialog import TrialDialog, show_trials
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest(str(error))
+            raise unittest.SkipTest(str(error)) from error
         cls.Gtk, cls.GLib, cls.TrialDialog, cls.show_trials = Gtk, GLib, TrialDialog, staticmethod(show_trials)
 
     def setUp(self):

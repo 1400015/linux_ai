@@ -1,10 +1,7 @@
 import os
-import json
 import time
-import re
 import threading
 from typing import Optional, Dict
-from pathlib import Path
 
 try:
     import gi
@@ -35,6 +32,7 @@ from .i18n import _, get_language
 from .assistant_context import build_system_message
 from .conversation_dialog import show_conversations
 from .app_settings_dialogs import build_settings_dialog, populate_themes_list
+from . import theme_store
 
 from .conversation_actions import ConversationActions
 from .change_journal import ChangeJournal
@@ -46,6 +44,7 @@ from .document_context import display_document_context, with_document_context
 from .document_store import DocumentStore
 from .document_review import review_document_context
 from .request_preparation import RequestPreparationError, prepare_request
+from .request_state import begin_capture, begin_chat, abandon, ensure_request_state
 from .image_dialog import pick_image, review_image
 from .image_attachments import prepare_image
 from .theme_style import (
@@ -139,14 +138,12 @@ class MainWindow(Gtk.Window):
         # only controls whether the button is shown at all.
         self.expert_mode = bool(self.config.get("app.expert_mode", False))
         self.conversation_history = []
-        self.streaming = False
-        self.is_loading = False
-        # Per-request state: each send gets a new id and its own cancel event,
-        # so a cancelled worker can never re-arm itself or corrupt the next
-        # request (see _process_message / _finalize_response).
-        self._request_seq = 0
-        self._active_request = 0
-        self._cancel_event = threading.Event()
+        # Per-request state: each send/capture gets a new id and its own cancel
+        # event, so a cancelled worker can never re-arm itself or corrupt the
+        # next request. The state machine lives in RequestState (GTK-free); the
+        # five legacy names below remain read/write attributes over it because
+        # tests and callbacks assign them directly.
+        ensure_request_state(self)
         self._pending_image = None
         self._pending_image_destination = None
         self._document_store = None
@@ -192,6 +189,61 @@ class MainWindow(Gtk.Window):
 
         logger.info("Main window initialized")
 
+    # -- request lifecycle ------------------------------------------------
+    # The five names below are the window's historical surface for the
+    # per-request state. Tests and idle callbacks read *and* assign them
+    # directly, so they stay writable; the values themselves are owned by
+    # RequestState, which is GTK-free and testable on its own.
+
+    def _ensure_request_state(self):
+        """Return the request state, creating it for `__new__`-built windows.
+
+        Tests assemble a MainWindow via `__new__` (skipping `__init__`) and
+        assign the five attributes directly, so the first access has to
+        materialise the state object before those assignments can land.
+        """
+        return ensure_request_state(self)
+
+    @property
+    def _request_seq(self):
+        return self._ensure_request_state()._request_seq
+
+    @_request_seq.setter
+    def _request_seq(self, value):
+        self._ensure_request_state()._request_seq = value
+
+    @property
+    def _active_request(self):
+        return self._ensure_request_state()._active_request
+
+    @_active_request.setter
+    def _active_request(self, value):
+        self._ensure_request_state()._active_request = value
+
+    @property
+    def _cancel_event(self):
+        return self._ensure_request_state()._cancel_event
+
+    @_cancel_event.setter
+    def _cancel_event(self, event):
+        self._ensure_request_state()._cancel_event = event
+
+    @property
+    def is_loading(self):
+        return self._ensure_request_state().is_loading
+
+    @is_loading.setter
+    def is_loading(self, value):
+        self._ensure_request_state().is_loading = value
+
+    @property
+    def streaming(self):
+        return self._ensure_request_state().streaming
+
+    @streaming.setter
+    def streaming(self, value):
+        self._ensure_request_state().streaming = value
+
     def _setup_notifications(self):
         """Configure system notifications"""
         self.notifications_enabled = False
@@ -201,14 +253,14 @@ class MainWindow(Gtk.Window):
                 self.notifications_enabled = True
                 logger.info("System notifications enabled")
         except Exception as e:
-            logger.warning(f"Could not enable notifications: {e}")
+            logger.warning("Could not enable notifications: %s", e)
 
     def _on_realize_dock(self, widget):
         """Apply dock struts once the GdkWindow exists (X11 needs it)."""
         if self.dock_method == "layer-shell":
             return  # already applied pre-realize on Wayland
         self.dock_method = dock.apply_dock(self, self._dock_edge, self._dock_width)
-        logger.info(f"Dock applied via {self.dock_method}")
+        logger.info("Dock applied via %s", self.dock_method)
 
     def _reapply_dock(self):
         """Re-apply dock/float settings after they change in the dialog."""
@@ -219,7 +271,7 @@ class MainWindow(Gtk.Window):
             self.set_decorated(False)
             if self.get_realized():
                 self.dock_method = dock.apply_dock(self, self._dock_edge, self._dock_width)
-                logger.info(f"Dock re-applied via {self.dock_method}")
+                logger.info("Dock re-applied via %s", self.dock_method)
             # otherwise _on_realize_dock will handle it
         else:
             self.set_decorated(True)
@@ -261,9 +313,9 @@ class MainWindow(Gtk.Window):
             try:
                 n = notify2.Notification(title, message, icon)
                 n.show()
-                logger.debug(f"Notification shown: {title}")
+                logger.debug("Notification shown: %s", title)
             except Exception as e:
-                logger.error(f"Error showing notification: {e}")
+                logger.error("Error showing notification: %s", e)
 
     def _setup_keybindings(self):
         """Set up keyboard shortcuts"""
@@ -314,7 +366,7 @@ class MainWindow(Gtk.Window):
             try:
                 Gtk.StyleContext.remove_provider_for_screen(self.get_screen(), previous)
             except Exception as e:
-                logger.warning(f"Could not remove previous CSS provider: {e}")
+                logger.warning("Could not remove previous CSS provider: %s", e)
         style_provider = Gtk.CssProvider()
 
         # Get cores do tema
@@ -785,8 +837,15 @@ class MainWindow(Gtk.Window):
         if self._settings_notebook is None:
             self._show_config_dialog()
             return
-        # Themes is the third page (API, Appearance, Themes, Features)
-        self._settings_notebook.set_current_page(2)
+        # Resolve the page by its label, never by index: an "Assistance" page
+        # was inserted later and a hardcoded 2 silently opened Appearance.
+        notebook = self._settings_notebook
+        target = _("Themes")
+        for index in range(notebook.get_n_pages()):
+            label = notebook.get_tab_label_text(notebook.get_nth_page(index)) or ""
+            if target in label:
+                notebook.set_current_page(index)
+                return
 
     def on_add_theme_clicked(self, button):
         """Add a new theme"""
@@ -852,9 +911,11 @@ class MainWindow(Gtk.Window):
 
         if response == Gtk.ResponseType.OK:
             theme_name = name_entry.get_text().strip()
-            # The name becomes a file name: reject anything that is not a
-            # simple identifier (path separators, "..", spaces, etc.).
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", theme_name):
+            # The name becomes a file name: theme_store rejects anything that
+            # is not a simple identifier (path separators, "..", spaces, etc.).
+            try:
+                theme_store.validate_theme_name(theme_name)
+            except ValueError:
                 self.show_notification(
                     "Linux AI Assistant",
                     _("A theme name is required (letters, digits, '-' or '_', max 64)")
@@ -880,14 +941,10 @@ class MainWindow(Gtk.Window):
                 }
             }
 
-            # Save theme
-            themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
-            themes_dir.mkdir(parents=True, exist_ok=True)
-            theme_file = themes_dir / f"{theme_name}.json"
-
+            # Save theme: theme_store owns the directory, the validation of
+            # every colour and the atomic 0600 write.
             try:
-                with open(theme_file, 'w', encoding='utf-8') as f:
-                    json.dump(theme, f, indent=2, ensure_ascii=False)
+                theme_store.save_theme(theme)
 
                 self.show_notification("Linux AI Assistant", f"Theme '{theme_name}' created")
                 self._populate_themes_list()
@@ -911,9 +968,9 @@ class MainWindow(Gtk.Window):
             return
 
         # Do not allow removing built-in themes (they ship with the app,
-        # under the package's themes dir, not the user's)
-        predefined_themes = ["dark", "light", "dracula", "solarized-dark"]
-        if theme_name in predefined_themes:
+        # under the package's themes dir, not the user's). The list is derived
+        # from the bundled directory by theme_store, never hardcoded here.
+        if theme_store.is_builtin(theme_name):
             self.show_notification("Linux AI Assistant", _("Cannot remove built-in themes"))
             return
 
@@ -930,17 +987,11 @@ class MainWindow(Gtk.Window):
         dialog.destroy()
 
         if response == Gtk.ResponseType.YES:
-            themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
-            theme_file = themes_dir / f"{theme_name}.json"
-
             try:
-                # Resolve and confirm the target really is inside the
-                # user's themes dir before deleting.
-                resolved = theme_file.resolve()
-                if resolved.parent != themes_dir.resolve():
-                    raise ValueError(f"Refusing to delete outside themes dir: {resolved}")
-                if resolved.exists():
-                    resolved.unlink()
+                # theme_store validates the name, re-checks that it is not
+                # built-in and resolves the target before unlinking, so this
+                # cannot delete outside the user's themes dir.
+                if theme_store.remove_theme(theme_name) is not None:
                     self.show_notification("Linux AI Assistant", f"Theme '{theme_name}' removed")
                     self._populate_themes_list()
             except Exception as e:
@@ -1005,7 +1056,7 @@ class MainWindow(Gtk.Window):
         # Button to reset statistics
         def _reset_stats(btn):
             self.ai_client.reset_token_usage()
-            for provider, tokens_label in token_labels:
+            for _provider, tokens_label in token_labels:
                 tokens_label.set_text("Input: 0, Output: 0, Total: 0")
         reset_btn = Gtk.Button(label=_("Reset Statistics"))
         reset_btn.connect("clicked", _reset_stats)
@@ -1051,7 +1102,7 @@ class MainWindow(Gtk.Window):
 
         self.chat_view.append_message(_('User'), message, "user-message")
         self.chat_view.scroll_to_bottom()
-        logger.debug(f"User message added: {message[:50]}...")
+        logger.debug("User message added: %s...", message[:50])
 
     def _add_ai_message(self, message: str, streaming: bool = False):
         """Add an AI message to the chat"""
@@ -1066,13 +1117,13 @@ class MainWindow(Gtk.Window):
             self.chat_view.append_message(_('AI'), message, "ai-message")
             self.chat_view.scroll_to_bottom()
 
-        logger.debug(f"AI message added: {message[:50]}...")
+        logger.debug("AI message added: %s...", message[:50])
 
     def _add_system_message(self, message: str):
         """Add a system message to the chat"""
         self.chat_view.append_message(_('System'), message, "system-message")
         self.chat_view.scroll_to_bottom()
-        logger.debug(f"System message: {message}")
+        logger.debug("System message: %s", message)
 
     def _add_loading_message(self, request_id=None, cancel_event=None):
         """Add a loading message (delegado ao ChatView, com guarda de pedido:
@@ -1174,13 +1225,9 @@ class MainWindow(Gtk.Window):
         self.status_icon.set_tooltip_text(detail)
 
     def _cancel_for_session_change(self):
-        self._cancel_event.set()
-        self._request_seq += 1
-        self._active_request = self._request_seq
         # Workers retain the cancelled event they were given. A fresh event
         # lets the selected/recovered conversation render its stored replies.
-        self._cancel_event = threading.Event()
-        self.is_loading = self.streaming = False
+        abandon(self)
         self.cancel_btn.set_sensitive(False)
         self.chat_view.abort_stream()
         self.chat_view.clear_loading()
@@ -1247,7 +1294,7 @@ class MainWindow(Gtk.Window):
 
         if len(messages) > max_messages:
             logger.debug(
-                f"Context truncated from {len(messages)} to {max_messages} messages"
+                "Context truncated from %s to %s messages", len(messages), max_messages
             )
             messages = messages[-max_messages:]
 
@@ -1298,7 +1345,7 @@ class MainWindow(Gtk.Window):
             ]
             return "\n".join(lines) + "\n"
         except Exception as e:
-            logger.warning(f"Error getting system info for context: {e}")
+            logger.warning("Error getting system info for context: %s", e)
             return ""
 
     def on_input_activate(self, entry):
@@ -1378,16 +1425,10 @@ class MainWindow(Gtk.Window):
 
         # Per-request state: fresh id + cancel event. A worker that is
         # still draining after a cancel can no longer touch this request.
-        self._request_seq += 1
-        request_id = self._request_seq
-        cancel_event = threading.Event()
-        self._cancel_event = cancel_event
-        self._active_request = request_id
+        request_id, cancel_event = begin_chat(self)
         self.chat_view.abort_stream()
 
         # Update state
-        self.is_loading = True
-        self.streaming = True
         self.cancel_btn.set_sensitive(True)
         self.status_icon.set_from_icon_name("process-working-symbolic", Gtk.IconSize.MENU)
         self.status_icon.set_tooltip_text(_("Processing..."))
@@ -1558,7 +1599,7 @@ class MainWindow(Gtk.Window):
                     try:
                         action = propose(message, get_language())
                     except Exception as exc:
-                        logger.error("Could not prepare a confirmed action: %s", exc, exc_info=True)
+                        logger.exception("Could not prepare a confirmed action: %s", exc)
 
             cancelled = cancel_event.is_set()
             if images or document_context:
@@ -1571,7 +1612,7 @@ class MainWindow(Gtk.Window):
                               request_id, cancel_event)
 
         except Exception as e:
-            logger.error(f"Error processing message: {e}", exc_info=True)
+            logger.exception("Error processing message: %s", e)
             GLib.idle_add(self._abort_ai_stream_if_active, request_id)
             GLib.idle_add(self._add_system_message_if_active, request_id,
                           cancel_event, _("Error: {error}").format(error=e))
@@ -2026,14 +2067,7 @@ class MainWindow(Gtk.Window):
 
         # A capture is its own request. Reusing a cancelled chat's event would
         # discard a new capture, and reusing its ID lets old callbacks alter it.
-        previous_event = getattr(self, '_cancel_event', None)
-        if previous_event is not None:
-            previous_event.set()
-        capture_request = max(getattr(self, '_request_seq', 0) or 0,
-                              getattr(self, '_active_request', 0) or 0) + 1
-        self._request_seq = self._active_request = capture_request
-        capture_event = threading.Event()
-        self._cancel_event = capture_event
+        capture_request, capture_event = begin_capture(self)
         capture_session = getattr(getattr(self, 'history_store', None), 'active_session_id', None)
         ocr_enabled = self.config.get("features.ocr_enabled", True)
 
@@ -2060,8 +2094,7 @@ class MainWindow(Gtk.Window):
                 self._add_system_message(_("Could not save the message: {error}").format(error=error))
 
         self._add_system_message(_("Capturing screen..."))
-        self.is_loading = True
-        self.streaming = False
+        # begin_capture already raised is_loading and cleared streaming.
         cancel_button = getattr(self, 'cancel_btn', None)
         if cancel_button is not None:
             cancel_button.set_sensitive(True)
@@ -2105,7 +2138,7 @@ class MainWindow(Gtk.Window):
                     queue(self._add_system_message, _("Error capturing screen: {detail}").format(detail=image_path))
 
             except Exception as e:
-                logger.error(f"Error in screen capture: {e}", exc_info=True)
+                logger.exception("Error in screen capture: %s", e)
                 queue(self._add_system_message, _("Error: {error}").format(error=e))
             finally:
                 if temporary_image is not None:
@@ -2182,7 +2215,7 @@ class MainWindow(Gtk.Window):
         tray = getattr(self.app, "tray_icon", None)
         if tray is not None:
             tray.update_expert_mode(self.expert_mode)
-        logger.info(f"Expert mode {'enabled' if self.expert_mode else 'disabled'}")
+        logger.info("Expert mode %s", "enabled" if self.expert_mode else "disabled")
 
     def on_close_clicked(self):
         """Handler for closing the window."""
@@ -2199,7 +2232,7 @@ class MainWindow(Gtk.Window):
             width, height = self.get_size()
             self.config.set_window_geometry(width, height, x, y)
         except Exception as e:
-            logger.warning(f"Could not save window geometry: {e}")
+            logger.warning("Could not save window geometry: %s", e)
         # Persistir qualquer alteracao pendente antes de sair
         self.config.flush()
         # Drain the history writer so the last messages reach history.json

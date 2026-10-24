@@ -100,7 +100,7 @@ class TestConversationalGTK(unittest.TestCase):
                 raise unittest.SkipTest('GTK display unavailable')
             from src import main_window
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         cls.module, cls.Gtk = main_window, Gtk
 
     def window(self):

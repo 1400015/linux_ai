@@ -14,7 +14,7 @@ class TestDockKeyboard(unittest.TestCase):
         try:
             from src import dock
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         cls.dock = dock
 
     def shell(self, protocol=4):
@@ -102,7 +102,7 @@ class TestFeatureVisibility(unittest.TestCase):
                 raise unittest.SkipTest('GTK display unavailable; run with xvfb-run')
             from src.main_window import MainWindow
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         cls.MainWindow = MainWindow
 
     @contextmanager
