@@ -60,6 +60,11 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Fixed
 
+- Two test modules imported the theme sanitisers from `src.main_window`,
+  which stopped re-exporting them in an earlier refactor: with GTK present
+  the imports failed and became unexpected skips, failing the CI `gtk` job.
+  They now import from `src.theme_style`, and the sanitisation tests run
+  headless instead of silently skipping without GTK.
 - `test_id_like_is_used_as_fallback` exercised no fallback: `linuxmint` is
   mapped directly and the assertion accepted either of two distro managers.
   It now pins an unknown ID resolving through `ID_LIKE`, plus a case where a

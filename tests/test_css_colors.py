@@ -12,7 +12,11 @@ class TestGtkCssColors(unittest.TestCase):
             gi.require_version('Gtk', '3.0')
             gi.require_version('Gdk', '3.0')
             from gi.repository import Gdk, Gtk
-            from src.main_window import MainWindow, contrasting_text_color, safe_color
+            from src.main_window import MainWindow
+            # O sanitiser de cores vive em theme_style desde o refactor;
+            # importar daqui falhava e fazia skip em CI (gtk job rejeita skips
+            # inesperados).
+            from src.theme_style import contrasting_text_color, safe_color
         except (ImportError, ValueError) as error:
             raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         if not Gtk.init_check()[0]:
