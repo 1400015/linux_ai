@@ -1409,3 +1409,10 @@ def offline_service_action(lang, action):
     """Localized verb for a service action, English fallback."""
     catalog = OFFLINE_SERVICE_ACTIONS.get(lang) or OFFLINE_SERVICE_ACTIONS["en"]
     return catalog[action]
+
+
+# Extended ES/FR/DE translations live in a separate module to keep this
+# file manageable. Importing it merges the additional keys into TRANSLATIONS.
+from .i18n_extended import apply_extended_translations as _apply_extended_translations  # noqa: E402
+
+_apply_extended_translations()

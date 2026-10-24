@@ -12,6 +12,10 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/i18n_extended.py`: extended ES/FR/DE translations (~140 new keys per
+  language, up from 94). Coverage improved from 23% to 44% for each of
+  Spanish, French and German. Remaining keys fall back to English.
+  Translations are merged at import time via `apply_extended_translations()`.
 - `src/chat_controller.py`: GTK-free chat orchestration extracted from
   `main_window.py` — message building (`build_request_messages`,
   `build_context_message`, `build_full_history`), stream coalescing
