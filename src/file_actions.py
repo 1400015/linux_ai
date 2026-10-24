@@ -19,6 +19,7 @@ from xml.sax.saxutils import escape
 
 from .process_output import run_bounded
 from .privileged_write import FileOperationError, is_sensitive_path
+from .safe_paths import expand_path, is_within
 
 try:
     from .render_core import FileBlock
@@ -44,7 +45,7 @@ def is_privileged_path(path):
     pkexec desnecessariamente.
     """
     home = os.path.realpath(os.path.expanduser("~"))
-    real = os.path.realpath(os.path.expanduser(path))
+    real = expand_path(path)
     return not (real == home or real.startswith(home + os.sep))
 
 
@@ -54,17 +55,20 @@ def is_allowed_path(path, allowed_dirs=None):
     The AI file-block path is the only write entry point. It must honour
     `permissions.allowed_edit_dirs`; otherwise expert mode could write
     anywhere via pkexec. Confirmed writes go through the change journal.
+
+    Delegates containment to ``safe_paths.is_within`` (commonpath-based) so a
+    sibling sharing a name prefix is rejected; sensitive paths are still
+    checked by ``privileged_write.is_sensitive_path`` which covers account
+    files and backup naming conventions.
     """
-    real = os.path.realpath(os.path.expanduser(path))
+    real = expand_path(path)
     if is_sensitive_path(real):
         return False
     home = os.path.realpath(os.path.expanduser("~"))
     if real == home or real.startswith(home + os.sep):
         return True
     for allowed_dir in allowed_dirs or ():
-        allowed_real = os.path.realpath(os.path.expanduser(allowed_dir))
-        prefix = allowed_real if allowed_real.endswith(os.sep) else allowed_real + os.sep
-        if real == allowed_real or real.startswith(prefix):
+        if is_within(real, allowed_dir):
             return True
     return False
 

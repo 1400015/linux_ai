@@ -11,6 +11,7 @@ import time
 from .action_audit import record_command
 from .action_contract import ActionDefinition, ActionResult
 from .package_actions import _run
+from .safe_paths import is_within_any
 
 
 class ChecksumAdapter:
@@ -29,7 +30,7 @@ class ChecksumAdapter:
         if not path.is_absolute():
             raise ValueError('Use an absolute file path')
         path = path.resolve(strict=True)
-        if not any(path == allowed or allowed in path.parents for allowed in self.allowed_dirs):
+        if not is_within_any(path, self.allowed_dirs):
             raise ValueError('Checksum path is outside the permitted directories')
         metadata = os.stat(path, follow_symlinks=False)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 8 * 1024**3:

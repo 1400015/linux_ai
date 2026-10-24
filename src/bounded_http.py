@@ -12,7 +12,9 @@ import socket
 import threading
 import time
 import zlib
+from typing import Any, Callable, Iterator, Optional, TypeVar, Union
 
+from requests import Response
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
@@ -23,15 +25,23 @@ _STATE_ATTRIBUTE = "_linux_ai_bounded_http_reader"
 _POLL_SECONDS = 0.05
 _END = object()
 
+T = TypeVar("T")
+RequestCall = Callable[[], Response]
+CancelEvent = threading.Event
+
 
 class HTTPReadError(ValueError):
     """A body could not be read; messages contain no provider body or URL."""
 
-    def __init__(self, message, retryable_network_failure=None):
+    def __init__(
+        self,
+        message: str,
+        retryable_network_failure: Optional[str] = None,
+    ) -> None:
         super().__init__(message)
         # Preserve only a fixed classification, never the original exception,
         # whose message/traceback may contain a URL, response or credentials.
-        self.retryable_network_failure = retryable_network_failure
+        self.retryable_network_failure: Optional[str] = retryable_network_failure
 
 
 class HTTPReadLimitError(HTTPReadError):
@@ -43,20 +53,20 @@ class HTTPReadCancelled(Exception):
 
 
 class _ReaderState:
-    def __init__(self):
+    def __init__(self) -> None:
         self.stop = threading.Event()
         self.done = threading.Event()
         self.read_finished = threading.Event()
 
 
-def _response_raw(response):
+def _response_raw(response: Any) -> Any:
     # Mock/shim objects may fabricate every queried attribute dynamically.
     # Requests stores raw explicitly, as do supported custom transports.
     attributes = getattr(response, "__dict__", {})
     return attributes.get("raw") if isinstance(attributes, dict) else None
 
 
-def abort_response(response):
+def abort_response(response: Any) -> None:
     """Interrupt an active Requests socket without waiting for its read lock.
 
     Calling Response.close while another thread reads its buffered HTTP file
@@ -84,7 +94,7 @@ def abort_response(response):
             pass
 
 
-def close_response(response):
+def close_response(response: Any) -> None:
     """Close a response without waiting for a managed reader to finish.
 
     Use this instead of a Requests response context manager when cancellation
@@ -99,7 +109,11 @@ def close_response(response):
     response.close()
 
 
-def bounded_request(call, max_seconds, cancel_event=None):
+def bounded_request(
+    call: RequestCall,
+    max_seconds: Union[int, float],
+    cancel_event: Optional[CancelEvent] = None,
+) -> Response:
     """Obtain response headers within a total deadline without changing TLS.
 
     ``call`` performs the ordinary streaming Requests call, including its own
@@ -116,9 +130,9 @@ def bounded_request(call, max_seconds, cancel_event=None):
     abandoned = threading.Event()
     handoff = threading.Lock()
     finished = threading.Event()
-    mailbox = queue.Queue(maxsize=1)
+    mailbox: "queue.Queue[Union[Response, HTTPReadError]]" = queue.Queue(maxsize=1)
 
-    def check():
+    def check() -> None:
         if cancel_event is not None and cancel_event.is_set():
             raise HTTPReadCancelled("HTTP request was cancelled.")
         if time.monotonic() >= deadline:
@@ -129,17 +143,17 @@ def bounded_request(call, max_seconds, cancel_event=None):
     if not slots.acquire(blocking=False):
         raise HTTPReadLimitError("No bounded HTTP request reader is available.")
 
-    def request_headers():
-        response = None
+    def request_headers() -> None:
+        response: Optional[Response] = None
         try:
             try:
                 response = call()
                 if not callable(getattr(response, "close", None)):
                     response = None
                     raise HTTPReadError("HTTP request returned an invalid response.")
-                result = response
+                result: Union[Response, HTTPReadError] = response
             except Exception as error:
-                failure = None
+                failure: Optional[str] = None
                 if isinstance(error, RequestsTimeout):
                     failure = "timeout"
                 elif isinstance(error, RequestsConnectionError):
@@ -150,12 +164,13 @@ def bounded_request(call, max_seconds, cancel_event=None):
             while not accepted.is_set() and not stopped.is_set() and time.monotonic() < deadline:
                 accepted.wait(_POLL_SECONDS)
         finally:
+            close_late_response = False
             with handoff:
                 close_late_response = response is not None and not accepted.is_set()
                 if close_late_response:
                     abandoned.set()
             try:
-                if close_late_response:
+                if close_late_response and response is not None:
                     response.close()
             except Exception:
                 pass
@@ -192,7 +207,7 @@ def bounded_request(call, max_seconds, cancel_event=None):
             slots.release()
 
 
-def _raw_chunks(response, chunk_size):
+def _raw_chunks(response: Any, chunk_size: int) -> Iterator[bytes]:
     raw = _response_raw(response)
     read = getattr(raw, "read1", None)
     if not callable(read):
@@ -215,7 +230,13 @@ def _raw_chunks(response, chunk_size):
                 yield chunk
 
 
-def _decoded_chunks(response, chunk_size, max_bytes, max_wire_bytes, check):
+def _decoded_chunks(
+    response: Any,
+    chunk_size: int,
+    max_bytes: int,
+    max_wire_bytes: int,
+    check: Callable[[], None],
+) -> Iterator[bytes]:
     raw = _response_raw(response)
     raw_read = callable(getattr(raw, "read", None)) or callable(getattr(raw, "read1", None))
     encoding = "identity"
@@ -280,8 +301,14 @@ def _decoded_chunks(response, chunk_size, max_bytes, max_wire_bytes, check):
         raise HTTPReadError("HTTP response contains incomplete compressed data.")
 
 
-def iter_chunks(response, max_bytes, max_seconds, cancel_event=None, chunk_size=8192,
-                max_wire_bytes=None):
+def iter_chunks(
+    response: Any,
+    max_bytes: int,
+    max_seconds: Union[int, float],
+    cancel_event: Optional[CancelEvent] = None,
+    chunk_size: int = 8192,
+    max_wire_bytes: Optional[int] = None,
+) -> Iterator[bytes]:
     """Yield byte chunks within a total deadline and a decoded-body limit.
 
     The deadline includes waiting for socket data and decompression. Cancellation
@@ -304,7 +331,7 @@ def iter_chunks(response, max_bytes, max_seconds, cancel_event=None, chunk_size=
     deadline = time.monotonic() + max_seconds
     state = _ReaderState()
 
-    def check():
+    def check() -> None:
         if state.stop.is_set() or (cancel_event is not None and cancel_event.is_set()):
             raise HTTPReadCancelled("HTTP response reading was cancelled.")
         if time.monotonic() >= deadline:
@@ -323,9 +350,9 @@ def iter_chunks(response, max_bytes, max_seconds, cancel_event=None, chunk_size=
     except Exception:
         slots.release()
         raise HTTPReadError("HTTP response does not support bounded reading.") from None
-    mailbox = queue.Queue(maxsize=1)
+    mailbox: "queue.Queue[Any]" = queue.Queue(maxsize=1)
 
-    def send(item):
+    def send(item: Any) -> None:
         while not state.stop.is_set():
             try:
                 mailbox.put(item, timeout=_POLL_SECONDS)
@@ -333,7 +360,7 @@ def iter_chunks(response, max_bytes, max_seconds, cancel_event=None, chunk_size=
             except queue.Full:
                 check()
 
-    def read_body():
+    def read_body() -> None:
         try:
             for chunk in _decoded_chunks(response, chunk_size, max_bytes, max_wire_bytes, check):
                 check()

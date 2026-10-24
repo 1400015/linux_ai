@@ -102,6 +102,11 @@ files = [
     "src/build_info.py",
     "src/system_context.py",
     "src/credential_store.py",
+    "src/command_policy.py",
+    "src/bounded_http.py",
+    "src/history_store.py",
+    "src/ai_client.py",
+    "src/safe_paths.py",
 ]
 # Read the types of imported modules without gating their existing diagnostics.
 # Only the explicitly selected sources above belong to this first increment.

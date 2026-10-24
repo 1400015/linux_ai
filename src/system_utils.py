@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 from .command_policy import validate_arguments
 from .process_output import CLEANUP_UNCERTAINTY, run_bounded
 from .log_privacy import redact_command
+from .safe_paths import is_within
 
 # Maximum bytes retained from a diagnostic process.
 MAX_COMMAND_OUTPUT = 1_000_000
@@ -130,18 +131,13 @@ class SystemUtils:
         ("/etc/../root") and symlinks cannot escape, and compared with
         `commonpath` so that a sibling sharing a name prefix
         ("/etcfoo" vs "/etc") is not accepted.
+
+        Delegates containment to ``safe_paths.is_within``.
         """
         try:
-            real = os.path.realpath(os.path.expanduser(path))
-
             for allowed_dir in self.allowed_edit_dirs:
-                allowed_real = os.path.realpath(os.path.expanduser(allowed_dir))
-                try:
-                    if os.path.commonpath([real, allowed_real]) == allowed_real:
-                        return True
-                except ValueError:
-                    # Paths on different roots (e.g. separate mounts)
-                    continue
+                if is_within(path, allowed_dir):
+                    return True
 
             logger.warning("Path not allowed: %s", path)
             return False

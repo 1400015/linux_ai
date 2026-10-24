@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import uuid
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from .storage import JsonLimitError, atomic_json_write, json_lock, read_json, update_json
 from .task_state import validate_task_state
@@ -34,21 +34,25 @@ HISTORY_VERSION = 1
 EXPORT_FORMAT = "linux-ai-conversation"
 LEGACY_SESSION_ID = "legacy"
 
+Message = Dict[str, Any]
+Session = Dict[str, Any]
+Document = Dict[str, Any]
 
-def _title(value):
+
+def _title(value: Any) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 200:
         raise ValueError("Conversation title must contain 1–200 characters")
     return value.strip()
 
 
-def _timestamp(value, default=None):
+def _timestamp(value: Any, default: Optional[float] = None) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if 0 <= value < 253402300800 and math.isfinite(value):
-            return value
+            return float(value)
     return time.time() if default is None else default
 
 
-def _preview_display(value):
+def _preview_display(value: str) -> str:
     """Make control characters visible in GTK and terminal import previews."""
     return "".join("\\u{:04x}".format(ord(character))
                    if (ord(character) < 32 and character not in "\n\t")
@@ -58,11 +62,11 @@ def _preview_display(value):
                    else character for character in value)
 
 
-def _file_identity(info):
+def _file_identity(info: os.stat_result) -> tuple:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
-def _diagnostic_state(value):
+def _diagnostic_state(value: Any) -> Dict[str, Any]:
     """Only an article identity and bounded step; never instructions or commands."""
     if not isinstance(value, dict) or set(value) != {"id", "step"}:
         raise ValueError("Invalid diagnostic state")
@@ -74,10 +78,10 @@ def _diagnostic_state(value):
     return {"id": identifier, "step": step}
 
 
-def _entries(items, session_id=None):
+def _entries(items: Any, session_id: Optional[str] = None) -> List[Message]:
     if not isinstance(items, list):
         return []
-    result = []
+    result: List[Message] = []
     for item in items:
         if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
             continue
@@ -86,14 +90,18 @@ def _entries(items, session_id=None):
             continue
         if session_id is not None and item.get("session_id", LEGACY_SESSION_ID) != session_id:
             continue
-        entry = {"role": item["role"], "content": content}
+        entry: Message = {"role": item["role"], "content": content}
         if "timestamp" in item:
             entry["timestamp"] = _timestamp(item["timestamp"], 0)
         result.append(entry)
     return result
 
 
-def _new_session(title="New conversation", session_id=None, messages=None):
+def _new_session(
+    title: str = "New conversation",
+    session_id: Optional[str] = None,
+    messages: Optional[List[Message]] = None,
+) -> Session:
     now = time.time()
     return {
         "id": session_id or uuid.uuid4().hex,
@@ -105,7 +113,7 @@ def _new_session(title="New conversation", session_id=None, messages=None):
     }
 
 
-def _document(loaded):
+def _document(loaded: Any) -> Document:
     if isinstance(loaded, dict) and type(loaded.get("version")) is int and loaded["version"] == HISTORY_VERSION:
         sessions = loaded.get("sessions")
         if not isinstance(sessions, list) or not sessions or len(sessions) > MAX_SESSIONS:
@@ -148,20 +156,20 @@ def _document(loaded):
                      "Use history recover --yes to back it up and start a new history.")
 
 
-def _find(document, session_id):
+def _find(document: Document, session_id: str) -> Session:
     for session in document["sessions"]:
         if session.get("id") == session_id:
             return session
     raise ValueError("Conversation does not exist")
 
 
-def _metadata(session):
+def _metadata(session: Session) -> Dict[str, Any]:
     result = {key: session[key] for key in ("id", "title", "created_at", "updated_at", "archived")}
     result["message_count"] = len(session["messages"])
     return result
 
 
-def _ensure_active(document):
+def _ensure_active(document: Document) -> None:
     active = document.get("active_session_id")
     if any(session["id"] == active and not session["archived"] for session in document["sessions"]):
         return
@@ -179,27 +187,27 @@ def _ensure_active(document):
 class HistoryStore:
     """FIFO history writer with synchronous, atomic session management."""
 
-    def __init__(self, path=None, max_messages: int = MAX_HISTORY_MESSAGES):
+    def __init__(self, path: Optional[Union[str, Path]] = None, max_messages: int = MAX_HISTORY_MESSAGES) -> None:
         self.path = Path(path) if path else Path.home() / ".config" / "linux_ai_assistant" / "history.json"
         if not isinstance(max_messages, int) or max_messages < 1:
             raise ValueError("max_messages must be positive")
         self.max_messages = max_messages
-        self._queue = queue.SimpleQueue()
+        self._queue: "queue.SimpleQueue[Any]" = queue.SimpleQueue()
         self._closed = False
         self._state_lock = threading.Lock()
-        self.last_error = None
+        self.last_error: Optional[Exception] = None
         loaded = self._read()
-        self._session_id = loaded.get("active_session_id", LEGACY_SESSION_ID) if isinstance(loaded, dict) else LEGACY_SESSION_ID
-        self._generation = loaded.get("recovery_generation") if isinstance(loaded, dict) else None
+        self._session_id: str = loaded.get("active_session_id", LEGACY_SESSION_ID) if isinstance(loaded, dict) else LEGACY_SESSION_ID
+        self._generation: Optional[str] = loaded.get("recovery_generation") if isinstance(loaded, dict) else None
         self._writer = threading.Thread(target=self._loop, name="history-writer", daemon=True)
         self._writer.start()
         atexit.register(self.close)
 
     @property
-    def active_session_id(self):
+    def active_session_id(self) -> str:
         return self._session_id
 
-    def _read(self):
+    def _read(self) -> Union[List[Message], Document]:
         try:
             loaded = read_json(self.path, MAX_HISTORY_BYTES)
             self._adopt_recovery(loaded)
@@ -212,7 +220,7 @@ class HistoryStore:
             logging.getLogger(__name__).error("Error loading history: %s", error)
             return []
 
-    def _adopt_recovery(self, document):
+    def _adopt_recovery(self, document: Any) -> None:
         if not isinstance(document, dict) or not hasattr(self, "_generation"):
             return
         generation = document.get("recovery_generation")
@@ -226,7 +234,10 @@ class HistoryStore:
                 self._session_id = document["active_session_id"]
 
     @staticmethod
-    def recover_file(path=None, confirmed=False):
+    def recover_file(
+        path: Optional[Union[str, Path]] = None,
+        confirmed: bool = False,
+    ) -> Optional[Path]:
         """Explicitly preserve all bytes privately before starting fresh.
 
         Unknown versions are never interpreted or downgraded. The stable lock
@@ -268,7 +279,7 @@ class HistoryStore:
         except BaseException as error:
             if backup is not None:
                 if complete:
-                    error.recovery_backup = backup
+                    error.recovery_backup = backup  # type: ignore[attr-defined]
                 else:
                     try:
                         backup.unlink()
@@ -277,16 +288,16 @@ class HistoryStore:
             raise
         return backup
 
-    def recover(self, confirmed=False):
+    def recover(self, confirmed: bool = False) -> Optional[Path]:
         backup = self.recover_file(self.path, confirmed=confirmed)
         self._read()
         if not self.flush():
             error = OSError("History was backed up and reset, but pending messages could not be saved")
-            error.recovery_backup = backup
+            error.recovery_backup = backup  # type: ignore[attr-defined]
             raise error from self.last_error
         return backup
 
-    def load_entries(self, session_id=None):
+    def load_entries(self, session_id: Optional[str] = None) -> List[Message]:
         """Read only the selected conversation, preserving message timestamps."""
         self.flush()
         loaded = self._read()
@@ -298,11 +309,17 @@ class HistoryStore:
         except ValueError:
             return []
 
-    def load_messages(self, session_id=None):
+    def load_messages(self, session_id: Optional[str] = None) -> List[Dict[str, str]]:
         """Normalized provider context: no timestamps or other conversations."""
         return [{"role": entry["role"], "content": entry["content"]} for entry in self.load_entries(session_id)]
 
-    def append(self, role: str, content: str, timestamp: Optional[float] = None, session_id=None):
+    def append(
+        self,
+        role: str,
+        content: str,
+        timestamp: Optional[float] = None,
+        session_id: Optional[str] = None,
+    ) -> None:
         if role not in ("user", "assistant") or not isinstance(content, str) or not content:
             raise ValueError("Invalid conversation message")
         if len(content) > MAX_MESSAGE_CHARS:
@@ -314,7 +331,7 @@ class HistoryStore:
                              "session_id": session_id or self._session_id,
                              "_history_generation": self._generation})
 
-    def flush(self, timeout=None):
+    def flush(self, timeout: Optional[float] = None) -> bool:
         """Wait for all already queued messages; return False after a write failure."""
         with self._state_lock:
             if self._closed:
@@ -323,12 +340,12 @@ class HistoryStore:
             self._queue.put(barrier)
         return barrier.wait(timeout) and self.last_error is None
 
-    def _transaction(self, action):
+    def _transaction(self, action: Callable[[Document], Any]) -> Any:
         if not self.flush():
             raise OSError("Pending conversation messages could not be saved") from self.last_error
-        result = []
+        result: List[Any] = []
 
-        def update(loaded):
+        def update(loaded: Any) -> Document:
             document = _document(loaded)
             result.append(action(document))
             return document
@@ -336,7 +353,7 @@ class HistoryStore:
         update_json(self.path, update, [], max_bytes=MAX_HISTORY_BYTES)
         return result[0]
 
-    def _snapshot(self):
+    def _snapshot(self) -> Document:
         """Atomic replacement makes snapshots safe; only legacy migration writes."""
         if not self.flush():
             raise OSError("Pending conversation messages could not be saved") from self.last_error
@@ -345,13 +362,13 @@ class HistoryStore:
             return self._transaction(lambda document: document)
         return _document(loaded)
 
-    def list_sessions(self, include_archived=False):
+    def list_sessions(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         document = self._snapshot()
         return [_metadata(session) for session in sorted(document["sessions"],
                 key=lambda session: session["updated_at"], reverse=True)
                 if include_archived or not session["archived"]]
 
-    def create_session(self, title="New conversation", select=True):
+    def create_session(self, title: str = "New conversation", select: bool = True) -> Dict[str, Any]:
         title = _title(title)
 
         def create(document):
@@ -368,7 +385,7 @@ class HistoryStore:
             self._session_id = session["id"]
         return session
 
-    def select_session(self, session_id):
+    def select_session(self, session_id: str) -> Dict[str, Any]:
         def select(document):
             session = _find(document, session_id)
             if session["archived"]:
@@ -379,7 +396,7 @@ class HistoryStore:
         self._session_id = session_id
         return session
 
-    def rename_session(self, session_id, title):
+    def rename_session(self, session_id: str, title: str) -> Dict[str, Any]:
         title = _title(title)
 
         def rename(document):
@@ -389,7 +406,7 @@ class HistoryStore:
             return _metadata(session)
         return self._transaction(rename)
 
-    def archive_session(self, session_id, archived=True):
+    def archive_session(self, session_id: str, archived: bool = True) -> Dict[str, Any]:
         def archive(document):
             session = _find(document, session_id)
             session["archived"] = bool(archived)
@@ -401,7 +418,7 @@ class HistoryStore:
             self._session_id = active
         return metadata
 
-    def delete_session(self, session_id):
+    def delete_session(self, session_id: str) -> None:
         def delete(document):
             _find(document, session_id)
             document["sessions"] = [session for session in document["sessions"] if session["id"] != session_id]
@@ -411,7 +428,7 @@ class HistoryStore:
         if self._session_id == session_id:
             self._session_id = active
 
-    def clear_session(self, session_id=None):
+    def clear_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Clear messages only in the selected conversation, retaining its identity."""
         selected = session_id or self._session_id
 
@@ -424,14 +441,14 @@ class HistoryStore:
             return _metadata(session)
         return self._transaction(clear)
 
-    def get_diagnostic_state(self, session_id=None):
+    def get_diagnostic_state(self, session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore only the selected conversation's guide position."""
         selected = session_id or self._session_id
         session = _find(self._snapshot(), selected)
         state = session.get("diagnostic")
         return _diagnostic_state(state) if state is not None else None
 
-    def set_diagnostic_state(self, state, session_id=None):
+    def set_diagnostic_state(self, state: Optional[Dict[str, Any]], session_id: Optional[str] = None) -> None:
         """Persist a guide position, or clear it with None."""
         clean = _diagnostic_state(state) if state is not None else None
         selected = session_id or self._session_id
@@ -445,13 +462,13 @@ class HistoryStore:
             session["updated_at"] = time.time()
         self._transaction(set_state)
 
-    def get_task_state(self, session_id=None):
+    def get_task_state(self, session_id: Optional[str] = None) -> Optional[Any]:
         """Get choices for this conversation only; imported chats have none."""
         selected = session_id or self._session_id
         state = _find(self._snapshot(), selected).get("task")
         return validate_task_state(state) if state is not None else None
 
-    def set_task_state(self, state, session_id=None):
+    def set_task_state(self, state: Optional[Any], session_id: Optional[str] = None) -> None:
         clean = validate_task_state(state) if state is not None else None
         selected = session_id or self._session_id
 
@@ -464,7 +481,7 @@ class HistoryStore:
             session["updated_at"] = time.time()
         self._transaction(set_state)
 
-    def search(self, query, include_archived=False):
+    def search(self, query: str, include_archived: bool = False) -> List[Dict[str, Any]]:
         if not isinstance(query, str) or len(query) > 500:
             raise ValueError("Search must contain at most 500 characters")
         query = query.strip().casefold()
@@ -493,7 +510,7 @@ class HistoryStore:
             return matches
         return search_current(self._snapshot())
 
-    def export_session(self, session_id=None, format="markdown"):
+    def export_session(self, session_id: Optional[str] = None, format: str = "markdown") -> str:
         selected = session_id or self._session_id
 
         session = _find(self._snapshot(), selected)
@@ -505,7 +522,7 @@ class HistoryStore:
             raise ValueError("Export format must be markdown or json")
         return export_markdown(session["title"], session["messages"])
 
-    def preview_import(self, text):
+    def preview_import(self, text: str) -> Dict[str, Any]:
         """Validate text and return a plain preview without touching history.
 
         Only roles, text and optional timestamps are eligible for import. A new
@@ -555,7 +572,7 @@ class HistoryStore:
         return {"format": format_name, "version": 1, "title": title, "message_count": len(clean),
                 "display_title": display_title, "messages": clean, "preview_text": "\n".join(preview)}
 
-    def import_session(self, text, select=True):
+    def import_session(self, text: str, select: bool = True) -> Dict[str, Any]:
         preview = self.preview_import(text)
         title, clean = preview["title"], preview["messages"]
 
@@ -572,7 +589,7 @@ class HistoryStore:
             self._session_id = metadata["id"]
         return metadata
 
-    def close(self, timeout=None):
+    def close(self, timeout: Optional[float] = None) -> bool:
         with self._state_lock:
             if not self._closed:
                 self._closed = True
@@ -584,7 +601,12 @@ class HistoryStore:
         return not self._writer.is_alive() and self.last_error is None
 
     @staticmethod
-    def save_entries(path, entries, max_messages=MAX_HISTORY_MESSAGES, session_id=None):
+    def save_entries(
+        path: Union[str, Path],
+        entries: List[Message],
+        max_messages: int = MAX_HISTORY_MESSAGES,
+        session_id: Optional[str] = None,
+    ) -> Document:
         """Merge legacy or scoped entries under the shared inter-process lock."""
         incoming = list(entries)
 
@@ -603,7 +625,7 @@ class HistoryStore:
             if isinstance(loaded, list) and targets <= {LEGACY_SESSION_ID}:
                 return merge_messages(loaded, incoming)
             document = _document(loaded)
-            groups = {}
+            groups: Dict[str, List[Message]] = {}
             for target in targets:
                 messages = [item for item in incoming if isinstance(item, dict)
                             and (session_id or item.get("session_id", LEGACY_SESSION_ID)) == target]
@@ -634,7 +656,7 @@ class HistoryStore:
             return document
         return update_json(path, merge, [], max_bytes=MAX_HISTORY_BYTES)
 
-    def _loop(self):
+    def _loop(self) -> None:
         pending = []
         while True:
             item = self._queue.get()

@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
+from typing import Any, Callable, Dict, Iterator, List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from .storage import JsonWriteCommittedError, update_json
 from .bounded_http import (
@@ -232,7 +232,7 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 # Politica de retry para falhas de rede/transientes
-NETWORK_RETRY = dict(
+NETWORK_RETRY: Dict[str, Any] = dict(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception(_is_transient),
@@ -267,9 +267,9 @@ def _error_body_snippet(response, cancel_event=None):
         # invoke arbitrary .text properties merely to log an HTTP failure.
         return ''
     body = bytearray()
-    chunks = iter_chunks(response, MAX_ERROR_BODY_BYTES,
-                         min(MAX_ERROR_BODY_SECONDS, _remaining_stream_seconds()),
-                         event, chunk_size=1024)
+    chunks: Iterator[bytes] = iter_chunks(response, MAX_ERROR_BODY_BYTES,
+                                         min(MAX_ERROR_BODY_SECONDS, _remaining_stream_seconds()),
+                                         event, chunk_size=1024)
     try:
         for chunk in chunks:
             body.extend(chunk)
@@ -281,7 +281,8 @@ def _error_body_snippet(response, cancel_event=None):
         # A diagnostic timeout never initiates a second read.
         body.clear()
     finally:
-        chunks.close()
+        if hasattr(chunks, 'close'):
+            chunks.close()
     _check_cancelled(event)
     return _safe_provider_error(body.decode('utf-8', errors='replace'))
 
@@ -290,9 +291,9 @@ def _cache_bounded_json_response(response, timeout, cancel_event=None):
     """Keep existing response.json adapters while bounding real HTTP bodies."""
     if not isinstance(response, Response):
         return  # Explicit response shims/plugins retain their own contract.
-    chunks = iter_chunks(response, MAX_STREAM_BYTES,
-                         min(float(timeout), _remaining_stream_seconds()),
-                         _request_event(cancel_event))
+    chunks: Iterator[bytes] = iter_chunks(response, MAX_STREAM_BYTES,
+                                          min(float(timeout), _remaining_stream_seconds()),
+                                          _request_event(cancel_event))
     try:
         body = b''.join(chunks)
     except HTTPReadCancelled:
@@ -302,7 +303,8 @@ def _cache_bounded_json_response(response, timeout, cancel_event=None):
     except HTTPReadError:
         raise AIProviderError('Provider JSON response could not be read') from None
     finally:
-        chunks.close()
+        if hasattr(chunks, 'close'):
+            chunks.close()
     _check_cancelled(cancel_event)
     response._content = body
     response._content_consumed = True
@@ -1068,7 +1070,10 @@ class AIClient:
         if stream:
             payload['stream'] = True
         options = self._get_api_config(selected)
-        headers = {'Authorization': 'Bearer ' + self._get_api_key(selected),
+        api_key = self._get_api_key(selected)
+        if api_key is None:
+            raise AIImageRequestError("Configure the OpenRouter API key before attaching an image")
+        headers = {'Authorization': 'Bearer ' + api_key,
                    'HTTP-Referer': 'https://github.com/1400015/linux_ai', 'X-Title': 'Linux AI Assistant'}
         return payload, headers, options.get('timeout', self.DEFAULT_TIMEOUT)
 
@@ -1494,8 +1499,8 @@ class AIClient:
         The UI history gives no such guarantees — a failed/cancelled turn
         can leave two `user` in a row (o pedido morria com 400).
         """
-        system_parts = []
-        converted = []
+        system_parts: List[str] = []
+        converted: List[Dict[str, str]] = []
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")

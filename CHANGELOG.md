@@ -12,6 +12,13 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/safe_paths.py`: centralized, GTK-free path validation (expand/realpath,
+  `commonpath` containment, sensitive-path detection, `safe_join`). Replaces
+  the duplicated containment checks in `file_actions`, `system_utils` and
+  `inspection_actions` with one tested owner. 45 new unit tests.
+- Mypy coverage extended from 4 to 9 modules: `command_policy`, `bounded_http`,
+  `history_store`, `ai_client` and `safe_paths` now pass the type gate with
+  full type annotations.
 - Command sandbox (`src/command_sandbox.py`): confirmed catalog commands run
   inside a transient systemd user unit with `PrivateTmp=yes` and a
   `RuntimeMaxSec` bound, keeping stdio, environment and working directory.
