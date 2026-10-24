@@ -12,6 +12,12 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/error_presenter.py`: user-friendly, GTK-free error presentation.
+  Maps structured exceptions (AI provider, network, HTTP, file, validation)
+  to localized, actionable messages via `present_error()`. Never exposes raw
+  exception text, URLs or credentials. Includes `PresentedError` dataclass,
+  `ErrorCategory` enum, `present_credential_shadow()` and `error_summary()`.
+  41 new unit tests.
 - `src/i18n_extended.py`: extended ES/FR/DE translations (~140 new keys per
   language, up from 94). Coverage improved from 23% to 44% for each of
   Spanish, French and German. Remaining keys fall back to English.
