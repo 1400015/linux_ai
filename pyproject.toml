@@ -17,7 +17,6 @@ keywords = ["linux", "ai", "gtk", "assistant", "desktop"]
 dependencies = [
     "requests>=2.31.0",
     "pillow>=10.0.0",
-    "pytesseract>=0.3.10",
     "python-dotenv>=1.0.0",
     "psutil>=5.9.5",
     "tenacity>=8.2.3",
@@ -27,6 +26,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# OCR wrapper. `extract_text_from_image` degrada para o binário `tesseract`
+# do sistema quando ausente, por isso não é dependência obrigatória.
+ocr = ["pytesseract>=0.3.10"]
 # Encriptação de API keys em config.json (app.encryption_enabled)
 encryption = ["cryptography>=42.0.2"]
 # Optional desktop keyring support; importing the client must not require it.

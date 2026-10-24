@@ -12,6 +12,9 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- An `ocr` optional extra: `pytesseract` is no longer a hard runtime
+  dependency. Without it the OCR path calls the system `tesseract` binary
+  directly, which was already the fallback.
 - `RequestState` (`src/request_state.py`): the per-request lifecycle — id
   sequence, cancel events and the `is_loading`/`streaming` flags — extracted
   from `MainWindow`. The transitions are GTK-free functions over the five-name
@@ -49,6 +52,10 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Fixed
 
+- `test_id_like_is_used_as_fallback` exercised no fallback: `linuxmint` is
+  mapped directly and the assertion accepted either of two distro managers.
+  It now pins an unknown ID resolving through `ID_LIKE`, plus a case where a
+  known ID wins over `ID_LIKE`.
 - `cli config set` without a key and value printed an error but exited 0,
   so `config set && ...` chains treated a failed write as a success; the
   command now exits 1 (the last open case of P1 #16, CLI exit codes).

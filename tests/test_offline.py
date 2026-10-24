@@ -77,10 +77,18 @@ class TestDetectDistro(unittest.TestCase):
         self.assertEqual(d.service_manager, "systemd")
 
     def test_id_like_is_used_as_fallback(self):
-        d = detect_distro({"ID": "linuxmint", "ID_LIKE": "ubuntu debian"},
+        # An ID absent from the mapping table must resolve through ID_LIKE.
+        # The previous version used linuxmint — which is mapped directly —
+        # and accepted either of two managers, so the fallback path was
+        # never exercised and the test passed whatever the outcome.
+        d = detect_distro({"ID": "someniche", "ID_LIKE": "debian"},
                           which=lambda name: None, is_systemd_running=False)
-        # linuxmint is mapped directly; unknown ids fall back through ID_LIKE.
-        self.assertIn(d.pkg_manager, ("apt", "xbps"))
+        self.assertEqual(d.pkg_manager, "apt")
+
+    def test_known_id_wins_over_id_like(self):
+        d = detect_distro({"ID": "void", "ID_LIKE": "debian"},
+                          which=lambda name: None, is_systemd_running=False)
+        self.assertEqual(d.pkg_manager, "xbps")
 
 
 class TestOfflineIntents(unittest.TestCase):

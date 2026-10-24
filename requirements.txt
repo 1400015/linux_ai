@@ -6,7 +6,6 @@
 
 requests>=2.31.0
 pillow>=10.0.0
-pytesseract>=0.3.10
 python-dotenv>=1.0.0
 psutil>=5.9.5
 tenacity>=8.2.3
@@ -16,6 +15,8 @@ jsonschema>=4.18,<5
 
 # Opcionais (o código degrada com elegância se não estiverem presentes):
 #
+#   pytesseract>=0.3.10    wrapper OCR; extra `.[ocr]` — sem ele o código
+#                          usa o binário `tesseract` do sistema diretamente
 #   cryptography>=42.0.2   encriptação de API keys em config.json
 #                          (`app.encryption_enabled`)
 #   secretstorage>=3.3,<4  cofre Linux opcional; extra `.[secret-service]`

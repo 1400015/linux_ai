@@ -739,7 +739,8 @@ the bundled procedures.
 ### Problem: OCR does not work
 
 - Install Tesseract: `sudo apt-get install tesseract-ocr tesseract-ocr-por tesseract-ocr-eng`
-- Install pytesseract: `pip install pytesseract`
+- The Python wrapper is optional (the Tesseract binary above is used directly
+  without it); install it with: `pip install "linux-ai-assistant[ocr]"`
 
 ### Problem: API does not respond
 
