@@ -1261,7 +1261,7 @@ Examples:
         elif args.config_command == 'set':
             if not args.key or not args.value:
                 print("✗ You must specify both key and value")
-                return
+                return 1
 
             # Convert the value
             value = args.value
@@ -1285,6 +1285,7 @@ Examples:
             else:
                 shown = value
             print(f"✓ Configuration updated: {args.key} = {shown}")
+            return 0
         elif args.config_command == 'get':
             if not args.key:
                 print("✗ You must specify a key", file=sys.stderr)

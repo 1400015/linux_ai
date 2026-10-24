@@ -1240,6 +1240,44 @@ class AIClient:
     # Centralizar garante parsing/usage/erros uniformes: antes, uns
     # validavam `choices: []` e outros não (IndexError no catch genérico),
     # e `content: null` voltava como None tratado como erro de rede.
+    # O request tem duas metades — body e auth — e cada um dos oito métodos
+    # `_chat_*`/`_stream_*` desta família construía as duas à mão; estes
+    # helpers são o único sítio onde o contrato é definido.
+
+    # Só a autenticação varia dentro da família. local_llm não envia
+    # Authorization — o servidor local não tem chave. Mantém-se exatamente
+    # os headers que cada um já enviava (openrouter leva os extras de
+    # atribuição; mistral/groq o Content-Type explícito).
+    _OPENAI_STYLE_EXTRA_HEADERS = {
+        "openrouter": {
+            "HTTP-Referer": "https://github.com/1400015/linux_ai",
+            "X-Title": "Linux AI Assistant",
+        },
+        "mistral": {"Content-Type": "application/json"},
+        "groq": {"Content-Type": "application/json"},
+        "local_llm": {},
+    }
+
+    @classmethod
+    def _openai_style_headers(cls, provider: str, api_key: str) -> Dict:
+        headers = dict(cls._OPENAI_STYLE_EXTRA_HEADERS.get(provider, {}))
+        if provider != "local_llm":
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    @staticmethod
+    def _openai_style_payload(model: str, messages: List[Dict[str, str]],
+                              temperature: float, max_tokens: int,
+                              stream: bool = False) -> Dict:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if stream:
+            payload["stream"] = True
+        return payload
 
     def _chat_openai_style(self, provider: str, url: str, payload: Dict,
                            headers: Dict, timeout: int) -> Optional[str]:
@@ -1287,12 +1325,25 @@ class AIClient:
         if include_usage:
             payload["stream_options"] = {"include_usage": True}
 
+        yield from self._stream_sse(provider, url, payload, headers, timeout,
+                                    messages, self._iter_sse_openai_style)
+
+    def _stream_sse(self, provider: str, url: str, payload: Dict, headers: Dict,
+                    timeout: int, messages: List[Dict], make_iterator):
+        """Abrir, iterar, contabilizar e fechar um stream SSE.
+
+        O parse do SSE é o único detalhe que varia por provider e chega em
+        `make_iterator`; o resto — iteração limitada, fecho da resposta,
+        registo de usage (real ou estimado) e a moldura de erro tipada —
+        estava copiado em cada `_stream_*`, com o risco de um deles mudar
+        sem os outros.
+        """
         usage_events: List[Dict] = []
         received: List[str] = []
         try:
             response = self._make_request(url, payload, headers, timeout, stream=True)
             try:
-                for chunk in _bounded_text(self._iter_sse_openai_style(response, usage_events)):
+                for chunk in _bounded_text(make_iterator(response, usage_events)):
                     received.append(chunk)
                     yield chunk
             finally:
@@ -1332,19 +1383,8 @@ class AIClient:
                          base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Communicate with the OpenRouter API"""
         url = f"{base_url}/chat/completions"
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "HTTP-Referer": "https://github.com/1400015/linux_ai",
-            "X-Title": "Linux AI Assistant"
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens)
+        headers = self._openai_style_headers("openrouter", api_key)
 
         try:
             return self._chat_openai_style("openrouter", url, payload, headers, timeout)
@@ -1472,12 +1512,16 @@ class AIClient:
             converted.pop(0)
         return "\n\n".join(system_parts), converted
 
-    def _chat_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                        base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Communicate with the Anthropic Claude API"""
-        url = f"{base_url}/messages"
-        system_prompt, anthropic_messages = self._split_anthropic_messages(messages)
+    def _anthropic_payload(self, messages: List[Dict[str, str]], model: str,
+                           temperature: float, max_tokens: int,
+                           stream: bool = False) -> Dict:
+        """Corpo partilhado por `_chat_anthropic` e `_stream_anthropic`.
 
+        A separação do system prompt e a normalização de papéis vivem em
+        `_split_anthropic_messages`; aqui fica só a montagem do body, que
+        era copiada nos dois métodos.
+        """
+        system_prompt, anthropic_messages = self._split_anthropic_messages(messages)
         payload = {
             "model": model,
             "messages": anthropic_messages,
@@ -1486,6 +1530,15 @@ class AIClient:
         }
         if system_prompt:
             payload["system"] = system_prompt
+        if stream:
+            payload["stream"] = True
+        return payload
+
+    def _chat_anthropic(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                        base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+        """Communicate with the Anthropic Claude API"""
+        url = f"{base_url}/messages"
+        payload = self._anthropic_payload(messages, model, temperature, max_tokens)
 
         # `anthropic-version` is a required header; `x-api-key` is the auth.
         headers = {
@@ -1531,16 +1584,8 @@ class AIClient:
                       base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Communicate with the Mistral AI API"""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens)
+        headers = self._openai_style_headers("mistral", api_key)
         try:
             return self._chat_openai_style("mistral", url, payload, headers, timeout)
         except (AIRequestCancelled, AIResponseLimitError):
@@ -1553,16 +1598,8 @@ class AIClient:
                    base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Communicate with the Groq API"""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens)
+        headers = self._openai_style_headers("groq", api_key)
         try:
             return self._chat_openai_style("groq", url, payload, headers, timeout)
         except (AIRequestCancelled, AIResponseLimitError):
@@ -1571,13 +1608,17 @@ class AIClient:
             logger.error("Groq error: %s", redact_url(str(e)))
             return None
 
-    def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
-                     base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Communicate with the Cohere API (v1 /chat contract)."""
-        url = f"{base_url}/chat"
+    @staticmethod
+    def _cohere_payload(messages: List[Dict[str, str]], model: str,
+                        temperature: float, max_tokens: int,
+                        stream: bool = False) -> Dict:
+        """Corpo v1 da Cohere, partilhado por `_chat_cohere` e `_stream_cohere`.
 
-        # v1 expects a top-level `message` plus `chat_history` with the
-        # role/message pairs - not an OpenAI-style `messages` array.
+        v1 espera `message` de topo mais `chat_history` com pares
+        role/message — não um array `messages` OpenAI-style. O loop de
+        histórico, a separação da mensagem final e o guard de `message`
+        vazio eram copiados nos dois métodos.
+        """
         chat_history = []
         preamble_parts = []
         last_user_text = ""
@@ -1607,8 +1648,17 @@ class AIClient:
             "temperature": temperature,
             "max_tokens": max_tokens
         }
+        if stream:
+            payload["stream"] = True
         if preamble_parts:
             payload["preamble"] = "\n\n".join(preamble_parts)
+        return payload
+
+    def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
+                     base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
+        """Communicate with the Cohere API (v1 /chat contract)."""
+        url = f"{base_url}/chat"
+        payload = self._cohere_payload(messages, model, temperature, max_tokens)
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -1641,14 +1691,10 @@ class AIClient:
                         base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
         """Communicate with a local model (Ollama, etc)"""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens)
+        headers = self._openai_style_headers("local_llm", api_key)
         try:
-            return self._chat_openai_style("local_llm", url, payload, {}, timeout)
+            return self._chat_openai_style("local_llm", url, payload, headers, timeout)
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except AIProviderError as e:
@@ -1757,18 +1803,9 @@ class AIClient:
                            base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with OpenRouter."""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "HTTP-Referer": "https://github.com/1400015/linux_ai",
-            "X-Title": "Linux AI Assistant"
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens,
+                                             stream=True)
+        headers = self._openai_style_headers("openrouter", api_key)
         yield from self._stream_openai_style("openrouter", url, payload,
                                              headers, timeout, messages)
 
@@ -1776,18 +1813,8 @@ class AIClient:
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with Anthropic Claude."""
         url = f"{base_url}/messages"
-
-        system_prompt, anthropic_messages = self._split_anthropic_messages(messages)
-
-        payload = {
-            "model": model,
-            "messages": anthropic_messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": True
-        }
-        if system_prompt:
-            payload["system"] = system_prompt
+        payload = self._anthropic_payload(messages, model, temperature, max_tokens,
+                                          stream=True)
 
         headers = {
             "x-api-key": api_key,
@@ -1795,40 +1822,16 @@ class AIClient:
             "Content-Type": "application/json",
         }
 
-        usage_events: List[Dict] = []
-        received: List[str] = []
-        try:
-            response = self._make_request(url, payload, headers, timeout, stream=True)
-            try:
-                for chunk in _bounded_text(self._iter_sse_anthropic(response, usage_events)):
-                    received.append(chunk)
-                    yield chunk
-            finally:
-                close_response(response)
-                self._finish_stream_usage("anthropic", usage_events, messages,
-                                          "".join(received))
-        except AIProviderError:
-            raise
-        except Exception as e:
-            raise AIProviderError(
-                f"anthropic stream error: {redact_url(str(e))}"
-            ) from e
+        yield from self._stream_sse("anthropic", url, payload, headers, timeout,
+                                    messages, self._iter_sse_anthropic)
 
     def _stream_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with Mistral AI."""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens,
+                                             stream=True)
+        headers = self._openai_style_headers("mistral", api_key)
         yield from self._stream_openai_style("mistral", url, payload,
                                              headers, timeout, messages)
 
@@ -1836,17 +1839,9 @@ class AIClient:
                      base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with Groq."""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens,
+                                             stream=True)
+        headers = self._openai_style_headers("groq", api_key)
         yield from self._stream_openai_style("groq", url, payload,
                                              headers, timeout, messages)
 
@@ -1854,59 +1849,16 @@ class AIClient:
                        base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with Cohere (v1 contract, same as _chat_cohere)."""
         url = f"{base_url}/chat"
-
-        chat_history = []
-        preamble_parts = []
-        last_user_text = ""
-        for msg in messages:
-            role = msg["role"]
-            if role == "system":
-                preamble_parts.append(msg["content"])
-            elif role == "user":
-                chat_history.append({"role": "USER", "message": msg["content"]})
-            elif role == "assistant":
-                chat_history.append({"role": "CHATBOT", "message": msg["content"]})
-        if chat_history and chat_history[-1]["role"] == "USER":
-            last_user_text = chat_history.pop()["message"]
-        # Mesmo guard do caminho não-streaming: v1 responde 400 com
-        # `message` vazio.
-        if not last_user_text:
-            raise AIProviderError(
-                "Cohere requires a final user message; history ends without one"
-            )
-
-        payload = {
-            "model": model,
-            "message": last_user_text,
-            "chat_history": chat_history,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True
-        }
-        if preamble_parts:
-            payload["preamble"] = "\n\n".join(preamble_parts)
+        payload = self._cohere_payload(messages, model, temperature, max_tokens,
+                                       stream=True)
 
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
 
-        usage_events, received = [], []
-        try:
-            response = self._make_request(url, payload, headers, timeout, stream=True)
-            try:
-                for chunk in _bounded_text(self._iter_sse_cohere(response, usage_events)):
-                    received.append(chunk)
-                    yield chunk
-            finally:
-                close_response(response)
-                self._finish_stream_usage("cohere", usage_events, messages, "".join(received))
-        except AIProviderError:
-            raise
-        except Exception as e:
-            raise AIProviderError(
-                f"cohere stream error: {redact_url(str(e))}"
-            ) from e
+        yield from self._stream_sse("cohere", url, payload, headers, timeout,
+                                    messages, self._iter_sse_cohere)
 
     def _stream_google_ai_studio(self, messages: List[Dict[str, str]], model: str, api_key: str,
                                  base_url: str, temperature: float, max_tokens: int, timeout: int):
@@ -1918,35 +1870,15 @@ class AIClient:
 
         payload = self._google_payload(messages, temperature, max_tokens)
 
-        usage_events: List[Dict] = []
-        received: List[str] = []
-        try:
-            response = self._make_request(url, payload, headers, timeout, stream=True)
-            try:
-                for chunk in _bounded_text(self._iter_sse_google(response, usage_events)):
-                    received.append(chunk)
-                    yield chunk
-            finally:
-                close_response(response)
-                self._finish_stream_usage("google_ai_studio", usage_events,
-                                          messages, "".join(received))
-        except AIProviderError:
-            raise
-        except Exception as e:
-            raise AIProviderError(
-                f"google_ai_studio stream error: {redact_url(str(e))}"
-            ) from e
+        yield from self._stream_sse("google_ai_studio", url, payload, headers, timeout,
+                                    messages, self._iter_sse_google)
 
     def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with a local model."""
         url = f"{base_url}/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True
-        }
+        payload = self._openai_style_payload(model, messages, temperature, max_tokens,
+                                             stream=True)
+        headers = self._openai_style_headers("local_llm", api_key)
         yield from self._stream_openai_style("local_llm", url, payload,
-                                             {}, timeout, messages)
+                                             headers, timeout, messages)

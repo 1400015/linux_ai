@@ -32,6 +32,14 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Changed
 
+- `src/ai_client.py`: the two halves of the provider request contract now
+  have a single owner each. `_openai_style_payload`/`_openai_style_headers`
+  replace the body and auth headers copied across the eight OpenAI-compatible
+  `_chat_*`/`_stream_*` methods, `_stream_sse` replaces the identical
+  bounded-iterate/close/usage/error frame copied across five streaming
+  methods, and the Cohere and Anthropic request bodies are shared between
+  their streaming and non-streaming paths. The exact per-provider headers
+  and the source-level contracts the tests pin are unchanged.
 - `src/i18n.py`: the five trailing `TRANSLATIONS["pt"].update(...)` fragments
   are merged into the main catalog literal. The Portuguese catalog is now
   complete (414 keys); Spanish, French and German remain partial with an
@@ -41,6 +49,9 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Fixed
 
+- `cli config set` without a key and value printed an error but exited 0,
+  so `config set && ...` chains treated a failed write as a success; the
+  command now exits 1 (the last open case of P1 #16, CLI exit codes).
 - The "Manage Themes" button jumped to the wrong settings page after an
   Assistance page was inserted; it now resolves the page by title instead of a
   hard-coded index.
