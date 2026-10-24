@@ -1491,7 +1491,8 @@ class MainWindow(Gtk.Window):
                 # An empty override may come from the process environment;
                 # only assignments this manager loaded can be removed here.
                 shadow_provider = route['provider'] if route is not None else self.ai_client.active_provider()
-                shadow = check_credential_shadow(self.config, shadow_provider)
+                config = getattr(self, 'config', None)
+                shadow = check_credential_shadow(config, shadow_provider) if config is not None else None
                 if shadow is not None:
                     warning = _(
                         "The stored key for {provider} is disabled by the empty "
