@@ -1,7 +1,10 @@
 import re
 import logging
+from typing import Any, Callable, Optional, TypeVar, Union
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T", int, float)
 
 # GTK3 supports RGB hex colors; CSS4 RGBA hex forms fail its CSS parser.
 _COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -52,7 +55,13 @@ def contrasting_text_color(background):
     return '#000000' if (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) else '#ffffff'
 
 
-def safe_number(value, fallback, cast, minimum=None, maximum=None):
+def safe_number(
+    value: Any,
+    fallback: T,
+    cast: Callable[[Any], T],
+    minimum: Optional[Union[int, float]] = None,
+    maximum: Optional[Union[int, float]] = None,
+) -> T:
     """Convert `value` to a number with bounds, or return `fallback`."""
     try:
         number = cast(value)

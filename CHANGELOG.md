@@ -12,6 +12,13 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/chat_controller.py`: GTK-free chat orchestration extracted from
+  `main_window.py` — message building (`build_request_messages`,
+  `build_context_message`, `build_full_history`), stream coalescing
+  (`StreamCoalescer`), routing (`ChatRoute`, `select_route`,
+  `should_use_offline`) and credential-shadow detection
+  (`check_credential_shadow`). 45 new unit tests. `main_window.py` now
+  delegates to these helpers, shrinking by ~90 lines.
 - `src/safe_paths.py`: centralized, GTK-free path validation (expand/realpath,
   `commonpath` containment, sensitive-path detection, `safe_join`). Replaces
   the duplicated containment checks in `file_actions`, `system_utils` and
