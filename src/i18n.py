@@ -454,6 +454,10 @@ TRANSLATIONS = {
         "Lines": "Linhas",
         "Snapshot imported": "Cópia importada",
         "No documents indexed.": "Não há documentos indexados.",
+        "No usage recorded yet.": "Ainda não há uso registado.",
+        "Total: {total} tokens ({input} in / {output} out) across {count} provider(s)":
+            "Total: {total} tokens ({input} entradas / {output} saídas) em {count} fornecedor(es)",
+        "Most used: {provider} ({share:.0%})": "Mais usado: {provider} ({share:.0%})",
         "Search works locally. Sending excerpts to an AI provider requires enabling documents for the conversation and reviewing the excerpts before sending.":
             "A pesquisa funciona localmente. Para enviar excertos a um fornecedor de IA, ativa os documentos nesta conversa e revê os excertos antes do envio.",
         "Document snapshots imported. Sources will not refresh automatically.":

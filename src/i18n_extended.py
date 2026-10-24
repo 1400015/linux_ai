@@ -155,6 +155,9 @@ _ES = {
     "Adding private local evidence…": "Añadiendo evidencia local privada…",
     "Beginning case…": "Iniciando el caso…",
     "Case {case} is tied to conversation {session}; switching conversations does not change it.": "El caso {case} está vinculado a la conversación {session}; cambiar de conversación no altera este vínculo.",
+    'Most used: {provider} ({share:.0%})': 'Más usado: {provider} ({share:.0%})',
+    'No usage recorded yet.': 'Aún no hay uso registrado.',
+    'Total: {total} tokens ({input} in / {output} out) across {count} provider(s)': 'Total: {total} tokens ({input} entrada / {output} salida) en {count} proveedor(es)',
 }
 
 
@@ -304,6 +307,9 @@ _FR = {
     "Adding private local evidence…": "Ajout de preuves locales privées…",
     "Beginning case…": "Démarrage du cas…",
     "Case {case} is tied to conversation {session}; switching conversations does not change it.": "Le cas {case} est lié à la conversation {session} ; changer de conversation ne modifie pas ce lien.",
+    'Most used: {provider} ({share:.0%})': 'Le plus utilisé : {provider} ({share:.0%})',
+    'No usage recorded yet.': 'Aucune utilisation enregistrée pour le moment.',
+    'Total: {total} tokens ({input} in / {output} out) across {count} provider(s)': 'Total : {total} tokens ({input} entrée / {output} sortie) sur {count} fournisseur(s)',
 }
 
 
@@ -453,6 +459,9 @@ _DE = {
     "Adding private local evidence…": "Private lokale Beweise werden hinzugefügt…",
     "Beginning case…": "Fall wird gestartet…",
     "Case {case} is tied to conversation {session}; switching conversations does not change it.": "Fall {case} ist mit dem Gespräch {session} verknüpft; das Wechseln des Gesprächs ändert diese Verknüpfung nicht.",
+    'Most used: {provider} ({share:.0%})': 'Am häufigsten verwendet: {provider} ({share:.0%})',
+    'No usage recorded yet.': 'Noch keine Nutzung aufgezeichnet.',
+    'Total: {total} tokens ({input} in / {output} out) across {count} provider(s)': 'Gesamt: {total} Tokens ({input} eingehend / {output} ausgehend) über {count} Anbieter',
 }
 
 

@@ -12,6 +12,14 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/stats_aggregator.py`: GTK-free usage statistics aggregation.
+  `aggregate_usage()` builds a `UsageSummary` from per-provider token data;
+  `format_summary_text()` / `format_summary_markdown()` render it for CLI or
+  export; `estimate_cost()` projects spend from per-1M-token pricing;
+  `daily_breakdown()` produces per-day stats. The Statistics dialog in
+  `main_window.py` now uses `aggregate_usage()` and shows a summary line
+  (total tokens, provider count, most-used provider with share). 31 new
+  unit tests.
 - `src/error_presenter.py`: user-friendly, GTK-free error presentation.
   Maps structured exceptions (AI provider, network, HTTP, file, validation)
   to localized, actionable messages via `present_error()`. Never exposes raw

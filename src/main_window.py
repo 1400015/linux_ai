@@ -45,6 +45,7 @@ from .chat_controller import (
     build_request_messages,
     check_credential_shadow,
 )
+from .stats_aggregator import aggregate_usage
 from .document_context import display_document_context
 from .document_store import DocumentStore
 from .document_review import review_document_context
@@ -1013,19 +1014,20 @@ class MainWindow(Gtk.Window):
         self._show_stats_dialog()
 
     def _show_stats_dialog(self):
-        """Show statistics dialog"""
+        """Show statistics dialog with aggregated usage data."""
         dialog = Gtk.Dialog(
             title=_("Statistics - Linux AI Assistant"),
             parent=self,
             flags=0,
             buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
         )
-        dialog.set_default_size(400, 300)
+        dialog.set_default_size(480, 360)
 
         content = dialog.get_content_area()
 
-        # Get statistics
+        # Aggregate usage via the GTK-free stats_aggregator module.
         token_usage = self.ai_client.get_token_usage()
+        summary = aggregate_usage(token_usage)
 
         # Create box vertical
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1037,28 +1039,55 @@ class MainWindow(Gtk.Window):
         title.set_use_markup(True)
         box.pack_start(title, False, False, 0)
 
+        # Summary line
+        if summary.providers:
+            summary_text = _("Total: {total} tokens ({input} in / {output} out) across {count} provider(s)").format(
+                total=summary.total_tokens,
+                input=summary.total_input,
+                output=summary.total_output,
+                count=summary.provider_count,
+            )
+        else:
+            summary_text = _("No usage recorded yet.")
+        summary_label = Gtk.Label(label=summary_text)
+        summary_label.set_halign(Gtk.Align.START)
+        box.pack_start(summary_label, False, False, 0)
+
+        if summary.most_used_provider:
+            most_used_label = Gtk.Label(
+                label=_("Most used: {provider} ({share:.0%})").format(
+                    provider=summary.most_used_provider,
+                    share=summary.provider_share(summary.most_used_provider),
+                )
+            )
+            most_used_label.set_halign(Gtk.Align.START)
+            box.pack_start(most_used_label, False, False, 0)
+
         # Tokens by provider. The labels are kept so the reset button can
         # refresh them in place instead of leaving stale numbers on screen.
         token_labels = []
-        for provider, usage in token_usage.items():
+        for stats in summary.providers:
             provider_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
 
-            provider_label = Gtk.Label(label=f"{provider}:")
+            provider_label = Gtk.Label(label=f"{stats.provider}:")
             provider_label.set_halign(Gtk.Align.START)
             provider_box.pack_start(provider_label, False, False, 0)
 
-            tokens_label = Gtk.Label(label=f"Input: {usage.get('input', 0)}, Output: {usage.get('output', 0)}, Total: {usage.get('total', 0)}")
+            tokens_label = Gtk.Label(
+                label=f"Input: {stats.input_tokens}, Output: {stats.output_tokens}, Total: {stats.total_tokens}"
+            )
             tokens_label.set_halign(Gtk.Align.END)
             provider_box.pack_end(tokens_label, True, True, 0)
 
             box.pack_start(provider_box, False, False, 0)
-            token_labels.append((provider, tokens_label))
+            token_labels.append((stats.provider, tokens_label))
 
         # Button to reset statistics
         def _reset_stats(btn):
             self.ai_client.reset_token_usage()
             for _provider, tokens_label in token_labels:
                 tokens_label.set_text("Input: 0, Output: 0, Total: 0")
+            summary_label.set_text(_("No usage recorded yet."))
         reset_btn = Gtk.Button(label=_("Reset Statistics"))
         reset_btn.connect("clicked", _reset_stats)
         reset_btn.set_halign(Gtk.Align.CENTER)
