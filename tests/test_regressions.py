@@ -588,10 +588,10 @@ class TestGracefulGtkFailure(unittest.TestCase):
 
 class TestThemeSanitisation(unittest.TestCase):
     def setUp(self):
-        try:
-            from src.main_window import safe_color, safe_font_family, safe_number
-        except ImportError:
-            self.skipTest("GTK is not available")
+        # O sanitiser vive em theme_style, que não depende de GTK: um
+        # ImportError aqui é uma quebra real e não pode virar skip — foi
+        # assim que o gtk job do CI detetou a importação partida.
+        from src.theme_style import safe_color, safe_font_family, safe_number
         self.safe_color = safe_color
         self.safe_font_family = safe_font_family
         self.safe_number = safe_number
