@@ -111,8 +111,8 @@ class SystemUtils:
         self.is_root = os.geteuid() == 0
         self.username = getpass.getuser()
 
-        logger.info(f"Environment detected: {'Wayland' if self.is_wayland else 'X11'}")
-        logger.info(f"User: {self.username}, Root: {self.is_root}")
+        logger.info("Environment detected: %s", "Wayland" if self.is_wayland else "X11")
+        logger.info("User: %s, Root: %s", self.username, self.is_root)
 
     def _sanitize_command(self, command: str) -> List[str]:
         """Sanitize command to prevent command injection"""
@@ -143,10 +143,10 @@ class SystemUtils:
                     # Paths on different roots (e.g. separate mounts)
                     continue
 
-            logger.warning(f"Path not allowed: {path}")
+            logger.warning("Path not allowed: %s", path)
             return False
         except Exception as e:
-            logger.error(f"Error validating path: {e}")
+            logger.error("Error validating path: %s", e)
             return False
 
     def _validate_file_args(self, cmd_parts: List[str]) -> bool:
@@ -179,7 +179,7 @@ class SystemUtils:
                         elif line.startswith('D77VOID_VERSION='):
                             info["is_d77void"] = True
             except Exception as e:
-                logger.warning(f"Erro a read /etc/os-release: {e}")
+                logger.warning("Erro a read /etc/os-release: %s", e)
 
             # Memory
             try:
@@ -204,7 +204,7 @@ class SystemUtils:
                         if available is not None:
                             info["memory_available"] = f"{available / (1024**2):.2f} GB"
                 except Exception as e:
-                    logger.warning(f"Could not get memory info: {e}")
+                    logger.warning("Could not get memory info: %s", e)
 
             # CPU
             try:
@@ -225,7 +225,7 @@ class SystemUtils:
                                 cores += 1
                         info["cpu_cores"] = str(cores)
                 except Exception as e:
-                    logger.warning(f"Could not get CPU info: {e}")
+                    logger.warning("Could not get CPU info: %s", e)
 
             # Disk
             try:
@@ -241,7 +241,7 @@ class SystemUtils:
                     info["disk_total"] = f"{(stat.f_blocks * stat.f_frsize) / (1024**3):.2f} GB"
                     info["disk_free"] = f"{(stat.f_bavail * stat.f_frsize) / (1024**3):.2f} GB"
                 except Exception as e:
-                    logger.warning(f"Could not get disk info: {e}")
+                    logger.warning("Could not get disk info: %s", e)
 
             # Uptime
             try:
@@ -252,7 +252,7 @@ class SystemUtils:
                     with open('/proc/uptime', 'r', encoding='utf-8') as f:
                         uptime_seconds = int(float(f.readline().split()[0]))
                 except Exception as e:
-                    logger.warning(f"Could not get uptime: {e}")
+                    logger.warning("Could not get uptime: %s", e)
                     uptime_seconds = 0
 
             days, remainder = divmod(uptime_seconds, 86400)
@@ -294,7 +294,7 @@ class SystemUtils:
 
             return info
         except Exception as e:
-            logger.error(f"Error getting system info: {e}")
+            logger.error("Error getting system info: %s", e)
             return {"error": str(e)}
 
     def execute_command(self, command, timeout: int = 10) -> Tuple[bool, str]:
@@ -333,7 +333,7 @@ class SystemUtils:
 
         # Check if the command is allowed
         if cmd_base not in self.allowed_commands:
-            logger.warning(f"Command not allowed: {cmd_base}")
+            logger.warning("Command not allowed: %s", cmd_base)
             return False, f"Command not allowed: {cmd_base}"
 
         # Flags perigosas + caminhos absolutos fora da sandbox (TODOS os
@@ -350,7 +350,7 @@ class SystemUtils:
             return False, stderr or stdout
 
         except subprocess.TimeoutExpired as error:
-            logger.error(f"Timeout running command: {cmd_base}")
+            logger.error("Timeout running command: %s", cmd_base)
             message = f"Timeout running command: {cmd_base}"
             if getattr(error, 'cleanup_uncertainty', None):
                 message += ' ' + CLEANUP_UNCERTAINTY
@@ -378,7 +378,7 @@ class SystemUtils:
 
         # Validate path
         if not self._validate_path(filepath):
-            logger.warning(f"Access denied to file: {filepath}")
+            logger.warning("Access denied to file: %s", filepath)
             return False, f"Access denied to file: {filepath}"
 
         try:
@@ -416,10 +416,10 @@ class SystemUtils:
 
             return True, ''.join(lines)
         except PermissionError:
-            logger.error(f"Permission denied to read: {filepath}")
+            logger.error("Permission denied to read: %s", filepath)
             return False, f"Permission denied to read: {filepath}"
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            logger.error("Error reading file: %s", e)
             return False, f"Error reading file: {e}"
 
     @staticmethod
@@ -459,7 +459,7 @@ class SystemUtils:
                 return None
             return capture_geometry(f"{int(x)},{int(y)} {int(w)}x{int(h)}")
         except Exception as e:
-            logger.warning(f"Could not get focused window geometry: {e}")
+            logger.warning("Could not get focused window geometry: %s", e)
             return None
 
     def _wayland_selected_geometry(self) -> Optional[str]:
@@ -476,8 +476,7 @@ class SystemUtils:
             # slurp exits non-zero when the selection is cancelled (Esc).
             if result.returncode != 0:
                 logger.warning(
-                    f"slurp exited with {result.returncode}: "
-                    f"{result.stderr.strip()!r}"
+                    "slurp exited with %s: %r", result.returncode, result.stderr.strip()
                 )
                 return None
             geometry = capture_geometry(result.stdout)
@@ -488,7 +487,7 @@ class SystemUtils:
                 )
             return geometry
         except Exception as e:
-            logger.warning(f"Could not get selection from slurp: {e}")
+            logger.warning("Could not get selection from slurp: %s", e)
             return None
 
     def capture_screen(self, output_path: Optional[str] = None, *, cancel_event=None) -> Tuple[bool, str]:
@@ -551,7 +550,7 @@ class SystemUtils:
             if scrot:
                 result = _run_process([scrot, output_path], timeout=10)
                 if result.returncode == 0:
-                    logger.info(f"Screen captured with scrot: {output_path}")
+                    logger.info("Screen captured with scrot: %s", output_path)
                     return True, output_path
 
             # Legacy X11 fallback; not a Wayland permission workaround.
@@ -559,7 +558,7 @@ class SystemUtils:
             if gnome:
                 result = _run_process([gnome, "-f", output_path], timeout=10)
                 if result.returncode == 0:
-                    logger.info(f"Screen captured with gnome-screenshot: {output_path}")
+                    logger.info("Screen captured with gnome-screenshot: %s", output_path)
                     return True, output_path
 
             logger.error("No screen capture utility found")
@@ -569,7 +568,7 @@ class SystemUtils:
             logger.error("Timeout capturing screen")
             return False, "Timeout capturing screen"
         except Exception as e:
-            logger.error(f"Error capturing screen: {e}")
+            logger.error("Error capturing screen: %s", e)
             return False, f"Error capturing screen: {e}"
         finally:
             # Falha => apagar o temporário (antes, cada captura falhada em
@@ -610,10 +609,10 @@ class SystemUtils:
                     result = _run_process([grim, "-g", geometry, output_path], timeout=10)
                     if result.returncode == 0:
                         logger.info(
-                            f"Active window captured with grim -g: {output_path}"
+                            "Active window captured with grim -g: %s", output_path
                         )
                         return True, output_path
-                    logger.warning(f"grim -g failed: {result.stderr!r}")
+                    logger.warning("grim -g failed: %r", result.stderr)
                 logger.error(
                     "Active-window capture on Wayland needs grim plus "
                     "swaymsg or slurp (selection may have been cancelled)"
@@ -628,9 +627,9 @@ class SystemUtils:
             if scrot:
                 result = _run_process([scrot, "-u", output_path], timeout=10)
                 if result.returncode == 0:
-                    logger.info(f"Active window captured with scrot: {output_path}")
+                    logger.info("Active window captured with scrot: %s", output_path)
                     return True, output_path
-                logger.warning(f"scrot -u failed: {result.stderr!r}")
+                logger.warning("scrot -u failed: %r", result.stderr)
 
             logger.error("No window capture utility found")
             return False, "No window capture utility found (install scrot)"
@@ -639,7 +638,7 @@ class SystemUtils:
             logger.error("Timeout capturing active window")
             return False, "Timeout capturing active window"
         except Exception as e:
-            logger.error(f"Error capturing active window: {e}")
+            logger.error("Error capturing active window: %s", e)
             return False, f"Error capturing active window: {e}"
         finally:
             _remove_empty_capture_temp(temp_path)
@@ -665,7 +664,7 @@ class SystemUtils:
                                         info['app_id'] = node.get('app_id', 'Unknown')
                                         break
                         except Exception as e:
-                            logger.warning(f"Error parsing swaymsg: {e}")
+                            logger.warning("Error parsing swaymsg: %s", e)
 
                 # Try using wl-focus for Wayland
                 if self._which('wl-focus'):
@@ -694,7 +693,7 @@ class SystemUtils:
                         info["window_id"] = result.stdout.strip()
 
         except Exception as e:
-            logger.warning(f"Error getting active window info: {e}")
+            logger.warning("Error getting active window info: %s", e)
             info["error"] = str(e)
 
         return info
@@ -738,14 +737,14 @@ class SystemUtils:
                     text = pytesseract.image_to_string(img, lang='eng', timeout=30)
 
                 if text.strip():
-                    logger.info(f"Text extracted successfully ({len(text)} characters)")
+                    logger.info("Text extracted successfully (%s characters)", len(text))
                     return True, text.strip()
                 else:
                     logger.warning("No text detected in the image")
                     return True, ""
 
             except Exception as e:
-                logger.error(f"pytesseract error: {e}")
+                logger.error("pytesseract error: %s", e)
                 return False, f"OCR error: {e}"
 
         except ImportError:
@@ -760,7 +759,7 @@ class SystemUtils:
             except (OSError, subprocess.TimeoutExpired) as e:
                 return False, f"OCR failed: {e}"
         except Exception as e:
-            logger.error(f"Error extracting text: {e}")
+            logger.error("Error extracting text: %s", e)
             return False, f"Error extracting text: {e}"
 
     def get_process_list(self) -> List[Dict[str, str]]:
@@ -797,7 +796,7 @@ class SystemUtils:
                                 "memory": parts[3]
                             })
             except Exception as e:
-                logger.warning(f"Could not get process list: {e}")
+                logger.warning("Could not get process list: %s", e)
 
         return sorted(processes, key=_cpu_value, reverse=True)
 
@@ -840,9 +839,9 @@ class SystemUtils:
                 if result.returncode == 0:
                     info["connections"] = result.stdout.split('\n')
             except Exception as e:
-                logger.warning(f"Could not get network info: {e}")
+                logger.warning("Could not get network info: %s", e)
         except Exception as e:
-            logger.error(f"Error getting network info: {e}")
+            logger.error("Error getting network info: %s", e)
             info["error"] = str(e)
 
         return info
@@ -873,7 +872,7 @@ class SystemUtils:
         try:
             root = os.path.realpath(os.path.expanduser(search_path))
             if not os.path.isdir(root):
-                logger.warning(f"Invalid directory for search: {search_path}")
+                logger.warning("Invalid directory for search: %s", search_path)
                 return results
 
             # Escape find(1)'s own wildcards so a term containing `*`, `?`,
@@ -896,7 +895,7 @@ class SystemUtils:
             logger.warning("`find` is not installed; file search unavailable")
             return results
         except Exception as e:
-            logger.error(f"Error searching files: {e}")
+            logger.error("Error searching files: %s", e)
             return results
 
     def get_file_info(self, filepath: str) -> Dict[str, str]:
@@ -933,7 +932,7 @@ class SystemUtils:
                     pass
 
         except Exception as e:
-            logger.error(f"Error getting file info: {e}")
+            logger.error("Error getting file info: %s", e)
             info["error"] = str(e)
 
         return info

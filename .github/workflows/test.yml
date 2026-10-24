@@ -44,6 +44,50 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck scripts/*.sh run.sh
 
+  package:
+    # Nothing else installs the wheel: without this job a packaging regression
+    # (dropped package-data, missing data-files, a broken entry point) would
+    # only show up on a user's machine.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python3 -m pip install build
+          python3 -m build
+
+      - name: Assert the wheel ships runtime data and console scripts
+        run: python3 scripts/check_wheel.py dist/*.whl
+
+  audit:
+    # Dependency advisories, run on every push.
+    #
+    # Non-blocking on purpose: `pip-audit` currently reports 37 advisories
+    # against Pillow, all with fix version 13.0.0, and that release is not
+    # published yet (12.3.0 is the newest on PyPI). A blocking job would stay
+    # red with no action available. Flip `continue-on-error` to false once a
+    # fixed Pillow exists; new advisories against other packages still show up
+    # in the run summary.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: python3 -m pip install pip-audit
+
+      - name: Audit the declared dependencies
+        run: python3 -m pip_audit -r requirements.txt
+
   gtk:
     runs-on: ubuntu-latest
     steps:

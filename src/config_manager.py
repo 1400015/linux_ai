@@ -8,13 +8,15 @@ import threading
 from pathlib import Path
 from typing import Any, Optional, Dict, List
 import logging
-import sys
 import uuid
 import io
 import stat
 from dotenv import load_dotenv
 from dotenv.parser import parse_stream
 from .provider_modes import ASSISTANCE_MODES, validate_local_url, validate_model_name
+# Theme file names, locations and validation have exactly one owner: the
+# window and this manager both read/write through theme_store.
+from .theme_store import bundled_themes_dir, list_bundled_themes, list_user_themes, user_theme_path
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -69,9 +71,8 @@ def _version_tuple(version: str):
 # rewriting the entire config.json hundreds of times per second.
 SAVE_DEBOUNCE_SECONDS = 0.5
 
-# A theme name is used to build a file name (see _load_theme), so it is
-# restricted to the same simple identifier the "Add Theme" dialog accepts.
-_THEME_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# A theme name is used to build a file name (see _load_theme); the rule now
+# lives in src/theme_store.py so every caller shares it — do not copy it here.
 _ENCRYPTED_PREFIX = "fernet:v1:"
 _DOTENV_MAX_BYTES = 128 * 1024
 _API_KEY_ENV_RE = re.compile(r"^LINUX_AI_API_PROVIDERS_[A-Z0-9_]+_API_KEY$")
@@ -320,7 +321,7 @@ class ConfigManager:
         }
     }
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: Optional[str] = None):
         """
         Initialize the configuration manager
 
@@ -365,9 +366,7 @@ class ConfigManager:
         # set()/save()/flush() may run from the GTK main thread, worker
         # threads and the debounce Timer at the same time.
         self._lock = threading.RLock()
-        self._themes_dir = Path(__file__).parent.parent / "themes"
-        if not self._themes_dir.is_dir():
-            self._themes_dir = Path(sys.prefix) / "share" / "linux-ai-assistant" / "themes"
+        self._themes_dir = bundled_themes_dir()
         self._load_config()
         self._validate_config()
         # Ensure a scheduled change is not lost on exit
@@ -447,14 +446,14 @@ class ConfigManager:
                         f"Configuration root must be a JSON object, got {type(data).__name__}"
                     )
                 self.config = data
-                logger.info(f"Configuration loaded from {self.config_path}")
+                logger.info("Configuration loaded from %s", self.config_path)
             else:
                 # Create default configuration
                 self.config = self._get_default_config()
                 self.save()
                 logger.info("Default configuration created")
         except (json.JSONDecodeError, IOError, OSError, ValueError) as e:
-            logger.error(f"Error loading configuration: {e}")
+            logger.error("Error loading configuration: %s", e)
             self.config = self._get_default_config()
             # Persist the repaired defaults. Previously the corrupt file stayed
             # on disk and _validate_config() found nothing to fix (`changed`
@@ -466,9 +465,9 @@ class ConfigManager:
                 )
                 if os.path.exists(self.config_path):
                     os.replace(self.config_path, backup_path)
-                    logger.warning(f"Corrupt configuration moved to {backup_path}")
+                    logger.warning("Corrupt configuration moved to %s", backup_path)
             except OSError as backup_error:
-                logger.warning(f"Could not back up corrupt configuration: {backup_error}")
+                logger.warning("Could not back up corrupt configuration: %s", backup_error)
             self.save()
 
     def _get_default_config(self) -> Dict[str, Any]:
@@ -532,7 +531,7 @@ class ConfigManager:
                 self.config.setdefault("app", {})["version"] = _APP_VERSION
                 self.save()
         except Exception as e:
-            logger.error(f"Error migrating configuration: {e}")
+            logger.error("Error migrating configuration: %s", e)
 
     def _validate_config(self):
         """Validate configuration against schema"""
@@ -549,19 +548,20 @@ class ConfigManager:
                 if section not in self.config or not isinstance(self.config[section], dict):
                     self.config[section] = {}
                     changed = True
-                    logger.warning(f"Section {section} not found. Creating default.")
+                    logger.warning("Section %s not found. Creating default.", section)
 
                 for key, expected_type in schema.items():
                     if key in self.config[section]:
                         value = self.config[section][key]
                         if not isinstance(value, expected_type):
-                            logger.warning(f"Invalid type for {section}.{key}: expected {expected_type}, got {type(value)}")
+                            logger.warning("Invalid type for %s.%s: expected %s, got %s",
+                                           section, key, expected_type, type(value))
                             self.config[section][key] = self._default_value(section, key, expected_type)
                             changed = True
                     else:
                         self.config[section][key] = self._default_value(section, key, expected_type)
                         changed = True
-                        logger.warning(f"Key {section}.{key} not found. Creating default.")
+                        logger.warning("Key %s.%s not found. Creating default.", section, key)
 
             # Load encryption key if needed
             if self.config["assistance"]["mode"] not in ASSISTANCE_MODES:
@@ -575,7 +575,7 @@ class ConfigManager:
             if changed:
                 self.save()
         except Exception as e:
-            logger.error(f"Error validating configuration: {e}")
+            logger.error("Error validating configuration: %s", e)
 
     @staticmethod
     def _env_name(key: str) -> str:
@@ -847,11 +847,11 @@ class ConfigManager:
                     pass
                 self._dirty = False
                 self.last_save_error = None
-                logger.debug(f"Configuration saved to {self.config_path}")
+                logger.debug("Configuration saved to %s", self.config_path)
                 return True
             except (IOError, OSError, TypeError, ValueError) as e:
                 self.last_save_error = str(e)
-                logger.error(f"Error saving configuration: {e}")
+                logger.error("Error saving configuration: %s", e)
                 if temp_path is not None:
                     try:
                         os.unlink(temp_path)
@@ -898,7 +898,7 @@ class ConfigManager:
                 store.delete(provider)
         else:
             self.set(f"api.providers.{provider}.api_key", api_key)
-        logger.info(f"API key updated for {provider}")
+        logger.info("API key updated for %s", provider)
 
     def get_api_key_env_override(self, provider: str) -> Optional[str]:
         """Name of the environment variable overriding `provider`'s key.
@@ -1106,7 +1106,7 @@ class ConfigManager:
         self.set("app.height", height)
         self.set("app.x_position", x)
         self.set("app.y_position", y)
-        logger.debug(f"Window geometry updated: {width}x{height} @ ({x},{y})")
+        logger.debug("Window geometry updated: %sx%s @ (%s,%s)", width, height, x, y)
 
     def get_theme_colors(self) -> Dict[str, str]:
         """Get theme colors"""
@@ -1135,47 +1135,38 @@ class ConfigManager:
         """Load theme from file"""
         # The name becomes a file name: a value such as "../../etc/some.json"
         # would otherwise read a JSON file outside the themes directories.
-        if not theme_name or not _THEME_NAME_RE.match(str(theme_name)):
-            logger.warning(f"Invalid theme name ignored: {theme_name!r}")
+        # theme_store.user_theme_path validates it before building the path.
+        try:
+            user_theme_file = user_theme_path(theme_name)
+        except ValueError:
+            logger.warning("Invalid theme name ignored: %r", theme_name)
             return None
         try:
             # Search in user's custom themes
-            user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
-            user_theme_file = user_themes_dir / f"{theme_name}.json"
-
             if user_theme_file.exists():
                 with open(user_theme_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
 
             # Search in application themes
-            app_theme_file = self._themes_dir / f"{theme_name}.json"
+            app_theme_file = self._themes_dir / user_theme_file.name
             if app_theme_file.exists():
                 with open(app_theme_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
 
-            logger.warning(f"Theme not found: {theme_name}")
+            logger.warning("Theme not found: %s", theme_name)
             return None
 
         except Exception as e:
-            logger.error(f"Error loading theme {theme_name}: {e}")
+            logger.error("Error loading theme %s: %s", theme_name, e)
             return None
 
     def get_available_themes(self) -> List[str]:
         """Get list of available themes"""
-        themes = []
-
-        # Application themes
-        if self._themes_dir.exists():
-            for theme_file in self._themes_dir.glob("*.json"):
-                themes.append(theme_file.stem)
-
-        # User themes
-        user_themes_dir = Path.home() / ".config" / "linux_ai_assistant" / "themes"
-        if user_themes_dir.exists():
-            for theme_file in user_themes_dir.glob("*.json"):
-                if theme_file.stem not in themes:
-                    themes.append(theme_file.stem)
-
+        # Bundled first, then the user's own; both lists come from the store.
+        themes = list_bundled_themes(self._themes_dir)
+        for theme_name in list_user_themes():
+            if theme_name not in themes:
+                themes.append(theme_name)
         return sorted(themes)
 
     def get_theme_info(self, theme_name: str) -> Optional[Dict]:
@@ -1230,4 +1221,4 @@ class ConfigManager:
             for provider, value in prepared.items():
                 providers[provider]["api_key"] = value
             self._schedule_save()
-        logger.info(f"Encryption {'enabled' if enable else 'disabled'}")
+        logger.info("Encryption %s", "enabled" if enable else "disabled")

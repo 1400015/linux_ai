@@ -20,7 +20,7 @@ class TestThemeRendering(unittest.TestCase):
             from src.chat_view import ChatView
             from src.main_window import MainWindow
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         cls.Gtk, cls.Gdk, cls.ChatView, cls.MainWindow = Gtk, Gdk, ChatView, MainWindow
 
     def setUp(self):

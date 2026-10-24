@@ -403,11 +403,11 @@ class AIClient:
                         module = importlib.import_module(module_name)
                         if hasattr(module, 'register_provider'):
                             module.register_provider(self)
-                            logger.info(f"Plugin loaded: {plugin_file.stem}")
+                            logger.info("Plugin loaded: %s", plugin_file.stem)
                     except Exception as e:
-                        logger.warning(f"Error loading plugin {plugin_file}: {redact_url(str(e))}")
+                        logger.warning("Error loading plugin %s: %s", plugin_file, redact_url(str(e)))
         except Exception as e:
-            logger.warning(f"Error loading plugins: {redact_url(str(e))}")
+            logger.warning("Error loading plugins: %s", redact_url(str(e)))
 
     def register_provider(self, name: str, chat_func: Callable):
         """Register a new custom provider"""
@@ -416,7 +416,7 @@ class AIClient:
             # shared by every other AIClient instance in the process.
             self.SUPPORTED_PROVIDERS = list(self.SUPPORTED_PROVIDERS) + [name]
         setattr(self, f"_chat_{name}", chat_func)
-        logger.info(f"Custom provider registered: {name}")
+        logger.info("Custom provider registered: %s", name)
 
     def _get_api_config(self, provider: str) -> Dict[str, Any]:
         """Get API configuration for a specific provider"""
@@ -649,7 +649,7 @@ class AIClient:
             pending["output"] += int(output_tokens)
             pending["total"] += int(input_tokens) + int(output_tokens)
             self._schedule_usage_save()
-        logger.debug(f"Token usage - {provider}: input={input_tokens}, output={output_tokens}")
+        logger.debug("Token usage - %s: input=%s, output=%s", provider, input_tokens, output_tokens)
 
     def _schedule_usage_save(self):
         """Debounced write of usage.json. Caller must hold `_usage_lock`."""
@@ -719,11 +719,11 @@ class AIClient:
                         "total": int(entry["total"]),
                     }
                 else:
-                    logger.warning(f"Ignoring malformed token usage entry: {provider}")
+                    logger.warning("Ignoring malformed token usage entry: %s", provider)
             self.token_usage = clean
-            logger.debug(f"Token usage loaded: {list(clean)}")
+            logger.debug("Token usage loaded: %s", list(clean))
         except Exception as e:
-            logger.warning(f"Could not load token usage: {redact_url(str(e))}")
+            logger.warning("Could not load token usage: %s", redact_url(str(e)))
 
     def _save_token_usage(self):
         """Merge only this client's new usage under an inter-process lock."""
@@ -845,8 +845,7 @@ class AIClient:
                 close_response(response)
                 response = None
                 logger.warning(
-                    f"Rate limit hit for {safe_url}. "
-                    f"Waiting {retry_after} seconds..."
+                    "Rate limit hit for %s. Waiting %s seconds...", safe_url, retry_after
                 )
                 _wait_for_retry(retry_after, cancel_event)
                 raise _RetryAfterRateLimit()
@@ -866,7 +865,7 @@ class AIClient:
         except Timeout as e:
             _check_cancelled(cancel_event)
             detail = "Image request timed out" if image_request else redact_url(str(e))
-            logger.error(f"Timeout connecting to {safe_url}: {detail}")
+            logger.error("Timeout connecting to %s: %s", safe_url, detail)
             raise
         except RequestException as e:
             if _request_event(cancel_event) is not None and _request_event(cancel_event).is_set():
@@ -884,10 +883,8 @@ class AIClient:
             elif response is not None:
                 close_response(response)
             safe_error = "Image request failed" if image_request else _safe_provider_error(e)
-            logger.error(
-                f"Request error for {safe_url}: {safe_error}"
-                + (f" | body: {body_snippet}" if body_snippet else "")
-            )
+            body_detail = " | body: " + body_snippet if body_snippet else ""
+            logger.error("Request error for %s: %s%s", safe_url, safe_error, body_detail)
             # Retain the response/status for the established 5xx retry policy.
             raise AIProviderError(
                 safe_error + (f" | {body_snippet}" if body_snippet else ""), response=response,
@@ -896,7 +893,7 @@ class AIClient:
             if response is not None:
                 close_response(response)
             detail = "Image request failed" if image_request else redact_url(str(e))
-            logger.error(f"Unexpected error in request for {safe_url}: {detail}")
+            logger.error("Unexpected error in request for %s: %s", safe_url, detail)
             raise AIProviderError(detail) from e
 
     def _parse_retry_after(self, value: Any) -> int:
@@ -917,7 +914,7 @@ class AIClient:
                 if getattr(_REQUEST_CONTEXT, 'image_request', False):
                     logger.warning("Invalid Retry-After for image request; using the default wait")
                 else:
-                    logger.warning(f"Invalid Retry-After: {value!r}. Using {self.RATE_LIMIT_WAIT}s")
+                    logger.warning("Invalid Retry-After: %r. Using %ss", value, self.RATE_LIMIT_WAIT)
                 return self.RATE_LIMIT_WAIT
         # Cap apenas defensivo: um header válido pode pedir mais do que o
         # default de 15 s (antes o cap cortava o valor e as tentativas
@@ -1007,19 +1004,19 @@ class AIClient:
 
         for i, msg in enumerate(messages):
             if not isinstance(msg, dict):
-                logger.error(f"Message {i} is not a dictionary")
+                logger.error("Message %s is not a dictionary", i)
                 return False
             if "role" not in msg or "content" not in msg:
-                logger.error(f"Message {i} has no 'role' or 'content'")
+                logger.error("Message %s has no 'role' or 'content'", i)
                 return False
             if msg["role"] not in ["user", "assistant", "system"]:
-                logger.error(f"Invalid role in message {i}: {msg['role']}")
+                logger.error("Invalid role in message %s: %s", i, msg['role'])
                 return False
             # `content: None` no histórico passava a validação e rebentava
             # MAIS TARDE (ex.: " ".join no pós-processamento), depois de o
             # pedido ter sido respondido com sucesso — a resposta perdia-se.
             if not isinstance(msg["content"], str):
-                logger.error(f"Message {i} content must be a string")
+                logger.error("Message %s content must be a string", i)
                 return False
 
         return True
@@ -1164,7 +1161,7 @@ class AIClient:
         chat_method = getattr(self, f"_chat_{provider}", None)
 
         if not api_config and chat_method is None:
-            logger.error(f"Unknown provider: {provider}")
+            logger.error("Unknown provider: %s", provider)
             return None
 
         model = model or (self._local_settings()["model"] if provider == "local_llm" else api_config.get("model"))
@@ -1183,15 +1180,15 @@ class AIClient:
                 return None
 
         if not api_key and provider != "local_llm" and api_config:
-            logger.error(f"API key not configured for {provider}")
+            logger.error("API key not configured for %s", provider)
             return None
         # Sem base_url o URL ficava "None/chat/completions" e o pedido
         # falhava sempre com um erro críptico; falhar cedo e claro.
         if not base_url and provider in self.BUILTIN_PROVIDERS and api_config:
-            logger.error(f"base_url not configured for {provider}")
+            logger.error("base_url not configured for %s", provider)
             return None
 
-        logger.info(f"Sending request to {provider} with model {model}")
+        logger.info("Sending request to %s with model %s", provider, model)
 
         # Accumulated total before the call, to know whether the provider
         # reported real usage (and avoid double-counting the estimate).
@@ -1203,18 +1200,18 @@ class AIClient:
             if chat_method:
                 result = chat_method(messages, model, api_key, base_url, temperature, max_tokens, timeout)
             else:
-                logger.error(f"Unsupported provider: {provider}")
+                logger.error("Unsupported provider: %s", provider)
                 return None
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except AIProviderError as e:
-            logger.error(f"Error communicating with {provider}: {redact_url(str(e))}")
+            logger.error("Error communicating with %s: %s", provider, redact_url(str(e)))
             return None
         except Exception as e:
             # Sem exc_info: o traceback do requests inclui a URL original
             # (plugins podem usar ?key=...) e fugiria para app.log não
             # redactado.
-            logger.error(f"Error communicating with {provider}: {redact_url(str(e))}")
+            logger.error("Error communicating with %s: %s", provider, redact_url(str(e)))
             return None
 
         # Pós-processamento FORA do try: uma exceção aqui não pode descartar
@@ -1224,16 +1221,16 @@ class AIClient:
                 after = self.token_usage.get(provider, {}).get("total", 0)
 
             if after > before:
-                logger.info(f"Response received ({after - before} tokens, API usage)")
+                logger.info("Response received (%s tokens, API usage)", after - before)
             else:
                 try:
                     # Provider did not report usage: estimate it.
                     input_text = " ".join([msg.get("content", "") for msg in messages])
                     output_tokens = self._count_tokens(result)
                     self._update_token_usage(provider, self._count_tokens(input_text), output_tokens)
-                    logger.info(f"Response received (~{output_tokens} tokens, estimate)")
+                    logger.info("Response received (~%s tokens, estimate)", output_tokens)
                 except Exception as e:
-                    logger.warning(f"Could not estimate token usage: {e}")
+                    logger.warning("Could not estimate token usage: %s", e)
 
         return result
 
@@ -1260,11 +1257,11 @@ class AIClient:
 
             choices = data.get("choices")
             if not choices:
-                logger.warning(f"No choices in {provider} response")
+                logger.warning("No choices in %s response", provider)
                 return ""
             content = (choices[0].get("message") or {}).get("content")
             if content is None:
-                logger.warning(f"Empty content in {provider} response")
+                logger.warning("Empty content in %s response", provider)
                 return ""
             return content
         except AIProviderError:
@@ -1329,7 +1326,7 @@ class AIClient:
                     self._count_tokens(full_text),
                 )
         except Exception as e:
-            logger.warning(f"Could not record stream usage: {e}")
+            logger.warning("Could not record stream usage: %s", e)
 
     def _chat_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,
                          base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
@@ -1354,7 +1351,7 @@ class AIClient:
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except AIProviderError as e:
-            logger.error(f"OpenRouter error: {redact_url(str(e))}")
+            logger.error("OpenRouter error: %s", redact_url(str(e)))
             return None
 
     def _google_safety_settings(self):
@@ -1436,15 +1433,15 @@ class AIClient:
             texts = [part.get("text", "") for part in parts if isinstance(part, dict)]
             return "".join(texts)
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Google AI Studio JSON: {e}")
+            logger.error("Error parsing Google AI Studio JSON: %s", e)
             return None
         except (KeyError, IndexError, TypeError) as e:
-            logger.error(f"Invalid response format from Google AI Studio: {e}")
+            logger.error("Invalid response format from Google AI Studio: %s", e)
             return None
         except AIProviderError:
             raise
         except Exception as e:
-            logger.error(f"Google AI Studio error: {redact_url(str(e))}")
+            logger.error("Google AI Studio error: %s", redact_url(str(e)))
             return None
 
     @staticmethod
@@ -1519,15 +1516,15 @@ class AIClient:
                 return content.get("text", "")
             return ""
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Anthropic JSON: {redact_url(str(e))}")
+            logger.error("Error parsing Anthropic JSON: %s", redact_url(str(e)))
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from Anthropic: {redact_url(str(e))}")
+            logger.error("Invalid response format from Anthropic: %s", redact_url(str(e)))
             return None
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except Exception as e:
-            logger.error(f"Anthropic error: {redact_url(str(e))}")
+            logger.error("Anthropic error: %s", redact_url(str(e)))
             return None
 
     def _chat_mistral(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -1549,7 +1546,7 @@ class AIClient:
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except AIProviderError as e:
-            logger.error(f"Mistral error: {redact_url(str(e))}")
+            logger.error("Mistral error: %s", redact_url(str(e)))
             return None
 
     def _chat_groq(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -1571,7 +1568,7 @@ class AIClient:
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except AIProviderError as e:
-            logger.error(f"Groq error: {redact_url(str(e))}")
+            logger.error("Groq error: %s", redact_url(str(e)))
             return None
 
     def _chat_cohere(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -1629,15 +1626,15 @@ class AIClient:
             self._record_usage("cohere", {"usage": meta.get("billed_units") or meta.get("tokens") or {}})
             return data.get("text") or ""
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing Cohere JSON: {redact_url(str(e))}")
+            logger.error("Error parsing Cohere JSON: %s", redact_url(str(e)))
             return None
         except KeyError as e:
-            logger.error(f"Invalid response format from Cohere: {redact_url(str(e))}")
+            logger.error("Invalid response format from Cohere: %s", redact_url(str(e)))
             return None
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except Exception as e:
-            logger.error(f"Cohere error: {redact_url(str(e))}")
+            logger.error("Cohere error: %s", redact_url(str(e)))
             return None
 
     def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
@@ -1655,7 +1652,7 @@ class AIClient:
         except (AIRequestCancelled, AIResponseLimitError):
             raise
         except AIProviderError as e:
-            logger.error(f"Local model error: {redact_url(str(e))}")
+            logger.error("Local model error: %s", redact_url(str(e)))
             return None
 
     def stream_chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
@@ -1753,7 +1750,7 @@ class AIClient:
         except AIProviderError:
             raise
         except Exception as e:
-            logger.error(f"Stream error for {provider}: {redact_url(str(e))}")
+            logger.error("Stream error for %s: %s", provider, redact_url(str(e)))
             raise AIProviderError(redact_url(str(e))) from e
 
     def _stream_openrouter(self, messages: List[Dict[str, str]], model: str, api_key: str,

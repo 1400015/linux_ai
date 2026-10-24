@@ -43,6 +43,9 @@ Source = "https://github.com/1400015/linux_ai"
 
 [project.scripts]
 linux-ai-assistant = "src.app:main"
+# Headless front end (chat, sessions, knowledge, diagnose, ...); the GUI entry
+# point above requires GTK, this one must not.
+linux-ai-assistant-cli = "src.cli:main"
 
 [tool.setuptools]
 packages = ["src", "plugins"]
@@ -66,8 +69,15 @@ line-length = 110
 target-version = "py38"
 
 [tool.ruff.lint]
-# O projecto usa muitos except: vazios; focusing on erros reais.
-select = ["E", "F", "W"]
+# E/F/W é o mínimo histórico; B (bugbear), G (formato de logging) e RUF013
+# entraram depois de as ocorrências existentes serem corrigidas, para o gate
+# não ser só cosmético:
+#   - B023 (closures sobre variáveis de loop) dava testes falsamente verdes;
+#   - B904 (raise sem causa) perdia o erro original nos skips dos testes;
+#   - G004 obrigou interpolação preguiçosa nos logger;
+#   - RUF013 obriga a Optional[...] explícito nas assinaturas.
+# E501/E722 continuam desligados de propósito (ficha do projecto).
+select = ["E", "F", "W", "B", "G", "RUF013"]
 ignore = [
     "E501",   # linhas longas
     "E722",   # except: vazio intencional em fallbacks
@@ -75,9 +85,9 @@ ignore = [
     "E402",   # imports após gi.require_version()/sys.path hacks (padrão GTK/testes)
 ]
 
-[tool.ruff.lint.per-file-ignores]
-"src/app.py" = ["F401"]  #Gtk/Gdk importados condicionalmente
-"src/main_window.py" = ["F401"]
+# Sem per-file-ignores: os imports condicionais de GTK em app.py e em
+# main_window.py já passam F401 isolado, por isso o gate aplica-se igual a
+# todos os ficheiros.
 
 [tool.mypy]
 # A gradual gate, not a claim that the entire application is fully typed.

@@ -529,8 +529,8 @@ class TestPhaseTwoGTK(unittest.TestCase):
                 raise unittest.SkipTest('GTK display unavailable')
             from src.diagnostic_dialog import DiagnosticDialog
             from src.change_dialog import ChangeDialog
-        except (ImportError, ValueError):
-            raise unittest.SkipTest('GTK unavailable')
+        except (ImportError, ValueError) as error:
+            raise unittest.SkipTest('GTK unavailable') from error
         cls.Gtk, cls.GLib = Gtk, GLib
         cls.DiagnosticDialog, cls.ChangeDialog = DiagnosticDialog, ChangeDialog
 

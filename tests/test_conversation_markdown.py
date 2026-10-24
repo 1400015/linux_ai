@@ -167,7 +167,7 @@ class TestConversationMarkdownGui(unittest.TestCase):
                 raise unittest.SkipTest("GTK display unavailable")
             from src.conversation_dialog import confirm_import, import_with_preview
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest(str(error))
+            raise unittest.SkipTest(str(error)) from error
         cls.Gtk = Gtk
         cls.confirm_import = staticmethod(confirm_import)
         cls.import_with_preview = staticmethod(import_with_preview)

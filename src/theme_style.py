@@ -12,12 +12,22 @@ MAX_CONTEXT_MESSAGES = 20
 STREAM_FLUSH_INTERVAL = 0.08
 
 
+def valid_color(value):
+    """True when `value` is a hex color GTK3's CSS parser accepts.
+
+    The predicate behind `safe_color`, exposed for callers that must *reject*
+    a bad value (theme_store validates a file before writing it) instead of
+    silently rendering the fallback.
+    """
+    return isinstance(value, str) and bool(_COLOR_RE.match(value.strip()))
+
+
 def safe_color(value, fallback="#1e1e1e"):
     """Return a hex color supported by GTK3 CSS or `fallback`."""
     if isinstance(value, str) and _COLOR_RE.match(value.strip()):
         return value.strip()
     if value is not None:
-        logger.warning(f"Invalid theme color ignored: {value!r}")
+        logger.warning("Invalid theme color ignored: %r", value)
     return fallback
 
 
@@ -26,7 +36,7 @@ def safe_font_family(value, fallback="Monospace"):
     if isinstance(value, str) and _FONT_FAMILY_RE.match(value.strip()):
         return value.strip()
     if value is not None:
-        logger.warning(f"Invalid theme font family ignored: {value!r}")
+        logger.warning("Invalid theme font family ignored: %r", value)
     return fallback
 
 

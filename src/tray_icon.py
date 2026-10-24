@@ -60,7 +60,7 @@ class TrayIcon:
             logger.info("AppIndicator3 created successfully")
 
         except (ImportError, AttributeError) as e:
-            logger.warning(f"AppIndicator3 not available: {e}. Using StatusIcon.")
+            logger.warning("AppIndicator3 not available: %s. Using StatusIcon.", e)
             # Fallback for Gtk.StatusIcon (works on most systems)
             self._create_status_icon()
 
@@ -81,22 +81,24 @@ class TrayIcon:
                     pixbuf.fill(0x4CAF50FF)  # Green
                     self.status_icon.set_from_pixbuf(pixbuf)
                 except Exception as e:
-                    logger.error(f"Error creating icon: {e}")
+                    logger.error("Error creating icon: %s", e)
 
             self.status_icon.set_tooltip_text("Linux AI Assistant")
             self.status_icon.connect("activate", self.on_tray_clicked)
             self.status_icon.connect("popup-menu", self.on_tray_menu)
-
-            # Create menu
-            self._create_menu()
 
             logger.info("StatusIcon created successfully")
 
         except Exception as e:
             # Do not re-raise: without a tray icon the app still works via
             # the window/float button, and raising here aborted startup.
-            logger.error(f"Error creating StatusIcon: {e}")
+            logger.error("Error creating StatusIcon: %s", e)
             self.status_icon = None
+
+        # The menu does not depend on the icon: when the pixbuf (or the
+        # backend) failed above, building it here still is what keeps
+        # on_tray_menu() from raising AttributeError on a missing self.menu.
+        self._create_menu()
 
     def _create_menu(self):
         """Create system tray icon menu"""
@@ -166,7 +168,7 @@ class TrayIcon:
         if self._syncing:
             return  # programmatic set_active() from update_expert_mode()
         self.main_window.on_expert_mode_toggled(None)
-        logger.debug(f"Expert mode toggled: {self.main_window.expert_mode}")
+        logger.debug("Expert mode toggled: %s", self.main_window.expert_mode)
 
     def on_config_clicked(self, item):
         """Open settings window"""
@@ -201,7 +203,7 @@ class TrayIcon:
             self.expert_item.set_active(enabled)
         finally:
             self._syncing = False
-        logger.debug(f"Expert mode menu updated: {enabled}")
+        logger.debug("Expert mode menu updated: %s", enabled)
 
     def update_toggle_label(self, visible: bool):
         """Update the toggle label in the menu"""

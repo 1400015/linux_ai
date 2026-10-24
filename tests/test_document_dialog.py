@@ -98,7 +98,8 @@ class TestDocumentDialog(unittest.TestCase):
                 observed, failures = [], []
                 deadline = time.monotonic() + 5
 
-                def inspect_and_close():
+                def inspect_and_close(deadline=deadline, populated=populated,
+                                      observed=observed, failures=failures):
                     visible = [dialog for dialog in Gtk.Window.list_toplevels()
                                if isinstance(dialog, DocumentDialog) and dialog.get_visible()]
                     if not visible and time.monotonic() < deadline:

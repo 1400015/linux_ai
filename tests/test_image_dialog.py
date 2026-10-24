@@ -21,7 +21,7 @@ class ImageReviewDialogTests(unittest.TestCase):
                 raise unittest.SkipTest('GTK display unavailable; run with xvfb-run')
             from src import image_dialog
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         cls.Gtk = Gtk
         cls.image_dialog = image_dialog
 

@@ -270,7 +270,7 @@ class PrivilegedInstallationTests(unittest.TestCase):
                 called = []
                 module = ModuleType(module_name)
 
-                def main(*arguments):
+                def main(*arguments, called=called):
                     called.append(arguments)
                     return 0
 

@@ -316,7 +316,7 @@ TestRemoteModels()._assert_repeated_discovery_cleanup()
     def test_remote_listing_is_blocked_by_offline_and_local_modes(self):
         client = object.__new__(AIClient)
         for mode in ('offline', 'local'):
-            client.config = SimpleNamespace(get=lambda key, default=None: mode)
+            client.config = SimpleNamespace(get=lambda key, default=None, mode=mode: mode)
             with patch('src.remote_models.discover_remote_models') as discovery:
                 with self.assertRaises(ModelDiscoveryError):
                     client.list_remote_models('groq')
@@ -363,7 +363,7 @@ TestRemoteModels()._assert_repeated_discovery_cleanup()
         client = object.__new__(AIClient)
         for mode in ('offline', 'local'):
             with self.subTest(mode=mode):
-                client.config = SimpleNamespace(get=lambda key, default=None: mode,
+                client.config = SimpleNamespace(get=lambda key, default=None, mode=mode: mode,
                                                 get_api_key=Mock())
                 with patch('src.remote_models.discover_remote_models') as discovery:
                     with self.assertRaises(ModelDiscoveryError):
@@ -380,7 +380,7 @@ TestRemoteModels()._assert_repeated_discovery_cleanup()
                 session = Session(response)
                 with self.assertRaises(ModelDiscoveryError) as error:
                     discover_remote_models('mistral', {'base_url': 'https://api.mistral.ai/v1'},
-                                           'synthetic-key', session_factory=lambda: session)
+                                           'synthetic-key', session_factory=lambda session=session: session)
                 self.assertIn(explanation, str(error.exception))
                 self.assertIn('HTTP', str(error.exception))
                 self.assertNotIn('synthetic-key', str(error.exception))

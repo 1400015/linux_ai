@@ -93,6 +93,9 @@ class CLIApp:
     def parse_args(argv=None):
         """Parse the command-line arguments."""
         parser = argparse.ArgumentParser(
+            # The installed console script (pyproject [project.scripts]); the
+            # epilog examples use %(prog)s, so they name the same command.
+            prog='linux-ai-assistant-cli',
             description='Linux AI Assistant - Interface de Linha de Comandos',
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
@@ -717,7 +720,7 @@ Examples:
         try:
             reply = propose(message, get_language())
         except Exception as exc:
-            logger.error("Could not prepare a confirmed action: %s", exc, exc_info=True)
+            logger.exception("Could not prepare a confirmed action: %s", exc)
             return _ActionResult()
         interaction, commands = split_offer(reply)
         if not interaction and not commands:

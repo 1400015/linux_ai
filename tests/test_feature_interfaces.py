@@ -182,7 +182,7 @@ class TestGuiFeatureInterfaces(unittest.TestCase):
             from src.chat_view import ChatView
             from src.provider_settings import ProviderSettings
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest(str(error))
+            raise unittest.SkipTest(str(error)) from error
         cls.Gtk, cls.MainWindow, cls.ChatView, cls.ProviderSettings = Gtk, MainWindow, ChatView, ProviderSettings
 
     def test_switch_session_invalidates_late_reply_and_resets_diagnostic(self):

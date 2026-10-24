@@ -75,7 +75,7 @@ class LinuxAIAssistant:
             self.tray_icon = None
 
         except Exception as e:
-            logger.error(f"Error initializing application: {e}", exc_info=True)
+            logger.exception("Error initializing application: %s", e)
             raise
 
     def run(self, show=False):
@@ -147,7 +147,7 @@ class LinuxAIAssistant:
             self.quit()
             return 1
         except Exception as e:
-            logger.error(f"Error in main loop: {e}", exc_info=True)
+            logger.exception("Error in main loop: %s", e)
             self.quit()
             return 1
         finally:
@@ -189,14 +189,14 @@ class LinuxAIAssistant:
             try:
                 self.config.flush()
             except Exception as e:
-                logger.warning(f"Could not flush config on quit: {e}")
+                logger.warning("Could not flush config on quit: %s", e)
 
             if self.main_window:
                 # Drain pending history writes before tearing the window down
                 try:
                     self.main_window.close_history_writer()
                 except Exception as e:
-                    logger.warning(f"Could not flush history on quit: {e}")
+                    logger.warning("Could not flush history on quit: %s", e)
                 self.main_window.destroy()
                 logger.info("Main window destroyed")
 
@@ -204,7 +204,7 @@ class LinuxAIAssistant:
                 try:
                     self.float_button_window.destroy()
                 except Exception as e:
-                    logger.warning(f"Could not destroy float button: {e}")
+                    logger.warning("Could not destroy float button: %s", e)
                 self.float_button_window = None
 
             if self.tray_icon:
@@ -215,7 +215,7 @@ class LinuxAIAssistant:
                     self.tray_icon.status_icon.set_visible(False)
                     logger.info("StatusIcon deactivated")
         except Exception as e:
-            logger.error(f"Error terminating application: {e}", exc_info=True)
+            logger.exception("Error terminating application: %s", e)
         finally:
             # O fecho do main loop não pode depender do sucesso da destruição
             # dos widgets: sem `finally`, uma exceção a meio de quit() deixava
@@ -225,7 +225,7 @@ class LinuxAIAssistant:
                 if Gtk.main_level() > 0:
                     Gtk.main_quit()
             except Exception as e:
-                logger.error(f"Could not quit GTK main loop: {e}")
+                logger.error("Could not quit GTK main loop: %s", e)
 
     def _finish_history_shutdown(self):
         from .history_recovery import history_recovery_active
@@ -315,7 +315,10 @@ class LinuxAIAssistant:
 
 def main(argv=None):
     """Main entry point"""
-    parser = argparse.ArgumentParser(description='Linux AI Assistant desktop application')
+    parser = argparse.ArgumentParser(
+        prog='linux-ai-assistant',
+        description='Linux AI Assistant desktop application',
+    )
     parser.add_argument('--show', action='store_true',
                         help='Start or focus the existing assistant window (for desktop shortcuts)')
     args = parser.parse_args(argv)
@@ -378,7 +381,7 @@ def main(argv=None):
         return app.run(show=args.show or bool(pending_show))
 
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        logger.exception("Fatal error: %s", e)
         return 1
     finally:
         if activation is not None:

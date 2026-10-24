@@ -14,7 +14,7 @@ class TestGtkCssColors(unittest.TestCase):
             from gi.repository import Gdk, Gtk
             from src.main_window import MainWindow, contrasting_text_color, safe_color
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest('GTK3 unavailable: ' + str(error))
+            raise unittest.SkipTest('GTK3 unavailable: ' + str(error)) from error
         if not Gtk.init_check()[0]:
             raise unittest.SkipTest('GTK display unavailable; run with xvfb-run')
         cls.Gdk, cls.Gtk, cls.MainWindow = Gdk, Gtk, MainWindow
@@ -55,7 +55,7 @@ class TestGtkCssColors(unittest.TestCase):
                 colors = dict.fromkeys(('background', 'text', 'accent', 'secondary', 'tertiary'), color)
                 window.config = SimpleNamespace(
                     get=lambda key, fallback=None: 'custom' if key == 'app.theme' else fallback,
-                    get_theme_colors=lambda: colors,
+                    get_theme_colors=lambda colors=colors: colors,
                     get_theme_info=lambda name: {},
                 )
                 box = self.Gtk.Box()

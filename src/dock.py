@@ -106,7 +106,7 @@ def apply_dock(window, edge, width):
         except Exception as e:
             # Log instead of a bare `pass`: silently swallowing this made
             # Wayland dock failures invisible.
-            logger.warning(f"Layer-shell dock failed, falling back: {e}")
+            logger.warning("Layer-shell dock failed, falling back: %s", e)
 
     # Caminho X11: reservar o espaço E mover/ancorar a janela ao bordo —
     # o strut só reserva; sem o move, a janela ficava onde estava. O strut
@@ -132,7 +132,7 @@ def apply_dock(window, edge, width):
             window.move(0, max(screen_h - real_h, 0))
             size = real_h
     except Exception as e:
-        logger.warning(f"Could not position docked window; using configured size: {e}")
+        logger.warning("Could not position docked window; using configured size: %s", e)
         size = width
     gdk_window = window.get_window()
     if gdk_window and _apply_x11_struts(gdk_window, edge, size):
@@ -165,7 +165,7 @@ def apply_float_button(window, edge):
             return True
         logger.warning("Layer-shell init had no effect on the float button; falling back")
     except Exception as e:
-        logger.warning(f"Layer-shell float button failed, falling back: {e}")
+        logger.warning("Layer-shell float button failed, falling back: %s", e)
     return False
 
 
@@ -193,7 +193,7 @@ def apply_float(window, always_on_top: bool = True):
                     GtkLayerShell.set_margin(window, m, 0)
                 GtkLayerShell.set_exclusive_zone(window, -1)
         except Exception as e:
-            logger.warning(f"Could not clear layer-shell state: {e}")
+            logger.warning("Could not clear layer-shell state: %s", e)
 
     window.set_type_hint(Gdk.WindowTypeHint.UTILITY)
     window.set_keep_above(bool(always_on_top))
@@ -211,4 +211,4 @@ def apply_float(window, always_on_top: bool = True):
             Gdk.property_change(gdk_window, atom, cardinal, 32,
                                 Gdk.PropMode.REPLACE, data, 12)
         except Exception as e:
-            logger.warning(f"Could not release X11 strut: {e}")
+            logger.warning("Could not release X11 strut: %s", e)

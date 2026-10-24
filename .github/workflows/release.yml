@@ -1,0 +1,80 @@
+name: Release
+
+# Tagging v* builds the distributions, asserts the wheel is installable and
+# complete (scripts/check_wheel.py), then attaches both artifacts to the GitHub
+# Release. The same check runs on every push in test.yml, so a tag can only
+# fail here if the tag itself disagrees with src/_version.py.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python3 -m pip install build
+
+      - name: Build sdist and wheel
+        run: python3 -m build
+
+      - name: Assert the wheel ships runtime data and console scripts
+        run: python3 scripts/check_wheel.py dist/*.whl
+
+      - name: The tag must match src/_version.py
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, sys, zipfile
+
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          module = open("src/_version.py", encoding="utf-8").read()
+          match = re.search(r'__version__\s*=\s*"([^"]+)"', module)
+          version = match.group(1) if match else None
+
+          wheels = glob.glob("dist/*.whl")
+          built = {re.search(r"-([^-]+)-py", path).group(1) for path in wheels}
+
+          if tag != version or built != {tag}:
+              sys.exit("tag {!r} != src/_version.py {!r} != wheel(s) {!r}"
+                       .format(tag, version, sorted(built)))
+          print("tag, src/_version.py and wheel agree on", tag)
+          PY
+
+      - name: Extract the changelog entry for this version
+        id: changelog
+        run: |
+          python3 - <<'PY'
+          import os, re
+
+          # Tags carry a "v" the CHANGELOG headings do not: v1.4.2 -> [1.4.2].
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          pattern = r"^## \[{}\][^\n]*\n(.*?)(?=^## \[|\Z)".format(re.escape(tag))
+          match = re.search(pattern, text, re.M | re.S)
+          body = match.group(1).strip() if match else "See CHANGELOG.md."
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("body<<RELEASE_BODY\n")
+              out.write(body + "\n")
+              out.write("RELEASE_BODY\n")
+          PY
+
+      - name: Create the GitHub Release with both artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGELOG_NOTES: ${{ steps.changelog.outputs.body }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "$CHANGELOG_NOTES" \
+            --verify-tag

@@ -202,7 +202,7 @@ _PROCEDURE_ORDER = {identifier: index for index, identifier in enumerate((
 PROCEDURES = tuple(sorted(PROCEDURES, key=lambda item: _PROCEDURE_ORDER.get(item.id, len(_PROCEDURE_ORDER))))
 
 PROCEDURE_BY_ID = {item.id: item for item in PROCEDURES}
-_STOPWORDS = {"a", "o", "as", "os", "de", "do", "da", "e", "em", "no", "na", "the", "a", "an", "and", "is", "for", "to", "how", "como", "sobre", "about", "guide", "guia", "local", "offline", "knowledge", "conhecimento", "base", "search", "pesquisar", "procurar", "documentacao", "documentation"}
+_STOPWORDS = {"a", "o", "as", "os", "de", "do", "da", "e", "em", "no", "na", "the", "an", "and", "is", "for", "to", "how", "como", "sobre", "about", "guide", "guia", "local", "offline", "knowledge", "conhecimento", "base", "search", "pesquisar", "procurar", "documentacao", "documentation"}
 
 
 def search_procedures(query: str, distro=None, limit: int = 5) -> Tuple[Procedure, ...]:

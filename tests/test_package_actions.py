@@ -182,7 +182,7 @@ class TestPackageCandidates(unittest.TestCase):
 
     def test_search_failures_and_oversized_output_are_explicit(self):
         for result in ((False, "Cache unavailable"), (True, "x" * (MAX_OUTPUT_BYTES + 1))):
-            service = PackageService("apt", lambda argv, timeout=20: result, which)
+            service = PackageService("apt", lambda argv, timeout=20, result=result: result, which)
             items, error = service.search("nano")
             self.assertEqual(items, [])
             self.assertTrue(error)

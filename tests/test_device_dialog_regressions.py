@@ -21,7 +21,7 @@ class TestDeviceDialogs(unittest.TestCase):
                 raise unittest.SkipTest("GTK display unavailable; run with xvfb-run")
             from src import device_dialogs
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest("GTK3 unavailable: " + str(error))
+            raise unittest.SkipTest("GTK3 unavailable: " + str(error)) from error
         cls.Gtk = Gtk
         cls.dialogs = device_dialogs
 

@@ -24,7 +24,7 @@ class HistoryRecoveryGtkTests(unittest.TestCase):
                 raise unittest.SkipTest("GTK display unavailable; run with xvfb-run")
             from src import history_recovery
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest("GTK3 unavailable: " + str(error))
+            raise unittest.SkipTest("GTK3 unavailable: " + str(error)) from error
         cls.Gtk, cls.GLib, cls.module = Gtk, GLib, history_recovery
 
     def setUp(self):
@@ -345,7 +345,7 @@ class HistoryStartupExitGtkTests(unittest.TestCase):
             from gi.repository import Gtk
             from src import app, history_recovery
         except (ImportError, ValueError) as error:
-            raise unittest.SkipTest("GTK3 unavailable: " + str(error))
+            raise unittest.SkipTest("GTK3 unavailable: " + str(error)) from error
         cls.Gtk, cls.app_module, cls.recovery = Gtk, app, history_recovery
 
     def application(self):
