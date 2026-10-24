@@ -8,9 +8,15 @@ imports padronizam-se em `src.*` e funciona com `pytest` directo a partir
 de qualquer directório.
 """
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# A suite fixa o argv que chega ao run_bounded; numa máquina com sessão de
+# systemd do utilizador o sandbox envolveria os comandos e dessas asserções.
+# Os testes do próprio comando sandbox injectam a disponibilidade directamente.
+os.environ.setdefault("LINUX_AI_COMMAND_SANDBOX", "0")

@@ -843,8 +843,17 @@ class OfflineAssistant:
         """Run a confirmed catalog command. Privileged argv goes through pkexec."""
         if command.privileged:
             return OfflineAssistant.run_privileged(command, timeout=timeout)
+        from . import command_sandbox
         from .device_actions import run_argv
-        return run_argv(list(command.argv), timeout=timeout)
+        argv = list(command.argv)
+        wrapped = command_sandbox.wrap(argv, timeout)
+        ok, output = run_argv(wrapped, timeout=timeout)
+        if wrapped is not argv and not ok and command_sandbox.started_failed(output):
+            # O systemd-run falhou antes de criar a unit: nada executou, por
+            # isso desactivar o wrapper e repetir não duplica efeitos.
+            command_sandbox.demote()
+            return run_argv(argv, timeout=timeout)
+        return ok, output
 
     @staticmethod
     def run_privileged(command: Command, timeout: int = 120):

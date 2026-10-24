@@ -12,6 +12,14 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Command sandbox (`src/command_sandbox.py`): confirmed catalog commands run
+  inside a transient systemd user unit with `PrivateTmp=yes` and a
+  `RuntimeMaxSec` bound, keeping stdio, environment and working directory.
+  Without a systemd user session (Void/runit, containers, CI) the canary
+  probe fails once and commands run exactly as before; a systemd-run
+  startup failure after a successful probe disables the wrapper and
+  retries bare once, since nothing had run. Privileged commands are never
+  wrapped — they already go through pkexec.
 - An `ocr` optional extra: `pytesseract` is no longer a hard runtime
   dependency. Without it the OCR path calls the system `tesseract` binary
   directly, which was already the fallback.
