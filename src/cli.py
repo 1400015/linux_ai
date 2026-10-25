@@ -311,6 +311,14 @@ Exemplos:
         stats_parser.add_argument('--reset', action='store_true',
                                    help='Reset statistics')
 
+        # Command: benchmarks
+        benchmarks_parser = subparsers.add_parser('benchmarks',
+                                                  help='Run micro-benchmarks of the hot pure-Python paths')
+        benchmarks_parser.add_argument('--scale', type=float, default=1.0,
+                                       help='Repeat-count scale (0.2 = quick, 2.0 = thorough)')
+        benchmarks_parser.add_argument('--json', action='store_true',
+                                       help='Emit results as JSON')
+
         # Command: config
         config_parser = subparsers.add_parser('config', help='Configuration')
         config_subparsers = config_parser.add_subparsers(dest='config_command')
@@ -417,6 +425,8 @@ Exemplos:
             return self.handle_history(args)
         elif args.command == 'stats':
             return self.handle_stats(args)
+        elif args.command == 'benchmarks':
+            return self.handle_benchmarks(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -447,6 +457,7 @@ Available commands:
   local-models              - List installed models on the local server
   sync [subcommand]         - Export/import a settings+history sync bundle (no credentials)
   stats [options]           - Usage statistics
+  benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
   providers                 - List the AI providers
   tokens [subcommand]       - Token management
@@ -1303,6 +1314,17 @@ Examples:
         if args.reset:
             self.ai_client.reset_token_usage()
             print("✓ Statistics reset")
+
+    def handle_benchmarks(self, args):
+        """Process the benchmarks command."""
+        from .benchmarks import format_suite_text, run_default_suite
+        scale = args.scale if args.scale and args.scale > 0 else 1.0
+        suite = run_default_suite(repeat_scale=scale)
+        if args.json:
+            print(json.dumps(suite.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(format_suite_text(suite))
+        return 0 if suite.ok else 1
 
     def handle_config(self, args):
         """Process the config command."""

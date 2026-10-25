@@ -12,6 +12,19 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/benchmarks.py` (P3.1): GTK-free micro-benchmark framework for the
+  hot pure-Python paths. `run_benchmark()` measures a zero-arg callable
+  with `time.perf_counter` using best-of-N repeats (standard noise
+  filtering); `run_suite()` collects results into a `BenchmarkSuite`;
+  `BenchmarkResult.status` flags benchmarks that exceed an advisory
+  per-call threshold as `slow` (never raises). Built-in registry covers
+  10 critical paths: `chat_controller.build_request_messages`,
+  `StreamCoalescer.add`, `safe_paths.is_within`, `a11y.check_contrast`,
+  `a11y.color_name`, `sync_bundle.plan_import`, `sync_bundle.serialize_bundle`,
+  `stats_aggregator.aggregate_usage`, `provider_modes.validate_local_url`,
+  `provider_modes.model_is_installed`. New `benchmarks [--scale N] [--json]`
+  CLI command; exit code 1 when any benchmark is slow, so CI can gate on
+  it. 25 new unit tests.
 - `src/sync_bundle.py` (P2.5): GTK-free sync bundle for machine-to-machine
   transfer of settings + history. A bundle is a versioned JSON document
   carrying a **whitelisted** subset of config (theme, language, assistance
