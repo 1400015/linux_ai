@@ -12,6 +12,25 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Configurable keyboard shortcuts (P3.5): `src/keybindings.py` is a GTK-free
+  module that owns the keybinding data model, validation, and resolution.
+  `KeybindingSet` maps action names to GTK accelerator strings; defaults
+  cover 8 builtin actions (send, clear_input, toggle_expert, close_window,
+  capture_screen, focus_input, new_session, toggle_history). Accelerator
+  validation enforces the GTK grammar (`<Modifier>` tokens + key name) and
+  known modifiers (Control/Ctrl/Primary, Shift, Alt/Mod1, Super/Mod4, Meta,
+  Hyper). `normalize_accelerator()` canonicalises (Primary->Control, sorted
+  modifiers, dedup) so `find_conflicts()` catches bindings that differ only
+  in modifier spelling. `merge_with_defaults()` layers user overrides over
+  defaults (empty string disables an action). `load_from_config()` /
+  `save_to_config()` persist only the diff under `shortcuts.bindings`.
+  `validate_binding_set()` reports conflicts and unknown actions.
+  `main_window._setup_keybindings` now reads from the config via
+  `load_from_config()` instead of hardcoding accelerators. New `shortcuts`
+  config section (`bindings` dict) in ConfigManager. New CLI subcommand
+  `shortcuts` with actions: `list`, `show <action>`, `set <action>
+  <accelerator>`, `reset [action]`, `validate`. 71 unit tests in
+  `tests/test_keybindings.py`. 8 new i18n keys (PT + ES/FR/DE).
 - Theme editor core + CLI (P3.4): `src/theme_editor.py` is a GTK-free module
   that owns all theme editing operations — create from defaults or duplicate
   a bundled theme, set colours/UI/syntax values with validation, rename,

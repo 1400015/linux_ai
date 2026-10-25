@@ -230,6 +230,9 @@ class ConfigManager:
             "port": 7621,
             "token": ""
         },
+        "shortcuts": {
+            "bindings": {}
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -315,6 +318,9 @@ class ConfigManager:
             "enabled": bool,
             "port": int,
             "token": str
+        },
+        "shortcuts": {
+            "bindings": dict
         },
         "features": {
             "screen_capture": bool,

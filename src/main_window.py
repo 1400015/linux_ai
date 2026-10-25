@@ -320,34 +320,51 @@ class MainWindow(Gtk.Window):
                 logger.error("Error showing notification: %s", e)
 
     def _setup_keybindings(self):
-        """Set up keyboard shortcuts"""
+        """Set up keyboard shortcuts from the configurable keybinding set."""
+        from .keybindings import load_from_config
+        kbs = load_from_config(self.config)
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
 
-        # Ctrl+Enter also sends (plain Enter already activates the entry)
-        key, mod = Gtk.accelerator_parse("<Control>Return")
-        self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        # Action -> (widget, signal) or callable for accel_group.connect.
+        # send is special: it targets the input entry's "activate" signal.
+        accel = kbs.get("send")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
 
-        # Escape to clear input
-        key, mod = Gtk.accelerator_parse("Escape")
-        accel_group.connect(key, mod,
-                          Gtk.AccelFlags.VISIBLE, self.on_clear_input)
+        # clear_input -> on_clear_input
+        accel = kbs.get("clear_input")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE, self.on_clear_input)
 
-        # Ctrl+E to toggle expert mode
-        key, mod = Gtk.accelerator_parse("<Control>e")
-        self.expert_btn.add_accelerator("clicked", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        # toggle_expert -> expert_btn "clicked"
+        accel = kbs.get("toggle_expert")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                self.expert_btn.add_accelerator("clicked", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
 
-        # Ctrl+Q to close
-        key, mod = Gtk.accelerator_parse("<Control>q")
-        accel_group.connect(key, mod,
-                          Gtk.AccelFlags.VISIBLE, lambda *args: self.on_close_clicked())
+        # close_window -> on_close_clicked
+        accel = kbs.get("close_window")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE,
+                                    lambda *args: self.on_close_clicked())
 
-        # Ctrl+S to capture screen
-        key, mod = Gtk.accelerator_parse("<Control>s")
-        accel_group.connect(key, mod,
-                          Gtk.AccelFlags.VISIBLE, lambda *args: self.on_capture_screen_clicked(None))
+        # capture_screen -> on_capture_screen_clicked
+        accel = kbs.get("capture_screen")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE,
+                                    lambda *args: self.on_capture_screen_clicked(None))
 
-        logger.info("Keyboard shortcuts configured")
+        logger.info("Keyboard shortcuts configured (%d bindings)", len(kbs.bindings))
 
     def on_clear_input(self, *args):
         """Clear input when Escape is pressed"""

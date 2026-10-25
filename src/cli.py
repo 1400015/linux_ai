@@ -233,6 +233,20 @@ Exemplos:
         theme_validate = theme_actions.add_parser('validate', help='Validate a theme and show warnings')
         theme_validate.add_argument('name')
 
+        # Command: shortcuts (list, set, reset, validate configurable keybindings)
+        shortcuts = subparsers.add_parser('shortcuts', help='Manage configurable keyboard shortcuts')
+        shortcuts_actions = shortcuts.add_subparsers(dest='shortcuts_action', required=True)
+        shortcuts_actions.add_parser('list', help='List all keybindings (defaults + user overrides)')
+        shortcuts_show = shortcuts_actions.add_parser('show', help='Show one action binding')
+        shortcuts_show.add_argument('action')
+        shortcuts_set = shortcuts_actions.add_parser('set', help='Set a keybinding for an action')
+        shortcuts_set.add_argument('action')
+        shortcuts_set.add_argument('accelerator', help='GTK accelerator (e.g. "<Control>Return", "Escape", "<Shift><Alt>F1")')
+        shortcuts_reset = shortcuts_actions.add_parser('reset', help='Reset one or all bindings to defaults')
+        shortcuts_reset.add_argument('action', nargs='?', default='',
+                                     help='Action to reset (omit to reset all)')
+        shortcuts_actions.add_parser('validate', help='Check for conflicts and unknown actions')
+
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -469,6 +483,8 @@ Exemplos:
             return self.handle_serve(args)
         elif args.command == 'theme':
             return self.handle_theme(args)
+        elif args.command == 'shortcuts':
+            return self.handle_shortcuts(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -499,6 +515,7 @@ Available commands:
   local-models              - List installed models on the local server
   sync [subcommand]         - Export/import a settings+history sync bundle (no credentials)
   theme [subcommand]        - Create, edit, validate and manage themes
+  shortcuts [subcommand]    - Manage configurable keyboard shortcuts
   stats [options]           - Usage statistics
   benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
@@ -1536,6 +1553,82 @@ Examples:
             return 0
 
         print(_("theme: unknown action '%s'") % action)
+        return 1
+
+    def handle_shortcuts(self, args):
+        """Process the shortcuts command (list, show, set, reset, validate)."""
+        from .keybindings import (
+            DEFAULT_BINDINGS, KeybindingError, KeybindingSet,
+            describe_binding, format_binding_table,
+            load_from_config, save_to_config, validate_binding_set,
+        )
+        action = args.shortcuts_action
+
+        if action == 'list':
+            kbs = load_from_config(self.config)
+            print(format_binding_table(kbs))
+            return 0
+
+        if action == 'show':
+            kbs = load_from_config(self.config)
+            accel = kbs.get(args.action)
+            if accel is None:
+                print(_("shortcuts: no binding for '%s'") % args.action)
+                return 1
+            print(describe_binding(args.action, accel))
+            return 0
+
+        if action == 'set':
+            try:
+                kbs = load_from_config(self.config)
+                kbs.set(args.action, args.accelerator)
+                warnings = validate_binding_set(kbs)
+                save_to_config(kbs, self.config)
+            except KeybindingError as error:
+                print(_("shortcuts: %s") % str(error))
+                return 1
+            print(_("shortcuts: %s") % describe_binding(args.action, args.accelerator))
+            for warning in warnings:
+                print("  " + _("shortcuts: warning: %s") % warning)
+            return 0
+
+        if action == 'reset':
+            kbs = load_from_config(self.config)
+            if args.action:
+                if not kbs.remove(args.action):
+                    # Not in the merged set; check defaults.
+                    if args.action in DEFAULT_BINDINGS:
+                        # Removing from merged == disabling; re-add as default.
+                        kbs.set(args.action, DEFAULT_BINDINGS[args.action])
+                    else:
+                        print(_("shortcuts: unknown action '%s'") % args.action)
+                        return 1
+                else:
+                    # If it was a default, re-add it; if custom, it's gone.
+                    if args.action in DEFAULT_BINDINGS:
+                        kbs.set(args.action, DEFAULT_BINDINGS[args.action])
+            else:
+                kbs = KeybindingSet.defaults()
+            save_to_config(kbs, self.config)
+            if args.action:
+                accel = kbs.get(args.action)
+                print(_("shortcuts: reset '%s' to %s") % (args.action, accel or "(disabled)"))
+            else:
+                print(_("shortcuts: all bindings reset to defaults"))
+            return 0
+
+        if action == 'validate':
+            kbs = load_from_config(self.config)
+            warnings = validate_binding_set(kbs)
+            if warnings:
+                print(_("shortcuts: warnings:"))
+                for warning in warnings:
+                    print("  - " + warning)
+                return 1
+            print(_("shortcuts: all %d bindings are valid") % len(kbs.bindings))
+            return 0
+
+        print(_("shortcuts: unknown action '%s'") % action)
         return 1
 
     def handle_config(self, args):
