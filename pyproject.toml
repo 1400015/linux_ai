@@ -111,6 +111,8 @@ files = [
     "src/theme_style.py",
     "src/error_presenter.py",
     "src/stats_aggregator.py",
+    "src/a11y.py",
+    "src/pomodoro.py",
 ]
 # Read the types of imported modules without gating their existing diagnostics.
 # Only the explicitly selected sources above belong to this first increment.

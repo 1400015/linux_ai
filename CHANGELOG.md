@@ -12,6 +12,20 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/a11y.py`: GTK-free accessibility helpers — WCAG 2.1 contrast ratio
+  (`contrast_ratio`, `check_contrast` with AA/AAA normal/large levels),
+  touch-target sizing (`check_touch_target` against WCAG 2.5.5/2.5.8),
+  human-readable color names (`color_name`, e.g. "dark green") for
+  tooltips and screen readers, theme color audits (`audit_theme_colors`),
+  and accessible-foreground suggestions. 59 new unit tests.
+- `src/pomodoro.py`: GTK-free Pomodoro focus timer. `PomodoroTimer` is a
+  state machine driven by an injected clock (no threads, no GTK) with
+  configurable work/short/long-break durations and cycles before a long
+  break. Supports start/pause/resume/skip/reset, phase-transition
+  callbacks, JSON state persistence (`save_state`/`load_state`), and
+  display helpers (`format_duration`, `format_phase_label`,
+  `session_summary`). New `pomodoro` section in the default config
+  (disabled by default). 45 new unit tests.
 - `src/stats_aggregator.py`: GTK-free usage statistics aggregation.
   `aggregate_usage()` builds a `UsageSummary` from per-provider token data;
   `format_summary_text()` / `format_summary_markdown()` render it for CLI or

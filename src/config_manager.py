@@ -218,6 +218,13 @@ class ConfigManager:
         "assistance": {
             "mode": "auto"
         },
+        "pomodoro": {
+            "enabled": False,
+            "work_seconds": 1500,
+            "short_break_seconds": 300,
+            "long_break_seconds": 900,
+            "cycles_before_long_break": 4
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -291,6 +298,13 @@ class ConfigManager:
         },
         "assistance": {
             "mode": str
+        },
+        "pomodoro": {
+            "enabled": bool,
+            "work_seconds": int,
+            "short_break_seconds": int,
+            "long_break_seconds": int,
+            "cycles_before_long_break": int
         },
         "features": {
             "screen_capture": bool,
