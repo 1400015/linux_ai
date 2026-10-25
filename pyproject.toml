@@ -142,9 +142,9 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 show_error_codes = true
 
-# Optional voice-input dependencies (vosk, whisper) are not installed in the
-# typecheck environment. Their imports are inside functions and guarded by
-# is_available(); silence the missing-stub errors for these modules.
+# Optional voice-input dependencies (sounddevice, vosk, whisper) are not
+# installed in the typecheck environment. Their imports are inside functions
+# and guarded by is_available(); silence the missing-stub errors.
 [[tool.mypy.overrides]]
-module = ["vosk", "whisper"]
+module = ["sounddevice", "vosk", "whisper", "numpy"]
 ignore_missing_imports = true

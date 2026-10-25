@@ -241,7 +241,7 @@ def sounddevice_capture(sample_rate: int, max_duration: int, max_bytes: int) -> 
     and :class:`VoiceInputError` when no microphone is available.
     """
     try:
-        import sounddevice as sd  # type: ignore[import-untyped]
+        import sounddevice as sd
     except (ImportError, OSError) as error:
         # OSError covers "PortAudio library not found" which sounddevice
         # raises at import time when the C library is missing.
