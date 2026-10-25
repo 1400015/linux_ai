@@ -205,6 +205,34 @@ Exemplos:
         sync_import.add_argument('path', type=Path)
         sync_import.add_argument('--preview', action='store_true', help='Show what would change without applying')
         sync_import.add_argument('--yes', action='store_true', help='Apply the reviewed import')
+
+        # Command: theme (create, edit, list, apply, delete, contrast-check themes)
+        theme = subparsers.add_parser('theme', help='Create, edit, validate and manage themes')
+        theme_actions = theme.add_subparsers(dest='theme_action', required=True)
+        theme_actions.add_parser('list', help='List all available themes (bundled + user)')
+        theme_show = theme_actions.add_parser('show', help='Show a theme document')
+        theme_show.add_argument('name')
+        theme_create = theme_actions.add_parser('create', help='Create a new theme from the default palette')
+        theme_create.add_argument('name')
+        theme_create.add_argument('--description', default='', help='Theme description')
+        theme_create.add_argument('--from', dest='source', default='', help='Copy colours from an existing theme')
+        theme_set = theme_actions.add_parser('set', help='Set a colour or UI value on a user theme')
+        theme_set.add_argument('name')
+        theme_set.add_argument('key', help='Colour key (background, text, accent, secondary, tertiary, border) or ui key (font_family, font_size, border_radius, opacity) or syntax key (keyword, string, ...)')
+        theme_set.add_argument('value')
+        theme_actions.add_parser('delete', help='Delete a user theme (built-in themes are protected)').add_argument('name')
+        theme_contrast = theme_actions.add_parser('contrast', help='Show WCAG contrast report for a theme')
+        theme_contrast.add_argument('name')
+        theme_apply = theme_actions.add_parser('apply', help='Apply a theme to the current configuration')
+        theme_apply.add_argument('name')
+        theme_export = theme_actions.add_parser('export', help='Export a theme to a JSON file')
+        theme_export.add_argument('name')
+        theme_export.add_argument('path', type=Path, help='Output file (existing files are never overwritten)')
+        theme_import = theme_actions.add_parser('import', help='Import a theme from a JSON file and save it')
+        theme_import.add_argument('path', type=Path)
+        theme_validate = theme_actions.add_parser('validate', help='Validate a theme and show warnings')
+        theme_validate.add_argument('name')
+
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -439,6 +467,8 @@ Exemplos:
             return self.handle_benchmarks(args)
         elif args.command == 'serve':
             return self.handle_serve(args)
+        elif args.command == 'theme':
+            return self.handle_theme(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -468,6 +498,7 @@ Available commands:
   mode [value]              - Show/select assistance mode
   local-models              - List installed models on the local server
   sync [subcommand]         - Export/import a settings+history sync bundle (no credentials)
+  theme [subcommand]        - Create, edit, validate and manage themes
   stats [options]           - Usage statistics
   benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
@@ -1369,6 +1400,143 @@ Examples:
         finally:
             server.shutdown()
         return 0
+
+    def handle_theme(self, args):
+        """Process the theme command (create, edit, list, validate, apply themes)."""
+        from .theme_editor import (
+            ThemeEditorError, apply_theme, default_theme,
+            delete_theme, duplicate_theme, export_theme, format_contrast_text,
+            format_theme_text, import_theme, is_user_theme, list_all_themes,
+            load_theme_document, save_theme_document, set_color,
+            set_syntax_color, set_ui_value, validate_theme_document,
+        )
+        action = args.theme_action
+
+        if action == 'list':
+            themes = list_all_themes()
+            current = self.config.get("app.theme", "dark")
+            for name in themes:
+                marker = "*" if name == current else " "
+                editable = "" if is_user_theme(name) else " (built-in)"
+                print("{} {}{}".format(marker, name, editable))
+            return 0
+
+        if action == 'show':
+            try:
+                doc = load_theme_document(args.name)
+            except ThemeEditorError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(format_theme_text(doc))
+            return 0
+
+        if action == 'create':
+            try:
+                if args.source:
+                    doc = duplicate_theme(args.source, args.name)
+                    if args.description:
+                        doc.description = args.description
+                else:
+                    doc = default_theme(args.name, args.description)
+                save_theme_document(doc)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: created '%s'") % args.name)
+            return 0
+
+        if action == 'set':
+            try:
+                doc = load_theme_document(args.name)
+                if not is_user_theme(args.name):
+                    print(_("theme: '%s' is a built-in theme; create a copy first with: theme create <new-name> --from %s") % (args.name, args.name))
+                    return 1
+                key = args.key
+                if key in ("background", "text", "accent", "secondary", "tertiary", "border"):
+                    set_color(doc, key, args.value)
+                elif key in ("font_family", "font_size", "border_radius", "opacity"):
+                    set_ui_value(doc, key, args.value)
+                else:
+                    set_syntax_color(doc, key, args.value)
+                save_theme_document(doc)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: %s.%s = %s") % (args.name, args.key, args.value))
+            return 0
+
+        if action == 'delete':
+            try:
+                result = delete_theme(args.name)
+            except ValueError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            if result is None:
+                print(_("theme: '%s' not found") % args.name)
+                return 1
+            print(_("theme: deleted '%s'") % args.name)
+            return 0
+
+        if action == 'contrast':
+            try:
+                doc = load_theme_document(args.name)
+            except ThemeEditorError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(format_contrast_text(doc))
+            return 0
+
+        if action == 'apply':
+            try:
+                doc = load_theme_document(args.name)
+                apply_theme(doc, self.config)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: applied '%s'") % args.name)
+            return 0
+
+        if action == 'export':
+            try:
+                doc = load_theme_document(args.name)
+                export_theme(doc, args.path)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: exported '%s' to %s") % (args.name, args.path))
+            return 0
+
+        if action == 'import':
+            try:
+                doc = import_theme(args.path)
+                save_theme_document(doc)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: imported '%s'") % doc.name)
+            return 0
+
+        if action == 'validate':
+            try:
+                doc = load_theme_document(args.name)
+            except ThemeEditorError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            warnings = validate_theme_document(doc)
+            print(format_theme_text(doc))
+            print()
+            print(format_contrast_text(doc))
+            print()
+            if warnings:
+                print(_("theme: warnings:"))
+                for warning in warnings:
+                    print("  - " + warning)
+                return 1
+            print(_("theme: '%s' is valid") % args.name)
+            return 0
+
+        print(_("theme: unknown action '%s'") % action)
+        return 1
 
     def handle_config(self, args):
         """Process the config command."""

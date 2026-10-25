@@ -12,6 +12,20 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Theme editor core + CLI (P3.4): `src/theme_editor.py` is a GTK-free module
+  that owns all theme editing operations — create from defaults or duplicate
+  a bundled theme, set colours/UI/syntax values with validation, rename,
+  delete (built-ins protected), load, save, export/import JSON, WCAG contrast
+  report via `a11y.audit_theme_colors`, accessible-foreground suggestion via
+  `a11y.suggest_accessible_foreground`, advisory validation warnings, diff
+  between two themes, and `apply_theme()` to push a theme into ConfigManager.
+  New CLI subcommand `theme` with actions: `list`, `show`, `create [--from
+  SOURCE]`, `set <key> <value>`, `delete`, `contrast`, `apply`, `export`,
+  `import`, `validate`. The `border` colour key (present in every bundled
+  theme file but not in `theme_store.COLOR_KEYS`) is accepted for backward
+  compatibility; saving strips it before delegating the atomic write to
+  `theme_store.save_theme`. 70 unit tests in `tests/test_theme_editor.py`.
+  12 new i18n keys (PT + ES/FR/DE).
 - Local REST API (P3.3): `src/local_api.py` is a loopback-only HTTP API
   (binds to `127.0.0.1` only; refuses any non-loopback address) exposing
   12 JSON endpoints: `GET /api/health` (public), `GET /api/stats`,
