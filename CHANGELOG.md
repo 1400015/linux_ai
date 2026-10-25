@@ -12,6 +12,25 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Local REST API (P3.3): `src/local_api.py` is a loopback-only HTTP API
+  (binds to `127.0.0.1` only; refuses any non-loopback address) exposing
+  12 JSON endpoints: `GET /api/health` (public), `GET /api/stats`,
+  `GET /api/sessions`, `GET /api/config`, `GET|POST /api/a11y/contrast`,
+  `GET|POST /api/pomodoro`, `POST /api/sync/preview`,
+  `POST /api/sync/import`, `GET|POST /api/benchmarks`. All non-public
+  routes require a bearer token (`Authorization: Bearer <token>` or
+  `X-Linux-AI-Token` header) checked with `secrets.compare_digest`.
+  Request bodies are capped at 1 MiB; responses carry
+  `X-Content-Type-Options: nosniff` and no CORS headers. Wrong-method
+  requests return JSON 405 (PUT/PATCH/DELETE are handled explicitly).
+  `LocalAPIServer` supports ephemeral ports (`port=0`) and background
+  threads for tests. New CLI command `serve [--host 127.0.0.1]
+  [--port N] [--token T]` starts the server and blocks; the token comes
+  from `--token`, config `local_api.token`, or is generated with
+  `secrets.token_urlsafe(32)` and printed once. New `local_api` config
+  section (`enabled`, `port`, `token`) in `ConfigManager`. 63 unit tests
+  in `tests/test_local_api.py` cover routing, auth, body limits, security
+  headers and every endpoint against a live loopback server.
 - Docker image for the headless CLI (P3.2): `docker/Dockerfile` is a
   multi-stage build on `python:3.12-slim` that produces a lean, non-root
   (`assistant`, uid 1000) image running `linux-ai-assistant-cli`. The GTK

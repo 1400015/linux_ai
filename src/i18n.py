@@ -560,6 +560,10 @@ TRANSLATIONS = {
             "Não foi possível guardar a chave. O diálogo de definições continua aberto.",
         "The stored key is shown; the environment key is not saved automatically.":
             "A chave guardada é mostrada; a chave do ambiente não é guardada automaticamente.",
+        "serve: refusing to bind to a non-loopback address: %s": "serve: recusado ligar a um endere\u00e7o n\u00e3o local: %s",
+        "serve: local API listening on %s": "serve: API local a escutar em %s",
+        "serve: bearer token: %s": "serve: token de acesso: %s",
+        "serve: press Ctrl+C to stop": "serve: prima Ctrl+C para parar",
     },
     "es": {
         "Ready": "Listo",
@@ -664,6 +668,10 @@ TRANSLATIONS = {
         "File changed since the preview was shown; review it again: {path}":
             "El archivo cambió desde la vista previa; revísalo de nuevo: {path}",
         "API Key:": "Clave API:",
+        "serve: refusing to bind to a non-loopback address: %s": "serve: se niega a vincular a una direcci\u00f3n no local: %s",
+        "serve: local API listening on %s": "serve: API local escuchando en %s",
+        "serve: bearer token: %s": "serve: token de acceso: %s",
+        "serve: press Ctrl+C to stop": "serve: pulsa Ctrl+C para detener",
     },
     "fr": {
         "Ready": "Prêt",
@@ -768,6 +776,10 @@ TRANSLATIONS = {
         "File changed since the preview was shown; review it again: {path}":
             "Le fichier a changé depuis l'aperçu ; vérifiez-le à nouveau : {path}",
         "API Key:": "Clé API :",
+        "serve: refusing to bind to a non-loopback address: %s": "serve : refus de se lier \u00e0 une adresse non locale : %s",
+        "serve: local API listening on %s": "serve : API locale \u00e0 l'\u00e9coute sur %s",
+        "serve: bearer token: %s": "serve : jeton d'acc\u00e8s : %s",
+        "serve: press Ctrl+C to stop": "serve : appuyez sur Ctrl+C pour arr\u00eater",
     },
     "de": {
         "Ready": "Bereit",
@@ -872,6 +884,10 @@ TRANSLATIONS = {
         "File changed since the preview was shown; review it again: {path}":
             "Die Datei hat sich seit der Vorschau geändert; bitte erneut prüfen: {path}",
         "API Key:": "API-Schlüssel:",
+        "serve: refusing to bind to a non-loopback address: %s": "serve: Bindung an eine nicht lokale Adresse verweigert: %s",
+        "serve: local API listening on %s": "serve: lokale API h\u00f6rt auf %s",
+        "serve: bearer token: %s": "serve: Zugriffstoken: %s",
+        "serve: press Ctrl+C to stop": "serve: dr\u00fccken Sie Strg+C zum Beenden",
     },
 }
 

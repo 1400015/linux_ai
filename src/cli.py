@@ -319,6 +319,16 @@ Exemplos:
         benchmarks_parser.add_argument('--json', action='store_true',
                                        help='Emit results as JSON')
 
+        # Command: serve (loopback-only local REST API)
+        serve_parser = subparsers.add_parser('serve',
+                                             help='Start the loopback-only local REST API (127.0.0.1)')
+        serve_parser.add_argument('--host', default='127.0.0.1',
+                                  help='Bind address (loopback only; default: 127.0.0.1)')
+        serve_parser.add_argument('--port', type=int, default=None,
+                                  help='TCP port (default: config local_api.port or 7621; 0 = pick a free port)')
+        serve_parser.add_argument('--token', default='',
+                                  help='Bearer token (default: read config api.local.token or generate one)')
+
         # Command: config
         config_parser = subparsers.add_parser('config', help='Configuration')
         config_subparsers = config_parser.add_subparsers(dest='config_command')
@@ -427,6 +437,8 @@ Exemplos:
             return self.handle_stats(args)
         elif args.command == 'benchmarks':
             return self.handle_benchmarks(args)
+        elif args.command == 'serve':
+            return self.handle_serve(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -1325,6 +1337,38 @@ Examples:
         else:
             print(format_suite_text(suite))
         return 0 if suite.ok else 1
+
+    def handle_serve(self, args):
+        """Start the loopback-only local REST API and block until Ctrl+C."""
+        from .local_api import (
+            APIContext, LocalAPIServer, generate_token, is_loopback_host,
+        )
+        host = args.host or "127.0.0.1"
+        if not is_loopback_host(host):
+            print(_("serve: refusing to bind to a non-loopback address: %s") % host)
+            return 1
+        port = int(args.port) if args.port is not None else int(self.config.get("local_api.port", 7621))
+        token = args.token or self.config.get("local_api.token", "") or generate_token()
+        ctx = APIContext(
+            token=token,
+            config=self.config,
+            ai_client=self.ai_client,
+            history_store=self._store(),
+            pomodoro=None,
+        )
+        server = LocalAPIServer(ctx, host=host, port=port)
+        server.start_background()
+        url = server.url
+        print(_("serve: local API listening on %s") % url)
+        print(_("serve: bearer token: %s") % token)
+        print(_("serve: press Ctrl+C to stop"))
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print()
+        finally:
+            server.shutdown()
+        return 0
 
     def handle_config(self, args):
         """Process the config command."""

@@ -225,6 +225,11 @@ class ConfigManager:
             "long_break_seconds": 900,
             "cycles_before_long_break": 4
         },
+        "local_api": {
+            "enabled": False,
+            "port": 7621,
+            "token": ""
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -305,6 +310,11 @@ class ConfigManager:
             "short_break_seconds": int,
             "long_break_seconds": int,
             "cycles_before_long_break": int
+        },
+        "local_api": {
+            "enabled": bool,
+            "port": int,
+            "token": str
         },
         "features": {
             "screen_capture": bool,
