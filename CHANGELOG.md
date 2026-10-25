@@ -12,6 +12,12 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `docs/plugins-api.md`: full plugin API reference — trust model (opt-in via
+  `plugins.enabled`), the `register_provider(ai_client)` contract, exact chat
+  and stream function signatures, mandatory error handling via
+  `AIProviderError` exceptions, image-request support, logging/privacy rules
+  (`redact_url`), config integration, a publication checklist and a minimal
+  working example. README and `plugins/__init__.py` now point to it.
 - `src/a11y.py`: GTK-free accessibility helpers — WCAG 2.1 contrast ratio
   (`contrast_ratio`, `check_contrast` with AA/AAA normal/large levels),
   touch-target sizing (`check_touch_target` against WCAG 2.5.5/2.5.8),

@@ -670,6 +670,10 @@ config key are loaded:
 The bundled `plugins/example_provider.py` is inert until you add it there.
 Failures surface as `AIProviderError` exceptions — never as chat text.
 
+For the full plugin contract (function signatures, error handling, streaming,
+image requests, logging rules and a publication checklist), see
+[docs/plugins-api.md](docs/plugins-api.md).
+
 ### Adding New Allowed Commands
 
 Edit `~/.config/linux_ai_assistant/config.json`:
