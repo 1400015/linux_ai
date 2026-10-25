@@ -426,6 +426,21 @@ def make_handler(ctx: APIContext):
             except ValueError:
                 raise LocalAPIError(400, "Invalid Content-Length") from None
             if size < 0 or size > MAX_BODY_BYTES:
+                # Drain the body so the client can finish sending (and read
+                # our 413 response) instead of hitting a broken pipe. The cap
+                # is a few bytes over 1 MiB in practice; we read and discard
+                # up to MAX_BODY_BYTES + 64 KiB to cover JSON overhead, then
+                # close the connection if the client is still sending.
+                try:
+                    remaining = size
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(remaining, 65536))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                self.close_connection = True
                 raise LocalAPIError(413, "Request body exceeds the 1 MiB limit")
             raw = self.rfile.read(size)
             if not raw:
