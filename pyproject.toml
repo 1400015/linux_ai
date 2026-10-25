@@ -33,6 +33,18 @@ ocr = ["pytesseract>=0.3.10"]
 encryption = ["cryptography>=42.0.2"]
 # Optional desktop keyring support; importing the client must not require it.
 secret-service = ["secretstorage>=3.3,<4"]
+# Voice input (speech-to-text). The module degrades gracefully when these
+# are absent; install the ones matching your chosen backend:
+#   vosk:         vosk + a local model directory
+#   whisper:      openai-whisper (or faster-whisper)
+#   whisper-api:  no extra (uses `requests` which is already required)
+#   system:       an external `stt` command in PATH
+voice = [
+    "sounddevice>=0.4",
+    "numpy>=1.24",
+    "vosk>=0.3.45",
+    "openai-whisper>=20231117",
+]
 dev = [
     "ruff>=0.5",
     "mypy==2.4.0; python_version >= '3.10'",
@@ -119,6 +131,7 @@ files = [
     "src/local_api.py",
     "src/theme_editor.py",
     "src/keybindings.py",
+    "src/voice_input.py",
 ]
 # Read the types of imported modules without gating their existing diagnostics.
 # Only the explicitly selected sources above belong to this first increment.
@@ -128,3 +141,10 @@ no_implicit_optional = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 show_error_codes = true
+
+# Optional voice-input dependencies (vosk, whisper) are not installed in the
+# typecheck environment. Their imports are inside functions and guarded by
+# is_available(); silence the missing-stub errors for these modules.
+[[tool.mypy.overrides]]
+module = ["vosk", "whisper"]
+ignore_missing_imports = true

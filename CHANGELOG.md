@@ -12,6 +12,28 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Voice input / speech-to-text (P3.6): `src/voice_input.py` is a GTK-free
+  module providing the STT backend abstraction, audio capture interface, and
+  configuration model. Four backends: `vosk` (offline, local model dir),
+  `whisper` (offline, openai-whisper), `whisper-api` (cloud, OpenAI-compatible
+  `/audio/transcriptions`), and `system` (external command via subprocess,
+  shell metacharacters rejected). `AudioData` wraps PCM bytes with WAV
+  roundtrip; `AudioCapture` is a `Callable` abstraction (production default
+  uses `sounddevice`, tests inject fakes). `VoiceConfig` mirrors the new
+  `voice` config section (13 keys; `api_key` is never serialized — pulled
+  from the provider credential at load time). `build_backend()` instantiates
+  the selected backend; `list_backend_status()` reports availability for all
+  four; `transcribe_audio()` / `capture_and_transcribe()` are the high-level
+  entry points. All backends degrade gracefully: `is_available()` returns
+  `False` and `transcribe()` raises `VoiceBackendUnavailable` with an
+  actionable message when dependencies are missing. New `voice` extra in
+  `pyproject.toml` (`sounddevice`, `numpy`, `vosk`, `openai-whisper`). New
+  `voice` config section in ConfigManager (DEFAULT_CONFIG + CONFIG_SCHEMA,
+  13 keys). New CLI subcommand `voice` with actions: `status` (backend
+  availability table), `backends` (list supported), `config [key] [value]`
+  (show/set), `transcribe <wav> [--language CODE]` (transcribe a WAV file).
+  66 unit tests in `tests/test_voice_input.py`. 5 new i18n keys (PT +
+  ES/FR/DE).
 - Configurable keyboard shortcuts (P3.5): `src/keybindings.py` is a GTK-free
   module that owns the keybinding data model, validation, and resolution.
   `KeybindingSet` maps action names to GTK accelerator strings; defaults

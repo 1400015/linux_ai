@@ -584,6 +584,11 @@ TRANSLATIONS = {
         "shortcuts: unknown action '%s'": "shortcuts: a\u00e7\u00e3o desconhecida '%s'",
         "shortcuts: warnings:": "shortcuts: avisos:",
         "shortcuts: all %d bindings are valid": "shortcuts: todos os %d atalhos s\u00e3o v\u00e1lidos",
+        "voice: %s": "voice: %s",
+        "voice: unknown action '%s'": "voice: a\u00e7\u00e3o desconhecida '%s'",
+        "voice: unknown config key '%s'": "voice: chave de configura\u00e7\u00e3o desconhecida '%s'",
+        "voice: invalid value for %s: %s": "voice: valor inv\u00e1lido para %s: %s",
+        "voice: %s = %s": "voice: %s = %s",
     },
     "es": {
         "Ready": "Listo",
@@ -712,6 +717,11 @@ TRANSLATIONS = {
         "shortcuts: unknown action '%s'": "shortcuts: acci\u00f3n desconocida '%s'",
         "shortcuts: warnings:": "shortcuts: advertencias:",
         "shortcuts: all %d bindings are valid": "shortcuts: todos los %d atajos son v\u00e1lidos",
+        "voice: %s": "voice: %s",
+        "voice: unknown action '%s'": "voice: acci\u00f3n desconocida '%s'",
+        "voice: unknown config key '%s'": "voice: clave de configuraci\u00f3n desconocida '%s'",
+        "voice: invalid value for %s: %s": "voice: valor inv\u00e1lido para %s: %s",
+        "voice: %s = %s": "voice: %s = %s",
     },
     "fr": {
         "Ready": "Prêt",
@@ -840,6 +850,11 @@ TRANSLATIONS = {
         "shortcuts: unknown action '%s'": "shortcuts : action inconnue '%s'",
         "shortcuts: warnings:": "shortcuts : avertissements :",
         "shortcuts: all %d bindings are valid": "shortcuts : les %d raccourcis sont tous valides",
+        "voice: %s": "voice : %s",
+        "voice: unknown action '%s'": "voice : action inconnue '%s'",
+        "voice: unknown config key '%s'": "voice : cl\u00e9 de configuration inconnue '%s'",
+        "voice: invalid value for %s: %s": "voice : valeur invalide pour %s : %s",
+        "voice: %s = %s": "voice : %s = %s",
     },
     "de": {
         "Ready": "Bereit",
@@ -968,6 +983,11 @@ TRANSLATIONS = {
         "shortcuts: unknown action '%s'": "shortcuts: unbekannte Aktion '%s'",
         "shortcuts: warnings:": "shortcuts: Warnungen:",
         "shortcuts: all %d bindings are valid": "shortcuts: alle %d Tastenkombinationen sind g\u00fcltig",
+        "voice: %s": "voice: %s",
+        "voice: unknown action '%s'": "voice: unbekannte Aktion '%s'",
+        "voice: unknown config key '%s'": "voice: unbekannter Konfigurationsschl\u00fcssel '%s'",
+        "voice: invalid value for %s: %s": "voice: ung\u00fcltiger Wert f\u00fcr %s: %s",
+        "voice: %s = %s": "voice: %s = %s",
     },
 }
 

@@ -247,6 +247,18 @@ Exemplos:
                                      help='Action to reset (omit to reset all)')
         shortcuts_actions.add_parser('validate', help='Check for conflicts and unknown actions')
 
+        # Command: voice (speech-to-text: backends, config, transcribe)
+        voice = subparsers.add_parser('voice', help='Voice input (speech-to-text) configuration and transcription')
+        voice_actions = voice.add_subparsers(dest='voice_action', required=True)
+        voice_actions.add_parser('status', help='Show availability of all STT backends')
+        voice_actions.add_parser('backends', help='List supported STT backends')
+        voice_config = voice_actions.add_parser('config', help='Show or set voice configuration')
+        voice_config.add_argument('key', nargs='?', default='', help='Config key to show (omit to show all)')
+        voice_config.add_argument('value', nargs='?', default='', help='Value to set')
+        voice_transcribe = voice_actions.add_parser('transcribe', help='Transcribe a WAV audio file')
+        voice_transcribe.add_argument('path', type=Path, help='WAV audio file to transcribe')
+        voice_transcribe.add_argument('--language', default='', help='Language code (overrides config)')
+
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -485,6 +497,8 @@ Exemplos:
             return self.handle_theme(args)
         elif args.command == 'shortcuts':
             return self.handle_shortcuts(args)
+        elif args.command == 'voice':
+            return self.handle_voice(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -516,6 +530,7 @@ Available commands:
   sync [subcommand]         - Export/import a settings+history sync bundle (no credentials)
   theme [subcommand]        - Create, edit, validate and manage themes
   shortcuts [subcommand]    - Manage configurable keyboard shortcuts
+  voice [subcommand]        - Voice input (speech-to-text) configuration and transcription
   stats [options]           - Usage statistics
   benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
@@ -1630,6 +1645,94 @@ Examples:
 
         print(_("shortcuts: unknown action '%s'") % action)
         return 1
+
+    def handle_voice(self, args):
+        """Process the voice command (status, backends, config, transcribe)."""
+        from .voice_input import (
+            BACKEND_LABELS, STT_BACKENDS, VoiceInputError,
+            file_capture, format_backend_status, list_backend_status,
+            load_voice_config, transcribe_audio,
+        )
+        action = args.voice_action
+
+        if action == 'status':
+            vc = load_voice_config(self.config)
+            print(format_backend_status(list_backend_status(vc)))
+            return 0
+
+        if action == 'backends':
+            for name in STT_BACKENDS:
+                print("{:<14s} {}".format(name, BACKEND_LABELS.get(name, name)))
+            return 0
+
+        if action == 'config':
+            vc = load_voice_config(self.config)
+            if not args.key:
+                data = vc.to_dict()
+                for key in sorted(data):
+                    print("{:<24s} {}".format(key, data[key]))
+                return 0
+            if not args.value:
+                # Show one key.
+                data = vc.to_dict()
+                if args.key in data:
+                    print("{}: {}".format(args.key, data[args.key]))
+                    return 0
+                print(_("voice: unknown config key '%s'") % args.key)
+                return 1
+            # Set a key.
+            return self._voice_set_config_key(vc, args.key, args.value)
+
+        if action == 'transcribe':
+            vc = load_voice_config(self.config)
+            if args.language:
+                vc.language = args.language
+            try:
+                audio = file_capture(
+                    str(args.path), vc.sample_rate,
+                    vc.max_duration_seconds, 25 * 1024 * 1024,
+                )
+                text = transcribe_audio(audio, vc)
+            except VoiceInputError as error:
+                print(_("voice: %s") % str(error))
+                return 1
+            print(text)
+            return 0
+
+        print(_("voice: unknown action '%s'") % action)
+        return 1
+
+    def _voice_set_config_key(self, vc, key: str, value: str):
+        """Set one voice config key and persist it."""
+        valid_keys = {
+            "enabled": bool, "backend": str, "language": str,
+            "sample_rate": int, "max_duration_seconds": int,
+            "vosk_model_path": str, "whisper_model": str, "whisper_device": str,
+            "api_base_url": str, "api_model": str, "api_timeout": int,
+            "system_command": str, "system_timeout": int,
+        }
+        if key not in valid_keys:
+            print(_("voice: unknown config key '%s'") % key)
+            return 1
+        caster = valid_keys[key]
+        try:
+            if caster is bool:
+                typed_value = value.lower() in ("1", "true", "yes", "on")
+            elif caster is int:
+                typed_value = int(value)
+            else:
+                typed_value = value
+        except ValueError:
+            print(_("voice: invalid value for %s: %s") % (key, value))
+            return 1
+        current = self.config.get("voice", {})
+        if not isinstance(current, dict):
+            current = {}
+        current[key] = typed_value
+        self.config.set("voice", current)
+        self.config.flush()
+        print(_("voice: %s = %s") % (key, typed_value))
+        return 0
 
     def handle_config(self, args):
         """Process the config command."""

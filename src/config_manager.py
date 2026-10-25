@@ -233,6 +233,21 @@ class ConfigManager:
         "shortcuts": {
             "bindings": {}
         },
+        "voice": {
+            "enabled": False,
+            "backend": "vosk",
+            "language": "pt",
+            "sample_rate": 16000,
+            "max_duration_seconds": 60,
+            "vosk_model_path": "",
+            "whisper_model": "base",
+            "whisper_device": "cpu",
+            "api_base_url": "https://openrouter.ai/api/v1",
+            "api_model": "openai/whisper-1",
+            "api_timeout": 60,
+            "system_command": "",
+            "system_timeout": 60
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -321,6 +336,21 @@ class ConfigManager:
         },
         "shortcuts": {
             "bindings": dict
+        },
+        "voice": {
+            "enabled": bool,
+            "backend": str,
+            "language": str,
+            "sample_rate": int,
+            "max_duration_seconds": int,
+            "vosk_model_path": str,
+            "whisper_model": str,
+            "whisper_device": str,
+            "api_base_url": str,
+            "api_model": str,
+            "api_timeout": int,
+            "system_command": str,
+            "system_timeout": int
         },
         "features": {
             "screen_capture": bool,
