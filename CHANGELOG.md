@@ -12,6 +12,21 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Native local LLM backends (P2.4): `local_llm` now supports **Ollama native
+  API** (`ollama-native`: `/api/chat`, `/api/tags`) and **LM Studio**
+  (`lmstudio`: `/api/v0/chat`, `/api/v0/models`) alongside the existing
+  OpenAI-compatible shims (`ollama`, `openai`). New `src/local_backends.py`
+  module owns the native protocol details: URL normalization (native
+  backends keep the bare server root, stripping a pasted `/v1`), discovery
+  paths, chat paths, payload builders, NDJSON stream parsing with the same
+  bounded limits and cancellation as SSE, and usage extraction (Ollama
+  `prompt_eval_count`/`eval_count`, LM Studio OpenAI-style `usage`).
+  `AIClient._chat_local_llm` / `_stream_local_llm` dispatch to the native
+  path; `provider_modes.discover_local_models` delegates discovery;
+  `config_manager` validates the new backend identifiers; the Settings UI
+  combo lists all four backends. 43 unit tests in `tests/test_local_backends.py`
+  + 12 integration tests in `tests/test_provider_modes.py` against real
+  loopback HTTP fixtures speaking the native protocols.
 - `docs/plugins-api.md`: full plugin API reference — trust model (opt-in via
   `plugins.enabled`), the `register_provider(ai_client)` contract, exact chat
   and stream function signatures, mandatory error handling via

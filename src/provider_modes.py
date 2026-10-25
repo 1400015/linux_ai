@@ -142,7 +142,14 @@ def discover_local_models(base_url: str, backend: str = "ollama", strict_local: 
     """Return installed usable models and separately rejected remote models."""
     base_url = validate_local_url(base_url, strict_local)
     timeout = discovery_timeout(timeout)
-    if backend == "ollama":
+    # Delegate native-protocol backends to local_backends (single owner of
+    # their discovery paths and response shapes); keep the OpenAI-compatible
+    # path inline so the ollama/openai contract stays visible here.
+    if backend in ("ollama-native", "lmstudio"):
+        from .local_backends import discovery_path, parse_discovery_response
+        data = _fetch_json(base_url + discovery_path(backend), timeout)
+        entries, name_key = parse_discovery_response(backend, data)
+    elif backend == "ollama":
         root = base_url[:-3] if base_url.endswith("/v1") else base_url
         data = _fetch_json(root + "/api/tags", timeout)
         entries = data.get("models")
@@ -171,7 +178,11 @@ def model_is_installed(model: str, installed: List[str], backend: str = "ollama"
     if model in installed:
         return True
     # Ollama treats an absent tag as :latest, including namespace/model names.
-    return backend == "ollama" and ":" not in model and model + ":latest" in installed
+    # The same convention applies to the native Ollama API; LM Studio uses
+    # publisher-prefixed identifiers that must match exactly.
+    if backend in ("ollama", "ollama-native"):
+        return ":" not in model and model + ":latest" in installed
+    return False
 
 
 def make_local_request(url: str, payload: Dict[str, Any], headers: Dict[str, str],

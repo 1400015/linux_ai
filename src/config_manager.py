@@ -724,12 +724,12 @@ class ConfigManager:
                                       strict_local: bool, backend: str):
         if mode not in ASSISTANCE_MODES:
             raise ValueError("Assistance mode must be auto, offline, local or remote")
-        if backend not in {"ollama", "openai"} or not isinstance(strict_local, bool):
+        from .local_backends import LOCAL_BACKENDS, normalize_base_url
+        if backend not in LOCAL_BACKENDS or not isinstance(strict_local, bool):
             raise ValueError("Invalid local model settings")
         effective_strict = strict_local or mode == "local"
         normalized = validate_local_url(base_url, effective_strict)
-        if backend == "ollama" and not normalized.endswith("/v1"):
-            normalized += "/v1"
+        normalized = normalize_base_url(normalized, backend)
         selected = validate_model_name(model, effective_strict)
         return normalized, selected
 

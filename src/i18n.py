@@ -152,6 +152,11 @@ TRANSLATIONS = {
         "Configuration is incompatible with this mode": "Configuração incompatível com este modo",
         "Connection test failed": "O teste de ligação falhou",
         "Local server URL": "Endereço do servidor local",
+        "Local backend": "Backend local",
+        "Ollama (OpenAI-compatible)": "Ollama (compatível com OpenAI)",
+        "OpenAI-compatible": "Compatível com OpenAI",
+        "Ollama (native API)": "Ollama (API nativa)",
+        "LM Studio": "LM Studio",
         "Local model": "Modelo local",
         "Strict local mode (loopback server and local models)": "Modo local estrito (servidor nesta máquina e modelos locais)",
         "Models must already be installed. A localhost address alone does not guarantee local inference.":
