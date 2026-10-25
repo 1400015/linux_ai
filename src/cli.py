@@ -197,6 +197,14 @@ Exemplos:
         mode.add_argument('value', nargs='?', choices=('auto', 'offline', 'local', 'remote'))
         mode.add_argument('--check', action='store_true', help='Test the local model connection')
         subparsers.add_parser('local-models', help='List models installed on the configured local server')
+        sync = subparsers.add_parser('sync', help='Export or import a settings+history sync bundle (no credentials)')
+        sync_actions = sync.add_subparsers(dest='sync_action', required=True)
+        sync_export = sync_actions.add_parser('export', help='Write a sync bundle to a file')
+        sync_export.add_argument('path', type=Path, help='Output file (existing files are never overwritten)')
+        sync_import = sync_actions.add_parser('import', help='Import a sync bundle (merge-only, never overwrites credentials)')
+        sync_import.add_argument('path', type=Path)
+        sync_import.add_argument('--preview', action='store_true', help='Show what would change without applying')
+        sync_import.add_argument('--yes', action='store_true', help='Apply the reviewed import')
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -373,6 +381,8 @@ Exemplos:
             for model in self.ai_client.list_local_models():
                 print(model)
             return 0
+        if args.command == 'sync':
+            return self.handle_sync(args)
         if args.command == 'knowledge-verify':
             from .knowledge_loader import bundled_modules
             print(json.dumps({'schema': '0.1', 'modules': [item['id'] for item in bundled_modules()],
@@ -435,6 +445,7 @@ Available commands:
   trials [subcommand]      - Record test cases and export reviewed local evidence
   mode [value]              - Show/select assistance mode
   local-models              - List installed models on the local server
+  sync [subcommand]         - Export/import a settings+history sync bundle (no credentials)
   stats [options]           - Usage statistics
   config [subcommand]       - Configuration
   providers                 - List the AI providers
@@ -632,6 +643,55 @@ Examples:
                 print(_("Review this conversation, then repeat the import with --yes."))
                 return 1
             print(store.import_session(text)['id'])
+        return 0
+
+    def handle_sync(self, args):
+        from .sync_bundle import (
+            SyncBundleError, apply_settings, build_bundle, merge_sessions,
+            parse_bundle, plan_import, serialize_bundle,
+        )
+        action = args.sync_action
+        if action == 'export':
+            store = self._store()
+            document = store._snapshot()
+            bundle = build_bundle(self.config.config, document.get("sessions", []),
+                                  source=getpass.getuser())
+            text = serialize_bundle(bundle)
+            write_conversation(args.path, text)
+            print(args.path)
+            return 0
+        if action == 'import':
+            text = read_conversation(args.path)
+            try:
+                bundle = parse_bundle(text)
+            except SyncBundleError as error:
+                print(_("Invalid sync bundle: {error}").format(error=error))
+                return 1
+            store = self._store()
+            document = store._snapshot()
+            existing_ids = [s["id"] for s in document.get("sessions", [])]
+            plan = plan_import(bundle, self.config.config, existing_ids)
+            summary = {
+                "settings_to_apply": plan.settings_to_apply,
+                "sessions_to_add": len(plan.sessions_to_add),
+                "sessions_to_update": plan.sessions_to_update,
+                "total_changes": plan.total_changes,
+            }
+            if getattr(args, 'preview', False):
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                return 0
+            if not getattr(args, 'yes', False):
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                print(_("Review this sync bundle, then repeat the import with --yes."))
+                return 1
+            applied = apply_settings(bundle, self.config.config)
+            self.config.flush()
+            merged = merge_sessions(bundle, document.get("sessions", []))
+            if merged:
+                store.replace_sessions(merged)
+            print(json.dumps({"applied_settings": len(applied),
+                              "sessions": len(merged)}, ensure_ascii=False, indent=2))
+            return 0
         return 0
 
     def handle_documents(self, args):

@@ -385,6 +385,10 @@ TRANSLATIONS = {
             "Só o texto é importado para uma nova conversa. As ações, tarefas e o progresso de diagnóstico não são repostos.",
         "Review this conversation, then repeat the import with --yes.":
             "Revê esta conversa e depois repete a importação com --yes.",
+        "Invalid sync bundle: {error}": "Pacote de sincronização inválido: {error}",
+        "Review this sync bundle, then repeat the import with --yes.": "Revê este pacote de sincronização e depois repete a importação com --yes.",
+        "Sync bundle exported.": "Pacote de sincronização exportado.",
+        "Sync bundle imported.": "Pacote de sincronização importado.",
         "Attach an image for the next question": "Anexar uma imagem à próxima pergunta",
         "Capture an image for AI": "Capturar uma imagem para a IA",
         "Choose an image": "Escolher uma imagem",

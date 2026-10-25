@@ -12,6 +12,20 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- `src/sync_bundle.py` (P2.5): GTK-free sync bundle for machine-to-machine
+  transfer of settings + history. A bundle is a versioned JSON document
+  carrying a **whitelisted** subset of config (theme, language, assistance
+  mode, pomodoro, context budgets, UI colors, local_llm connection — never
+  credentials, encryption keys or plugin lists) and portable conversation
+  sessions (messages only; `task`/`diagnostic` runtime state is dropped).
+  `build_bundle()` / `serialize_bundle()` export; `parse_bundle()` validates
+  (format, version, size cap 8 MiB, forbidden-key rejection);
+  `plan_import()` previews changes; `apply_settings()` merges settings
+  in-place; `merge_sessions()` merges sessions by ID (update-or-add).
+  New `sync export` / `sync import [--preview] [--yes]` CLI commands.
+  `HistoryStore.replace_sessions()` applies a merged session list with full
+  validation. Import is merge-only and never touches destination credentials.
+  57 new unit tests.
 - Native local LLM backends (P2.4): `local_llm` now supports **Ollama native
   API** (`ollama-native`: `/api/chat`, `/api/tags`) and **LM Studio**
   (`lmstudio`: `/api/v0/chat`, `/api/v0/models`) alongside the existing

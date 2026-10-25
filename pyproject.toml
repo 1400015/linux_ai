@@ -114,6 +114,7 @@ files = [
     "src/a11y.py",
     "src/pomodoro.py",
     "src/local_backends.py",
+    "src/sync_bundle.py",
 ]
 # Read the types of imported modules without gating their existing diagnostics.
 # Only the explicitly selected sources above belong to this first increment.

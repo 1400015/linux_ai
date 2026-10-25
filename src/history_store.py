@@ -428,6 +428,40 @@ class HistoryStore:
         if self._session_id == session_id:
             self._session_id = active
 
+    def replace_sessions(self, sessions: List[Session]) -> None:
+        """Replace the whole sessions list (used by sync-bundle import).
+
+        Each session is validated through the same document rules as a normal
+        load, so a corrupt bundle cannot smuggle in malformed entries. The
+        active session is preserved when possible, otherwise the newest
+        session becomes active.
+        """
+        def replace(document):
+            if not isinstance(sessions, list) or not sessions or len(sessions) > MAX_SESSIONS:
+                raise ValueError("Invalid conversation history")
+            identifiers = set()
+            for session in sessions:
+                if not isinstance(session, dict) or not isinstance(session.get("id"), str):
+                    raise ValueError("Invalid conversation metadata")
+                identifier = session["id"]
+                if not identifier or len(identifier) > 64 or identifier in identifiers:
+                    raise ValueError("Invalid conversation identity")
+                identifiers.add(identifier)
+                _title(session.get("title"))
+                if not isinstance(session.get("archived"), bool) or not isinstance(session.get("messages"), list):
+                    raise ValueError("Invalid conversation metadata")
+                if any(_timestamp(session.get(key), -1) == -1 for key in ("created_at", "updated_at")):
+                    raise ValueError("Invalid conversation timestamp")
+                if len(_entries(session["messages"])) != len(session["messages"]):
+                    raise ValueError("Invalid conversation messages")
+            if document["active_session_id"] not in identifiers:
+                newest = max(sessions, key=lambda s: s.get("updated_at", 0))
+                document["active_session_id"] = newest["id"]
+            document["sessions"] = sessions
+            return document["active_session_id"]
+        active = self._transaction(replace)
+        self._session_id = active
+
     def clear_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Clear messages only in the selected conversation, retaining its identity."""
         selected = session_id or self._session_id
