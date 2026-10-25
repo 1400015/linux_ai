@@ -68,6 +68,11 @@ WORKDIR /app
 COPY src/ ./src/
 COPY plugins/ ./plugins/
 COPY themes/ ./themes/
+COPY assets/ ./assets/
+# pyproject.toml declares scripts/linux-ai-assistant.desktop as a data-file;
+# copy it too so the wheel build finds it (the GUI .desktop entry is harmless
+# in a headless image — it is just a data file, never installed to the host).
+COPY scripts/linux-ai-assistant.desktop ./scripts/linux-ai-assistant.desktop
 COPY pyproject.toml README.md LICENSE ./
 
 # Install the package itself (console scripts: linux-ai-assistant-cli).
