@@ -1,0 +1,70 @@
+name: Docker
+
+# Builds the headless CLI image and smoke-tests it on every push/PR.
+# Does not push to a registry — pushing is a release-time decision.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "docker/**"
+      - "src/**"
+      - "plugins/**"
+      - "themes/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    paths:
+      - "docker/**"
+      - "src/**"
+      - "plugins/**"
+      - "themes/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - ".github/workflows/docker.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the CLI image
+        run: docker build -f docker/Dockerfile -t linux-ai-assistant:cli .
+
+      - name: Smoke-test the image entry point
+        # Runs --help, config list and a fast benchmark pass inside the
+        # container as the non-root user. Fails the job if any step breaks.
+        run: |
+          docker run --rm linux-ai-assistant:cli --help
+          docker run --rm --user 1000:1000 \
+            -e HOME=/tmp \
+            linux-ai-assistant:cli config list
+          docker run --rm --user 1000:1000 \
+            -e HOME=/tmp \
+            linux-ai-assistant:cli benchmarks --scale 0.05
+
+      - name: Assert the image runs as non-root
+        # The Dockerfile sets USER assistant; this is a guard against a
+        # future edit that drops it.
+        run: |
+          docker run --rm --entrypoint id linux-ai-assistant:cli
+          docker run --rm --entrypoint id linux-ai-assistant:cli | grep -q "uid=1000(assistant)"
+
+  smoke:
+    # Runs the headless smoke test on the host too (no Docker required),
+    # so the check also runs on PRs from forks where Docker may be limited.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Smoke-test the CLI (compile + help + config + benchmarks)
+        run: python3 scripts/check_docker_image.py

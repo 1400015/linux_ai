@@ -12,6 +12,23 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Docker image for the headless CLI (P3.2): `docker/Dockerfile` is a
+  multi-stage build on `python:3.12-slim` that produces a lean, non-root
+  (`assistant`, uid 1000) image running `linux-ai-assistant-cli`. The GTK
+  GUI is intentionally excluded (it belongs on the host). The build copies
+  only `src/`, `plugins/`, `themes/` and packaging metadata; a
+  `docker/.dockerignore` keeps `.git`, venvs, caches, tests and docs out of
+  the context. Optional `INSTALL_TESSERACT=1` build arg adds OCR.
+  `LINUX_AI_COMMAND_SANDBOX=0` is set because systemd user units are not
+  available in a typical container. `docker/README.md` documents build, run,
+  volume mounts (config/history persistence), local-LLM usage (Ollama/LM
+  Studio via `host.docker.internal`), sync bundles and security notes.
+  `docker/docker-compose.yml` provides a ready-made CLI + Ollama stack.
+  `scripts/check_docker_image.py` is a headless smoke test (compile all
+  sources, `cli --help`, `cli config list`, `cli benchmarks`) run both on
+  the host and inside the container by the new `.github/workflows/docker.yml`
+  CI workflow (build job + host smoke job, triggered on changes to `src/`,
+  `docker/`, `plugins/`, `themes/` or packaging files).
 - `src/benchmarks.py` (P3.1): GTK-free micro-benchmark framework for the
   hot pure-Python paths. `run_benchmark()` measures a zero-arg callable
   with `time.perf_counter` using best-of-N repeats (standard noise
