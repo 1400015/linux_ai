@@ -256,6 +256,11 @@ class ConfigManager:
             "highlight_risks": True,
             "default_language": ""
         },
+        "monitors": {
+            "active_profile": "default",
+            "profiles": {},
+            "auto_detect": True
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -367,6 +372,11 @@ class ConfigManager:
             "show_line_numbers": bool,
             "highlight_risks": bool,
             "default_language": str
+        },
+        "monitors": {
+            "active_profile": str,
+            "profiles": dict,
+            "auto_detect": bool
         },
         "features": {
             "screen_capture": bool,

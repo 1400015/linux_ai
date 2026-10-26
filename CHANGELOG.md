@@ -12,6 +12,32 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Multi-monitor display profiles (P3.8): `src/display_profiles.py` is a
+  GTK-free module that manages named window-placement profiles per monitor.
+  `MonitorInfo` describes a connected display (index, geometry, primary flag,
+  scale factor, connector). `WindowGeometry` is the (x, y, width, height)
+  value object. `DisplayProfile` associates a name with a monitor index,
+  geometry, and dock settings, with full validation. `DisplayProfileSet`
+  manages the collection (add/remove/get, active profile tracking, dict
+  roundtrip with invalid-profile skipping). `resolve_geometry()` maps a
+  window rect onto the available monitors: it picks the best monitor by
+  intersection area, centers on the primary (or first) monitor when the
+  window is completely off-screen, and clamps to keep the window fully
+  visible. `is_geometry_visible()` checks a minimum visible pixel threshold.
+  `clamp_to_monitor()` / `center_on_monitor()` are the building blocks.
+  `select_profile_for_monitors()` picks the best profile for the current
+  layout (active if its monitor is connected, else first valid). Config
+  bridge: `geometry_from_config()` / `apply_geometry_to_config()` /
+  `profiles_from_config()` / `save_profiles_to_config()` map between the
+  ConfigManager's `app.*` keys and `monitors.profiles`. `detect_monitors()`
+  queries GDK (returns empty list when GTK is unavailable). New `monitors`
+  config section (`active_profile`, `profiles`, `auto_detect`) in
+  ConfigManager. New CLI subcommand `monitors` with 7 actions: `list`
+  (connected monitors table), `profiles` (profile table), `add` (create/
+  update a profile with --monitor/--x/--y/--width/--height/--dock/--edge),
+  `remove`, `use` (set active), `active` (show active profile), `resolve`
+  (show how the saved geometry resolves on current monitors). 77 unit tests
+  in `tests/test_display_profiles.py`. 8 new i18n keys (PT + ES/FR/DE).
 - Pair programming core + CLI (P3.7): `src/pair_programming.py` is a GTK-free
   module providing code review, diff analysis, risk scanning, and session
   tracking for AI-assisted pair programming. `extract_code_blocks()` pulls

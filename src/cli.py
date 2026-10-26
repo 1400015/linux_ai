@@ -278,6 +278,28 @@ Exemplos:
         pair_config = pair_actions.add_parser('config', help='Show pair programming configuration')
         pair_config.add_argument('key', nargs='?', default='', help='Config key to show (omit for all)')
 
+        # Command: monitors (multi-monitor display profiles)
+        monitors = subparsers.add_parser('monitors', help='Multi-monitor display profiles')
+        monitors_actions = monitors.add_subparsers(dest='monitors_action', required=True)
+        monitors_actions.add_parser('list', help='List connected monitors')
+        monitors_actions.add_parser('profiles', help='List display profiles')
+        monitors_add = monitors_actions.add_parser('add', help='Add or update a display profile')
+        monitors_add.add_argument('name')
+        monitors_add.add_argument('--monitor', type=int, default=0, help='Monitor index (default: 0)')
+        monitors_add.add_argument('--x', type=int, default=100, help='Window X position')
+        monitors_add.add_argument('--y', type=int, default=100, help='Window Y position')
+        monitors_add.add_argument('--width', type=int, default=400, help='Window width')
+        monitors_add.add_argument('--height', type=int, default=500, help='Window height')
+        monitors_add.add_argument('--dock', default='float', choices=('float', 'dock'))
+        monitors_add.add_argument('--edge', default='right', choices=('left', 'right', 'top', 'bottom'))
+        monitors_rm = monitors_actions.add_parser('remove', help='Remove a display profile')
+        monitors_rm.add_argument('name')
+        monitors_use = monitors_actions.add_parser('use', help='Set the active display profile')
+        monitors_use.add_argument('name')
+        monitors_actions.add_parser('active', help='Show the active display profile')
+        monitors_resolve = monitors_actions.add_parser('resolve', help='Show how the saved geometry resolves on current monitors')
+        monitors_resolve.add_argument('--profile', default='', help='Profile name to resolve (default: active)')
+
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -520,6 +542,8 @@ Exemplos:
             return self.handle_voice(args)
         elif args.command == 'pair':
             return self.handle_pair(args)
+        elif args.command == 'monitors':
+            return self.handle_monitors(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -553,6 +577,7 @@ Available commands:
   shortcuts [subcommand]    - Manage configurable keyboard shortcuts
   voice [subcommand]        - Voice input (speech-to-text) configuration and transcription
   pair [subcommand]         - Pair programming: extract, review and diff code
+  monitors [subcommand]     - Multi-monitor display profiles
   stats [options]           - Usage statistics
   benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
@@ -1861,6 +1886,97 @@ Examples:
             return 1
 
         print(_("pair: unknown action '%s'") % action)
+        return 1
+
+    def handle_monitors(self, args):
+        """Process the monitors command (list, profiles, add, remove, use, active, resolve)."""
+        from .display_profiles import (
+            DisplayProfile, DisplayProfileError,
+            WindowGeometry, detect_monitors, describe_resolution,
+            format_monitor_table, format_profile_table,
+            geometry_from_config, profiles_from_config,
+            save_profiles_to_config,
+            select_profile_for_monitors,
+        )
+        action = args.monitors_action
+
+        if action == 'list':
+            monitors = detect_monitors()
+            print(format_monitor_table(monitors))
+            return 0
+
+        if action == 'profiles':
+            ps = profiles_from_config(self.config)
+            print(format_profile_table(ps))
+            return 0
+
+        if action == 'add':
+            ps = profiles_from_config(self.config)
+            try:
+                profile = DisplayProfile(
+                    name=args.name,
+                    monitor_index=args.monitor,
+                    geometry=WindowGeometry(args.x, args.y, args.width, args.height),
+                    dock_mode=args.dock,
+                    dock_edge=args.edge,
+                )
+                ps.add(profile)
+            except DisplayProfileError as error:
+                print(_("monitors: %s") % str(error))
+                return 1
+            save_profiles_to_config(ps, self.config)
+            print(_("monitors: profile '%s' saved") % args.name)
+            return 0
+
+        if action == 'remove':
+            ps = profiles_from_config(self.config)
+            if not ps.remove(args.name):
+                print(_("monitors: profile '%s' not found") % args.name)
+                return 1
+            save_profiles_to_config(ps, self.config)
+            print(_("monitors: profile '%s' removed") % args.name)
+            return 0
+
+        if action == 'use':
+            ps = profiles_from_config(self.config)
+            if args.name not in ps.profiles:
+                print(_("monitors: profile '%s' not found") % args.name)
+                return 1
+            ps.active_profile = args.name
+            save_profiles_to_config(ps, self.config)
+            print(_("monitors: active profile set to '%s'") % args.name)
+            return 0
+
+        if action == 'active':
+            ps = profiles_from_config(self.config)
+            profile = ps.get(ps.active_profile)
+            if profile is None:
+                print(_("monitors: no active profile"))
+                return 1
+            print(_("monitors: active profile '%s' (monitor %d)") % (profile.name, profile.monitor_index))
+            print("  geometry: {}x{}+{}+{}".format(
+                profile.geometry.width, profile.geometry.height,
+                profile.geometry.x, profile.geometry.y))
+            print("  dock: {} ({})".format(profile.dock_mode, profile.dock_edge))
+            return 0
+
+        if action == 'resolve':
+            monitors = detect_monitors()
+            ps = profiles_from_config(self.config)
+            if args.profile:
+                profile = ps.get(args.profile)
+                if profile is None:
+                    print(_("monitors: profile '%s' not found") % args.profile)
+                    return 1
+            else:
+                profile = select_profile_for_monitors(ps, monitors)
+            geometry = geometry_from_config(self.config)
+            if profile is not None:
+                geometry = profile.geometry
+            print(describe_resolution(geometry, monitors, profile))
+            return 0
+
+        print(_("monitors: unknown action '%s'") % action)
         return 1
 
     def handle_config(self, args):

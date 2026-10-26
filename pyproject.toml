@@ -133,6 +133,7 @@ files = [
     "src/keybindings.py",
     "src/voice_input.py",
     "src/pair_programming.py",
+    "src/display_profiles.py",
 ]
 # Read the types of imported modules without gating their existing diagnostics.
 # Only the explicitly selected sources above belong to this first increment.
