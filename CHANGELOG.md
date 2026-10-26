@@ -12,6 +12,30 @@ via setuptools' `attr:` directive, so a release only bumps that one file.
 
 ### Added
 
+- Pair programming core + CLI (P3.7): `src/pair_programming.py` is a GTK-free
+  module providing code review, diff analysis, risk scanning, and session
+  tracking for AI-assisted pair programming. `extract_code_blocks()` pulls
+  fenced code blocks (with language tags and optional file-path headers)
+  from AI responses. `analyze_diff()` computes structured `DiffStats`
+  (added/removed/changed/context lines, hunks, size class: tiny/small/
+  medium/large/huge) and a unified diff string. `find_risks()` scans code
+  against 18 compiled risk patterns (rm -rf, sudo, curl|sh, eval, exec,
+  os.system, shell=True, chmod 777, hardcoded secrets, DROP TABLE, DELETE
+  without WHERE, pickle.loads, yaml.load, etc.) with severity levels
+  (high/medium/low) and line numbers. `review_change()` combines diff
+  analysis + risk scanning + heuristic recommendations into a `ReviewResult`
+  (passed = no high-severity risks). `review_code_block()` reviews a single
+  extracted block. `PairSession` tracks exchanges with auto-extracted blocks
+  and reviews, with summary stats (total blocks, risks, languages).
+  `PairConfig` mirrors the new `pair` config section (6 keys: enabled,
+  auto_review, max_diff_lines, show_line_numbers, highlight_risks,
+  default_language). `format_review_text()` / `format_session_text()` render
+  human-readable reports. New CLI subcommand `pair` with 5 actions:
+  `extract <file> [--json]` (list code blocks in an AI response),
+  `review <old> <new> [--json]` (review a proposed change, exit 1 if high
+  risks), `diff <old> <new>` (unified diff), `scan <file> [--json]` (risk
+  scan, exit 1 if high risks), `config [key]` (show pair config). 86 unit
+  tests in `tests/test_pair_programming.py`. 7 new i18n keys (PT + ES/FR/DE).
 - Voice input / speech-to-text (P3.6): `src/voice_input.py` is a GTK-free
   module providing the STT backend abstraction, audio capture interface, and
   configuration model. Four backends: `vosk` (offline, local model dir),

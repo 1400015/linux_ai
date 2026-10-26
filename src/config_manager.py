@@ -248,6 +248,14 @@ class ConfigManager:
             "system_command": "",
             "system_timeout": 60
         },
+        "pair": {
+            "enabled": True,
+            "auto_review": True,
+            "max_diff_lines": 2000,
+            "show_line_numbers": True,
+            "highlight_risks": True,
+            "default_language": ""
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -351,6 +359,14 @@ class ConfigManager:
             "api_timeout": int,
             "system_command": str,
             "system_timeout": int
+        },
+        "pair": {
+            "enabled": bool,
+            "auto_review": bool,
+            "max_diff_lines": int,
+            "show_line_numbers": bool,
+            "highlight_risks": bool,
+            "default_language": str
         },
         "features": {
             "screen_capture": bool,

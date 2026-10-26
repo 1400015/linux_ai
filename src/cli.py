@@ -259,6 +259,25 @@ Exemplos:
         voice_transcribe.add_argument('path', type=Path, help='WAV audio file to transcribe')
         voice_transcribe.add_argument('--language', default='', help='Language code (overrides config)')
 
+        # Command: pair (pair programming: extract, review, diff code)
+        pair = subparsers.add_parser('pair', help='Pair programming: extract, review and diff code')
+        pair_actions = pair.add_subparsers(dest='pair_action', required=True)
+        pair_extract = pair_actions.add_parser('extract', help='Extract code blocks from a markdown/AI response file')
+        pair_extract.add_argument('path', type=Path, help='File containing the AI response (markdown)')
+        pair_extract.add_argument('--json', action='store_true', help='Emit results as JSON')
+        pair_review = pair_actions.add_parser('review', help='Review a proposed change (old vs new file)')
+        pair_review.add_argument('old', type=Path, help='Original file')
+        pair_review.add_argument('new', type=Path, help='Proposed file')
+        pair_review.add_argument('--json', action='store_true', help='Emit results as JSON')
+        pair_diff = pair_actions.add_parser('diff', help='Show a unified diff between two files')
+        pair_diff.add_argument('old', type=Path)
+        pair_diff.add_argument('new', type=Path)
+        pair_scan = pair_actions.add_parser('scan', help='Scan a file for risky patterns')
+        pair_scan.add_argument('path', type=Path, help='File to scan')
+        pair_scan.add_argument('--json', action='store_true', help='Emit results as JSON')
+        pair_config = pair_actions.add_parser('config', help='Show pair programming configuration')
+        pair_config.add_argument('key', nargs='?', default='', help='Config key to show (omit for all)')
+
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -499,6 +518,8 @@ Exemplos:
             return self.handle_shortcuts(args)
         elif args.command == 'voice':
             return self.handle_voice(args)
+        elif args.command == 'pair':
+            return self.handle_pair(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -531,6 +552,7 @@ Available commands:
   theme [subcommand]        - Create, edit, validate and manage themes
   shortcuts [subcommand]    - Manage configurable keyboard shortcuts
   voice [subcommand]        - Voice input (speech-to-text) configuration and transcription
+  pair [subcommand]         - Pair programming: extract, review and diff code
   stats [options]           - Usage statistics
   benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
@@ -1733,6 +1755,113 @@ Examples:
         self.config.flush()
         print(_("voice: %s = %s") % (key, typed_value))
         return 0
+
+    def handle_pair(self, args):
+        """Process the pair command (extract, review, diff, scan, config)."""
+        import json as _json
+        from .pair_programming import (
+            analyze_diff, extract_code_blocks,
+            find_risks, format_review_text, load_pair_config, review_change,
+        )
+        action = args.pair_action
+
+        if action == 'extract':
+            try:
+                text = args.path.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            blocks = extract_code_blocks(text)
+            _ = _("pair: %s")  # keep the translation key referenced
+            if args.json:
+                print(_json.dumps([
+                    {"language": b.language, "file_path": b.file_path,
+                     "line_count": b.line_count, "start_line": b.start_line,
+                     "content": b.content}
+                    for b in blocks
+                ], ensure_ascii=False, indent=2))
+            else:
+                if not blocks:
+                    print(_("pair: no code blocks found"))
+                    return 0
+                for i, block in enumerate(blocks, 1):
+                    header = "Block {}".format(i)
+                    if block.language:
+                        header += " [{}]".format(block.language)
+                    if block.file_path:
+                        header += " ({})".format(block.file_path)
+                    header += " - {} lines".format(block.line_count)
+                    print(header)
+                    print("-" * min(len(header), 60))
+                    # Print first 10 lines as preview.
+                    lines = block.content.splitlines()
+                    for line in lines[:10]:
+                        print("  " + line)
+                    if len(lines) > 10:
+                        print("  ... ({} more lines)".format(len(lines) - 10))
+                    print()
+            return 0
+
+        if action == 'review':
+            try:
+                old_text = args.old.read_text(encoding="utf-8")
+                new_text = args.new.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            pair_config = load_pair_config(self.config)
+            result = review_change(old_text, new_text, pair_config)
+            _, diff_text = analyze_diff(old_text, new_text)
+            if args.json:
+                print(_json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(format_review_text(result, diff_text))
+            return 0 if result.passed else 1
+
+        if action == 'diff':
+            try:
+                old_text = args.old.read_text(encoding="utf-8")
+                new_text = args.new.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            _stats, diff_text = analyze_diff(old_text, new_text)
+            print(diff_text if diff_text else _("pair: no differences"))
+            return 0
+
+        if action == 'scan':
+            try:
+                code = args.path.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            findings = find_risks(code)
+            if args.json:
+                print(_json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2))
+            else:
+                if not findings:
+                    print(_("pair: no risks found"))
+                    return 0
+                for f in findings:
+                    print("[{}] line {}: {}".format(
+                        f.severity.upper(), f.line_number, f.description))
+            return 1 if any(f.severity == "high" for f in findings) else 0
+
+        if action == 'config':
+            pc = load_pair_config(self.config)
+            data = pc.to_dict()
+            if not args.key:
+                for key in sorted(data):
+                    print("{:<24s} {}".format(key, data[key]))
+                return 0
+            if args.key in data:
+                print("{}: {}".format(args.key, data[args.key]))
+                return 0
+            print(_("pair: unknown config key '%s'") % args.key)
+            return 1
+
+        print(_("pair: unknown action '%s'") % action)
+        return 1
 
     def handle_config(self, args):
         """Process the config command."""
