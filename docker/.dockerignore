@@ -1,0 +1,62 @@
+# Keep the Docker build context (and image) minimal.
+# The Dockerfile lives in docker/ but the build context is the repo root:
+#   docker build -f docker/Dockerfile .
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python caches and virtualenvs
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+.venv-gtk
+venv
+dist
+build
+.eggs
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Test artifacts
+tests
+trials
+.coverage
+htmlcov
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# CI / packaging metadata not needed at runtime
+.github
+flatpak
+xbps-src
+
+# Docker itself
+docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Docs and scripts not needed in the runtime image
+docs
+scripts
+
+# Local state
+.env
+*.log
+config.json
+history.json
+usage.json
+.encryption_key
+
+# OS / misc
+*.md.tmp
+node_modules

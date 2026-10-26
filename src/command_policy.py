@@ -2,12 +2,16 @@
 
 import ipaddress
 import re
+from typing import Callable, Dict, Pattern, Sequence, Set
+
+
+PathValidator = Callable[[str], bool]
 
 
 # An editable allowlist is not permission to introduce another execution engine.
 # Reject paths as well: otherwise /usr/bin/ss could bypass the operand rules
 # which apply to the ordinary command name ss.
-UNSAFE_COMMANDS = {
+UNSAFE_COMMANDS: Set[str] = {
     'man', 'neofetch', 'less', 'more', 'sh', 'bash', 'dash', 'ash', 'zsh',
     'ksh', 'ksh93', 'rksh', 'rbash', 'csh', 'tcsh', 'fish', 'busybox', 'toybox',
     'env', 'sudo', 'su', 'doas', 'pkexec', 'runuser', 'setpriv', 'chroot',
@@ -24,10 +28,10 @@ UNSAFE_COMMANDS = {
     'xterm', 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty',
     'kitty', 'foot', 'terminator', 'm4',
 }
-_VERSIONED_ENGINE = re.compile(
+_VERSIONED_ENGINE: Pattern[str] = re.compile(
     r'(?:pythonw?|pypy|ipython|perl|ruby|raku|node|php|lua|tclsh|wish)'
     r'[0-9][0-9.]*(?:[a-z])?\Z')
-BLOCKED_FLAGS = {
+BLOCKED_FLAGS: Dict[str, Set[str]] = {
     'grep': {'-f', '--file', '--exclude-from', '-R', '--dereference-recursive'},
     'dig': {'-f'},
     'date': {'-f', '--file', '-s', '--set', '-r', '--reference'},
@@ -40,8 +44,8 @@ BLOCKED_FLAGS = {
     'du': {'-X', '--exclude-from', '--files0-from', '-L', '--dereference'},
     'ls': {'-L', '--dereference'},
 }
-FILE_COMMANDS = {'cat', 'head', 'tail', 'file', 'stat', 'ls', 'du', 'df', 'grep'}
-OPTION_VALUES = {
+FILE_COMMANDS: Set[str] = {'cat', 'head', 'tail', 'file', 'stat', 'ls', 'du', 'df', 'grep'}
+OPTION_VALUES: Dict[str, Set[str]] = {
     'grep': {'-e', '--regexp', '-m', '--max-count', '-A', '--after-context', '-B',
              '--before-context', '-C', '--context', '--include', '--exclude', '--exclude-dir',
              '--binary-files', '-d', '--directories', '-D', '--devices'},
@@ -54,13 +58,13 @@ OPTION_VALUES = {
     'stat': {'-c', '--format', '--printf'},
     'file': {'-F', '--separator', '-e', '--exclude', '--exclude-quiet', '-P', '--parameter'},
 }
-OPTIONAL_VALUES = {
+OPTIONAL_VALUES: Dict[str, Set[str]] = {
     'grep': {'--color', '--colour'},
     'ls': {'--color', '--hyperlink', '--classify'},
     'tail': {'--follow'},
     'df': {'--output'},
 }
-LONG_SWITCHES = {
+LONG_SWITCHES: Dict[str, Set[str]] = {
     'cat': {'--show-all', '--number-nonblank', '--show-ends', '--number', '--squeeze-blank',
             '--show-tabs', '--show-nonprinting'},
     'head': {'--quiet', '--silent', '--verbose', '--zero-terminated'},
@@ -91,21 +95,21 @@ OPTION_VALUES['du'].update({'--time-style'})
 OPTIONAL_VALUES['du'] = {'--time'}
 
 
-_IP_SWITCHES = {
+_IP_SWITCHES: Set[str] = {
     '-4', '-6', '-0', '-B', '-M', '-s', '-statistics', '-stats', '-d',
     '-details', '-o', '-oneline', '-j', '-json', '-p', '-pretty', '-br',
     '-brief', '-h', '-human', '-human-readable', '-iec', '-t', '-timestamp',
     '-ts', '-tshort', '-N', '-Numeric', '-r', '-resolve',
 }
-_IP_OBJECTS = {
+_IP_OBJECTS: Dict[str, str] = {
     'link': 'link', 'l': 'link', 'address': 'address', 'addr': 'address',
     'a': 'address', 'route': 'route', 'r': 'route', 'ro': 'route',
     'neighbour': 'neighbor', 'neighbor': 'neighbor', 'neigh': 'neighbor',
     'n': 'neighbor', 'rule': 'rule', 'ru': 'rule', 'netconf': 'netconf',
     'maddress': 'maddress', 'maddr': 'maddress', 'mroute': 'mroute',
 }
-_IP_SHOW = {'show', 'sh', 'list', 'lst', 'ls'}
-_IP_FILTERS = {
+_IP_SHOW: Set[str] = {'show', 'sh', 'list', 'lst', 'ls'}
+_IP_FILTERS: Dict[str, Set[str]] = {
     'link': {'dev', 'group', 'master', 'vrf'},
     'address': {'dev', 'scope', 'to', 'label', 'master', 'vrf', 'proto'},
     'route': {'table', 'protocol', 'proto', 'scope', 'type', 'dev', 'iif',
@@ -117,16 +121,16 @@ _IP_FILTERS = {
     'netconf': {'dev'}, 'maddress': {'dev'},
     'mroute': {'table', 'from', 'to', 'iif'},
 }
-_IP_FILTER_SWITCHES = {
+_IP_FILTER_SWITCHES: Dict[str, Set[str]] = {
     'link': {'up'},
     'address': {'up', 'dynamic', 'permanent', 'tentative', 'deprecated',
                 'secondary', 'primary', 'dadfailed', 'temporary', 'mngtmpaddr'},
     'route': {'cached', 'cloned'}, 'neighbor': {'proxy', 'router', 'unused'},
 }
-_IP_ADDRESS_FIELDS = {'to', 'from', 'via', 'src', 'root', 'match', 'exact'}
-_IP_VALUE = re.compile(r'[A-Za-z0-9_.:@,+*]+(?:-[A-Za-z0-9_.:@,+*]+)*\Z')
-_SS_SHORT_SWITCHES = set('hVnralBoempTisbEZz460tMSudwxHQO')
-_SS_LONG_SWITCHES = {
+_IP_ADDRESS_FIELDS: Set[str] = {'to', 'from', 'via', 'src', 'root', 'match', 'exact'}
+_IP_VALUE: Pattern[str] = re.compile(r'[A-Za-z0-9_.:@,+*]+(?:-[A-Za-z0-9_.:@,+*]+)*\Z')
+_SS_SHORT_SWITCHES: Set[str] = set('hVnralBoempTisbEZz460tMSudwxHQO')
+_SS_LONG_SWITCHES: Set[str] = {
     '--help', '--version', '--numeric', '--resolve', '--all', '--listening',
     '--bound-inactive', '--options', '--extended', '--memory', '--processes',
     '--threads', '--info', '--tipcinfo', '--summary', '--tos', '--cgroup',
@@ -135,14 +139,14 @@ _SS_LONG_SWITCHES = {
     '--raw', '--unix', '--tipc', '--vsock', '--xdp', '--no-header',
     '--no-queues', '--oneline', '--inet-sockopt',
 }
-_SS_FAMILIES = {'inet', 'inet6', 'link', 'unix', 'netlink', 'vsock', 'tipc', 'xdp', 'help'}
-_SS_QUERIES = {'all', 'inet', 'tcp', 'mptcp', 'udp', 'raw', 'unix',
+_SS_FAMILIES: Set[str] = {'inet', 'inet6', 'link', 'unix', 'netlink', 'vsock', 'tipc', 'xdp', 'help'}
+_SS_QUERIES: Set[str] = {'all', 'inet', 'tcp', 'mptcp', 'udp', 'raw', 'unix',
                'unix_dgram', 'unix_stream', 'unix_seqpacket', 'packet',
                'packet_raw', 'packet_dgram', 'netlink', 'dccp', 'sctp',
                'vsock_stream', 'vsock_dgram', 'tipc', 'xdp'}
 
 
-def _ip_address(value):
+def _ip_address(value: str) -> bool:
     if value in {'all', 'default'}:
         return True
     try:
@@ -152,7 +156,7 @@ def _ip_address(value):
         return False
 
 
-def _ip_query(argv):
+def _ip_query(argv: Sequence[str]) -> bool:
     """Accept known query verbs; never guess at ip's abbreviated mutators."""
     index = 1
     while index < len(argv) and argv[index].startswith('-'):
@@ -199,7 +203,13 @@ def _ip_query(argv):
                        bare_address=family in {'route', 'neighbor', 'mroute'})
 
 
-def _ip_filters(arguments, fields, switches, bare_interface=False, bare_address=False):
+def _ip_filters(
+    arguments: Sequence[str],
+    fields: Set[str],
+    switches: Set[str],
+    bare_interface: bool = False,
+    bare_address: bool = False,
+) -> bool:
     index = 0
     bare_used = False
     while index < len(arguments):
@@ -226,7 +236,7 @@ def _ip_filters(arguments, fields, switches, bare_interface=False, bare_address=
     return True
 
 
-def _ss_query(argv, validate_path):
+def _ss_query(argv: Sequence[str], validate_path: PathValidator) -> bool:
     """Parse query switches positively, including getopt short clusters."""
     index = 1
     options = True
@@ -275,7 +285,7 @@ def _ss_query(argv, validate_path):
     return True
 
 
-def _ifconfig_query(argv):
+def _ifconfig_query(argv: Sequence[str]) -> bool:
     """ifconfig is also a default diagnostic, but accepts mutating operands."""
     interface = False
     for argument in argv[1:]:
@@ -287,7 +297,7 @@ def _ifconfig_query(argv):
     return True
 
 
-def validate_arguments(argv, validate_path):
+def validate_arguments(argv: Sequence[str], validate_path: PathValidator) -> bool:
     if not argv or not isinstance(argv[0], str) or not argv[0]:
         return False
     command = argv[0]

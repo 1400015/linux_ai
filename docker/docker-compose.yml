@@ -1,0 +1,47 @@
+# Linux AI Assistant — CLI + Ollama, local development / demo.
+#
+# Usage (from this directory):
+#   docker compose up -d ollama
+#   docker compose run --rm cli chat "Hello from the container"
+#
+# The cli service shares the host's linux_ai_assistant config directory so
+# settings and history persist between runs. The ollama service exposes the
+# standard 11434 port on the host for the CLI to reach at
+# http://host.docker.internal:11434 (Docker Desktop) or the host gateway IP.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: linux-ai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  cli:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: linux-ai-assistant:cli
+    environment:
+      # Point the local provider at the Ollama service. On Docker Desktop
+      # host.docker.internal resolves automatically; on Linux use the host
+      # gateway IP (often 172.17.0.1) or the service name with a network.
+      - LINUX_AI_API_PROVIDERS_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
+      - LINUX_AI_API_PROVIDERS_LOCAL_LLM_BACKEND=ollama
+      - LINUX_AI_ASSISTANCE_MODE=auto
+    volumes:
+      - ${HOME}/.config/linux_ai_assistant:/home/assistant/.config/linux_ai_assistant
+    depends_on:
+      - ollama
+    # The CLI exits after one command; override `command` per invocation:
+    #   docker compose run --rm cli local-models
+    #   docker compose run --rm cli mode local
+    #   docker compose run --rm cli chat "What is my kernel version?"
+    command: ["--help"]
+    stdin_open: true
+    tty: true
+
+volumes:
+  ollama-data:

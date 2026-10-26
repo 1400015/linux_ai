@@ -197,6 +197,109 @@ Exemplos:
         mode.add_argument('value', nargs='?', choices=('auto', 'offline', 'local', 'remote'))
         mode.add_argument('--check', action='store_true', help='Test the local model connection')
         subparsers.add_parser('local-models', help='List models installed on the configured local server')
+        sync = subparsers.add_parser('sync', help='Export or import a settings+history sync bundle (no credentials)')
+        sync_actions = sync.add_subparsers(dest='sync_action', required=True)
+        sync_export = sync_actions.add_parser('export', help='Write a sync bundle to a file')
+        sync_export.add_argument('path', type=Path, help='Output file (existing files are never overwritten)')
+        sync_import = sync_actions.add_parser('import', help='Import a sync bundle (merge-only, never overwrites credentials)')
+        sync_import.add_argument('path', type=Path)
+        sync_import.add_argument('--preview', action='store_true', help='Show what would change without applying')
+        sync_import.add_argument('--yes', action='store_true', help='Apply the reviewed import')
+
+        # Command: theme (create, edit, list, apply, delete, contrast-check themes)
+        theme = subparsers.add_parser('theme', help='Create, edit, validate and manage themes')
+        theme_actions = theme.add_subparsers(dest='theme_action', required=True)
+        theme_actions.add_parser('list', help='List all available themes (bundled + user)')
+        theme_show = theme_actions.add_parser('show', help='Show a theme document')
+        theme_show.add_argument('name')
+        theme_create = theme_actions.add_parser('create', help='Create a new theme from the default palette')
+        theme_create.add_argument('name')
+        theme_create.add_argument('--description', default='', help='Theme description')
+        theme_create.add_argument('--from', dest='source', default='', help='Copy colours from an existing theme')
+        theme_set = theme_actions.add_parser('set', help='Set a colour or UI value on a user theme')
+        theme_set.add_argument('name')
+        theme_set.add_argument('key', help='Colour key (background, text, accent, secondary, tertiary, border) or ui key (font_family, font_size, border_radius, opacity) or syntax key (keyword, string, ...)')
+        theme_set.add_argument('value')
+        theme_actions.add_parser('delete', help='Delete a user theme (built-in themes are protected)').add_argument('name')
+        theme_contrast = theme_actions.add_parser('contrast', help='Show WCAG contrast report for a theme')
+        theme_contrast.add_argument('name')
+        theme_apply = theme_actions.add_parser('apply', help='Apply a theme to the current configuration')
+        theme_apply.add_argument('name')
+        theme_export = theme_actions.add_parser('export', help='Export a theme to a JSON file')
+        theme_export.add_argument('name')
+        theme_export.add_argument('path', type=Path, help='Output file (existing files are never overwritten)')
+        theme_import = theme_actions.add_parser('import', help='Import a theme from a JSON file and save it')
+        theme_import.add_argument('path', type=Path)
+        theme_validate = theme_actions.add_parser('validate', help='Validate a theme and show warnings')
+        theme_validate.add_argument('name')
+
+        # Command: shortcuts (list, set, reset, validate configurable keybindings)
+        shortcuts = subparsers.add_parser('shortcuts', help='Manage configurable keyboard shortcuts')
+        shortcuts_actions = shortcuts.add_subparsers(dest='shortcuts_action', required=True)
+        shortcuts_actions.add_parser('list', help='List all keybindings (defaults + user overrides)')
+        shortcuts_show = shortcuts_actions.add_parser('show', help='Show one action binding')
+        shortcuts_show.add_argument('action')
+        shortcuts_set = shortcuts_actions.add_parser('set', help='Set a keybinding for an action')
+        shortcuts_set.add_argument('action')
+        shortcuts_set.add_argument('accelerator', help='GTK accelerator (e.g. "<Control>Return", "Escape", "<Shift><Alt>F1")')
+        shortcuts_reset = shortcuts_actions.add_parser('reset', help='Reset one or all bindings to defaults')
+        shortcuts_reset.add_argument('action', nargs='?', default='',
+                                     help='Action to reset (omit to reset all)')
+        shortcuts_actions.add_parser('validate', help='Check for conflicts and unknown actions')
+
+        # Command: voice (speech-to-text: backends, config, transcribe)
+        voice = subparsers.add_parser('voice', help='Voice input (speech-to-text) configuration and transcription')
+        voice_actions = voice.add_subparsers(dest='voice_action', required=True)
+        voice_actions.add_parser('status', help='Show availability of all STT backends')
+        voice_actions.add_parser('backends', help='List supported STT backends')
+        voice_config = voice_actions.add_parser('config', help='Show or set voice configuration')
+        voice_config.add_argument('key', nargs='?', default='', help='Config key to show (omit to show all)')
+        voice_config.add_argument('value', nargs='?', default='', help='Value to set')
+        voice_transcribe = voice_actions.add_parser('transcribe', help='Transcribe a WAV audio file')
+        voice_transcribe.add_argument('path', type=Path, help='WAV audio file to transcribe')
+        voice_transcribe.add_argument('--language', default='', help='Language code (overrides config)')
+
+        # Command: pair (pair programming: extract, review, diff code)
+        pair = subparsers.add_parser('pair', help='Pair programming: extract, review and diff code')
+        pair_actions = pair.add_subparsers(dest='pair_action', required=True)
+        pair_extract = pair_actions.add_parser('extract', help='Extract code blocks from a markdown/AI response file')
+        pair_extract.add_argument('path', type=Path, help='File containing the AI response (markdown)')
+        pair_extract.add_argument('--json', action='store_true', help='Emit results as JSON')
+        pair_review = pair_actions.add_parser('review', help='Review a proposed change (old vs new file)')
+        pair_review.add_argument('old', type=Path, help='Original file')
+        pair_review.add_argument('new', type=Path, help='Proposed file')
+        pair_review.add_argument('--json', action='store_true', help='Emit results as JSON')
+        pair_diff = pair_actions.add_parser('diff', help='Show a unified diff between two files')
+        pair_diff.add_argument('old', type=Path)
+        pair_diff.add_argument('new', type=Path)
+        pair_scan = pair_actions.add_parser('scan', help='Scan a file for risky patterns')
+        pair_scan.add_argument('path', type=Path, help='File to scan')
+        pair_scan.add_argument('--json', action='store_true', help='Emit results as JSON')
+        pair_config = pair_actions.add_parser('config', help='Show pair programming configuration')
+        pair_config.add_argument('key', nargs='?', default='', help='Config key to show (omit for all)')
+
+        # Command: monitors (multi-monitor display profiles)
+        monitors = subparsers.add_parser('monitors', help='Multi-monitor display profiles')
+        monitors_actions = monitors.add_subparsers(dest='monitors_action', required=True)
+        monitors_actions.add_parser('list', help='List connected monitors')
+        monitors_actions.add_parser('profiles', help='List display profiles')
+        monitors_add = monitors_actions.add_parser('add', help='Add or update a display profile')
+        monitors_add.add_argument('name')
+        monitors_add.add_argument('--monitor', type=int, default=0, help='Monitor index (default: 0)')
+        monitors_add.add_argument('--x', type=int, default=100, help='Window X position')
+        monitors_add.add_argument('--y', type=int, default=100, help='Window Y position')
+        monitors_add.add_argument('--width', type=int, default=400, help='Window width')
+        monitors_add.add_argument('--height', type=int, default=500, help='Window height')
+        monitors_add.add_argument('--dock', default='float', choices=('float', 'dock'))
+        monitors_add.add_argument('--edge', default='right', choices=('left', 'right', 'top', 'bottom'))
+        monitors_rm = monitors_actions.add_parser('remove', help='Remove a display profile')
+        monitors_rm.add_argument('name')
+        monitors_use = monitors_actions.add_parser('use', help='Set the active display profile')
+        monitors_use.add_argument('name')
+        monitors_actions.add_parser('active', help='Show the active display profile')
+        monitors_resolve = monitors_actions.add_parser('resolve', help='Show how the saved geometry resolves on current monitors')
+        monitors_resolve.add_argument('--profile', default='', help='Profile name to resolve (default: active)')
+
         knowledge = subparsers.add_parser('knowledge', help='Search bundled guides without any AI service')
         knowledge.add_argument('query', nargs='+')
         subparsers.add_parser('knowledge-verify', help='Validate bundled YAML schemas and references offline')
@@ -303,6 +406,24 @@ Exemplos:
         stats_parser.add_argument('--reset', action='store_true',
                                    help='Reset statistics')
 
+        # Command: benchmarks
+        benchmarks_parser = subparsers.add_parser('benchmarks',
+                                                  help='Run micro-benchmarks of the hot pure-Python paths')
+        benchmarks_parser.add_argument('--scale', type=float, default=1.0,
+                                       help='Repeat-count scale (0.2 = quick, 2.0 = thorough)')
+        benchmarks_parser.add_argument('--json', action='store_true',
+                                       help='Emit results as JSON')
+
+        # Command: serve (loopback-only local REST API)
+        serve_parser = subparsers.add_parser('serve',
+                                             help='Start the loopback-only local REST API (127.0.0.1)')
+        serve_parser.add_argument('--host', default='127.0.0.1',
+                                  help='Bind address (loopback only; default: 127.0.0.1)')
+        serve_parser.add_argument('--port', type=int, default=None,
+                                  help='TCP port (default: config local_api.port or 7621; 0 = pick a free port)')
+        serve_parser.add_argument('--token', default='',
+                                  help='Bearer token (default: read config api.local.token or generate one)')
+
         # Command: config
         config_parser = subparsers.add_parser('config', help='Configuration')
         config_subparsers = config_parser.add_subparsers(dest='config_command')
@@ -373,6 +494,8 @@ Exemplos:
             for model in self.ai_client.list_local_models():
                 print(model)
             return 0
+        if args.command == 'sync':
+            return self.handle_sync(args)
         if args.command == 'knowledge-verify':
             from .knowledge_loader import bundled_modules
             print(json.dumps({'schema': '0.1', 'modules': [item['id'] for item in bundled_modules()],
@@ -407,6 +530,20 @@ Exemplos:
             return self.handle_history(args)
         elif args.command == 'stats':
             return self.handle_stats(args)
+        elif args.command == 'benchmarks':
+            return self.handle_benchmarks(args)
+        elif args.command == 'serve':
+            return self.handle_serve(args)
+        elif args.command == 'theme':
+            return self.handle_theme(args)
+        elif args.command == 'shortcuts':
+            return self.handle_shortcuts(args)
+        elif args.command == 'voice':
+            return self.handle_voice(args)
+        elif args.command == 'pair':
+            return self.handle_pair(args)
+        elif args.command == 'monitors':
+            return self.handle_monitors(args)
         elif args.command == 'config':
             return self.handle_config(args)
         elif args.command == 'providers':
@@ -435,7 +572,14 @@ Available commands:
   trials [subcommand]      - Record test cases and export reviewed local evidence
   mode [value]              - Show/select assistance mode
   local-models              - List installed models on the local server
+  sync [subcommand]         - Export/import a settings+history sync bundle (no credentials)
+  theme [subcommand]        - Create, edit, validate and manage themes
+  shortcuts [subcommand]    - Manage configurable keyboard shortcuts
+  voice [subcommand]        - Voice input (speech-to-text) configuration and transcription
+  pair [subcommand]         - Pair programming: extract, review and diff code
+  monitors [subcommand]     - Multi-monitor display profiles
   stats [options]           - Usage statistics
+  benchmarks [options]      - Run micro-benchmarks of hot pure-Python paths
   config [subcommand]       - Configuration
   providers                 - List the AI providers
   tokens [subcommand]       - Token management
@@ -632,6 +776,55 @@ Examples:
                 print(_("Review this conversation, then repeat the import with --yes."))
                 return 1
             print(store.import_session(text)['id'])
+        return 0
+
+    def handle_sync(self, args):
+        from .sync_bundle import (
+            SyncBundleError, apply_settings, build_bundle, merge_sessions,
+            parse_bundle, plan_import, serialize_bundle,
+        )
+        action = args.sync_action
+        if action == 'export':
+            store = self._store()
+            document = store._snapshot()
+            bundle = build_bundle(self.config.config, document.get("sessions", []),
+                                  source=getpass.getuser())
+            text = serialize_bundle(bundle)
+            write_conversation(args.path, text)
+            print(args.path)
+            return 0
+        if action == 'import':
+            text = read_conversation(args.path)
+            try:
+                bundle = parse_bundle(text)
+            except SyncBundleError as error:
+                print(_("Invalid sync bundle: {error}").format(error=error))
+                return 1
+            store = self._store()
+            document = store._snapshot()
+            existing_ids = [s["id"] for s in document.get("sessions", [])]
+            plan = plan_import(bundle, self.config.config, existing_ids)
+            summary = {
+                "settings_to_apply": plan.settings_to_apply,
+                "sessions_to_add": len(plan.sessions_to_add),
+                "sessions_to_update": plan.sessions_to_update,
+                "total_changes": plan.total_changes,
+            }
+            if getattr(args, 'preview', False):
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                return 0
+            if not getattr(args, 'yes', False):
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                print(_("Review this sync bundle, then repeat the import with --yes."))
+                return 1
+            applied = apply_settings(bundle, self.config.config)
+            self.config.flush()
+            merged = merge_sessions(bundle, document.get("sessions", []))
+            if merged:
+                store.replace_sessions(merged)
+            print(json.dumps({"applied_settings": len(applied),
+                              "sessions": len(merged)}, ensure_ascii=False, indent=2))
+            return 0
         return 0
 
     def handle_documents(self, args):
@@ -1243,6 +1436,548 @@ Examples:
         if args.reset:
             self.ai_client.reset_token_usage()
             print("✓ Statistics reset")
+
+    def handle_benchmarks(self, args):
+        """Process the benchmarks command."""
+        from .benchmarks import format_suite_text, run_default_suite
+        scale = args.scale if args.scale and args.scale > 0 else 1.0
+        suite = run_default_suite(repeat_scale=scale)
+        if args.json:
+            print(json.dumps(suite.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(format_suite_text(suite))
+        return 0 if suite.ok else 1
+
+    def handle_serve(self, args):
+        """Start the loopback-only local REST API and block until Ctrl+C."""
+        from .local_api import (
+            APIContext, LocalAPIServer, generate_token, is_loopback_host,
+        )
+        host = args.host or "127.0.0.1"
+        if not is_loopback_host(host):
+            print(_("serve: refusing to bind to a non-loopback address: %s") % host)
+            return 1
+        port = int(args.port) if args.port is not None else int(self.config.get("local_api.port", 7621))
+        token = args.token or self.config.get("local_api.token", "") or generate_token()
+        ctx = APIContext(
+            token=token,
+            config=self.config,
+            ai_client=self.ai_client,
+            history_store=self._store(),
+            pomodoro=None,
+        )
+        server = LocalAPIServer(ctx, host=host, port=port)
+        server.start_background()
+        url = server.url
+        print(_("serve: local API listening on %s") % url)
+        print(_("serve: bearer token: %s") % token)
+        print(_("serve: press Ctrl+C to stop"))
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print()
+        finally:
+            server.shutdown()
+        return 0
+
+    def handle_theme(self, args):
+        """Process the theme command (create, edit, list, validate, apply themes)."""
+        from .theme_editor import (
+            ThemeEditorError, apply_theme, default_theme,
+            delete_theme, duplicate_theme, export_theme, format_contrast_text,
+            format_theme_text, import_theme, is_user_theme, list_all_themes,
+            load_theme_document, save_theme_document, set_color,
+            set_syntax_color, set_ui_value, validate_theme_document,
+        )
+        action = args.theme_action
+
+        if action == 'list':
+            themes = list_all_themes()
+            current = self.config.get("app.theme", "dark")
+            for name in themes:
+                marker = "*" if name == current else " "
+                editable = "" if is_user_theme(name) else " (built-in)"
+                print("{} {}{}".format(marker, name, editable))
+            return 0
+
+        if action == 'show':
+            try:
+                doc = load_theme_document(args.name)
+            except ThemeEditorError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(format_theme_text(doc))
+            return 0
+
+        if action == 'create':
+            try:
+                if args.source:
+                    doc = duplicate_theme(args.source, args.name)
+                    if args.description:
+                        doc.description = args.description
+                else:
+                    doc = default_theme(args.name, args.description)
+                save_theme_document(doc)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: created '%s'") % args.name)
+            return 0
+
+        if action == 'set':
+            try:
+                doc = load_theme_document(args.name)
+                if not is_user_theme(args.name):
+                    print(_("theme: '%s' is a built-in theme; create a copy first with: theme create <new-name> --from %s") % (args.name, args.name))
+                    return 1
+                key = args.key
+                if key in ("background", "text", "accent", "secondary", "tertiary", "border"):
+                    set_color(doc, key, args.value)
+                elif key in ("font_family", "font_size", "border_radius", "opacity"):
+                    set_ui_value(doc, key, args.value)
+                else:
+                    set_syntax_color(doc, key, args.value)
+                save_theme_document(doc)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: %s.%s = %s") % (args.name, args.key, args.value))
+            return 0
+
+        if action == 'delete':
+            try:
+                result = delete_theme(args.name)
+            except ValueError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            if result is None:
+                print(_("theme: '%s' not found") % args.name)
+                return 1
+            print(_("theme: deleted '%s'") % args.name)
+            return 0
+
+        if action == 'contrast':
+            try:
+                doc = load_theme_document(args.name)
+            except ThemeEditorError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(format_contrast_text(doc))
+            return 0
+
+        if action == 'apply':
+            try:
+                doc = load_theme_document(args.name)
+                apply_theme(doc, self.config)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: applied '%s'") % args.name)
+            return 0
+
+        if action == 'export':
+            try:
+                doc = load_theme_document(args.name)
+                export_theme(doc, args.path)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: exported '%s' to %s") % (args.name, args.path))
+            return 0
+
+        if action == 'import':
+            try:
+                doc = import_theme(args.path)
+                save_theme_document(doc)
+            except (ThemeEditorError, ValueError) as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            print(_("theme: imported '%s'") % doc.name)
+            return 0
+
+        if action == 'validate':
+            try:
+                doc = load_theme_document(args.name)
+            except ThemeEditorError as error:
+                print(_("theme: %s") % str(error))
+                return 1
+            warnings = validate_theme_document(doc)
+            print(format_theme_text(doc))
+            print()
+            print(format_contrast_text(doc))
+            print()
+            if warnings:
+                print(_("theme: warnings:"))
+                for warning in warnings:
+                    print("  - " + warning)
+                return 1
+            print(_("theme: '%s' is valid") % args.name)
+            return 0
+
+        print(_("theme: unknown action '%s'") % action)
+        return 1
+
+    def handle_shortcuts(self, args):
+        """Process the shortcuts command (list, show, set, reset, validate)."""
+        from .keybindings import (
+            DEFAULT_BINDINGS, KeybindingError, KeybindingSet,
+            describe_binding, format_binding_table,
+            load_from_config, save_to_config, validate_binding_set,
+        )
+        action = args.shortcuts_action
+
+        if action == 'list':
+            kbs = load_from_config(self.config)
+            print(format_binding_table(kbs))
+            return 0
+
+        if action == 'show':
+            kbs = load_from_config(self.config)
+            accel = kbs.get(args.action)
+            if accel is None:
+                print(_("shortcuts: no binding for '%s'") % args.action)
+                return 1
+            print(describe_binding(args.action, accel))
+            return 0
+
+        if action == 'set':
+            try:
+                kbs = load_from_config(self.config)
+                kbs.set(args.action, args.accelerator)
+                warnings = validate_binding_set(kbs)
+                save_to_config(kbs, self.config)
+            except KeybindingError as error:
+                print(_("shortcuts: %s") % str(error))
+                return 1
+            print(_("shortcuts: %s") % describe_binding(args.action, args.accelerator))
+            for warning in warnings:
+                print("  " + _("shortcuts: warning: %s") % warning)
+            return 0
+
+        if action == 'reset':
+            kbs = load_from_config(self.config)
+            if args.action:
+                if not kbs.remove(args.action):
+                    # Not in the merged set; check defaults.
+                    if args.action in DEFAULT_BINDINGS:
+                        # Removing from merged == disabling; re-add as default.
+                        kbs.set(args.action, DEFAULT_BINDINGS[args.action])
+                    else:
+                        print(_("shortcuts: unknown action '%s'") % args.action)
+                        return 1
+                else:
+                    # If it was a default, re-add it; if custom, it's gone.
+                    if args.action in DEFAULT_BINDINGS:
+                        kbs.set(args.action, DEFAULT_BINDINGS[args.action])
+            else:
+                kbs = KeybindingSet.defaults()
+            save_to_config(kbs, self.config)
+            if args.action:
+                accel = kbs.get(args.action)
+                print(_("shortcuts: reset '%s' to %s") % (args.action, accel or "(disabled)"))
+            else:
+                print(_("shortcuts: all bindings reset to defaults"))
+            return 0
+
+        if action == 'validate':
+            kbs = load_from_config(self.config)
+            warnings = validate_binding_set(kbs)
+            if warnings:
+                print(_("shortcuts: warnings:"))
+                for warning in warnings:
+                    print("  - " + warning)
+                return 1
+            print(_("shortcuts: all %d bindings are valid") % len(kbs.bindings))
+            return 0
+
+        print(_("shortcuts: unknown action '%s'") % action)
+        return 1
+
+    def handle_voice(self, args):
+        """Process the voice command (status, backends, config, transcribe)."""
+        from .voice_input import (
+            BACKEND_LABELS, STT_BACKENDS, VoiceInputError,
+            file_capture, format_backend_status, list_backend_status,
+            load_voice_config, transcribe_audio,
+        )
+        action = args.voice_action
+
+        if action == 'status':
+            vc = load_voice_config(self.config)
+            print(format_backend_status(list_backend_status(vc)))
+            return 0
+
+        if action == 'backends':
+            for name in STT_BACKENDS:
+                print("{:<14s} {}".format(name, BACKEND_LABELS.get(name, name)))
+            return 0
+
+        if action == 'config':
+            vc = load_voice_config(self.config)
+            if not args.key:
+                data = vc.to_dict()
+                for key in sorted(data):
+                    print("{:<24s} {}".format(key, data[key]))
+                return 0
+            if not args.value:
+                # Show one key.
+                data = vc.to_dict()
+                if args.key in data:
+                    print("{}: {}".format(args.key, data[args.key]))
+                    return 0
+                print(_("voice: unknown config key '%s'") % args.key)
+                return 1
+            # Set a key.
+            return self._voice_set_config_key(vc, args.key, args.value)
+
+        if action == 'transcribe':
+            vc = load_voice_config(self.config)
+            if args.language:
+                vc.language = args.language
+            try:
+                audio = file_capture(
+                    str(args.path), vc.sample_rate,
+                    vc.max_duration_seconds, 25 * 1024 * 1024,
+                )
+                text = transcribe_audio(audio, vc)
+            except VoiceInputError as error:
+                print(_("voice: %s") % str(error))
+                return 1
+            print(text)
+            return 0
+
+        print(_("voice: unknown action '%s'") % action)
+        return 1
+
+    def _voice_set_config_key(self, vc, key: str, value: str):
+        """Set one voice config key and persist it."""
+        valid_keys = {
+            "enabled": bool, "backend": str, "language": str,
+            "sample_rate": int, "max_duration_seconds": int,
+            "vosk_model_path": str, "whisper_model": str, "whisper_device": str,
+            "api_base_url": str, "api_model": str, "api_timeout": int,
+            "system_command": str, "system_timeout": int,
+        }
+        if key not in valid_keys:
+            print(_("voice: unknown config key '%s'") % key)
+            return 1
+        caster = valid_keys[key]
+        try:
+            if caster is bool:
+                typed_value = value.lower() in ("1", "true", "yes", "on")
+            elif caster is int:
+                typed_value = int(value)
+            else:
+                typed_value = value
+        except ValueError:
+            print(_("voice: invalid value for %s: %s") % (key, value))
+            return 1
+        current = self.config.get("voice", {})
+        if not isinstance(current, dict):
+            current = {}
+        current[key] = typed_value
+        self.config.set("voice", current)
+        self.config.flush()
+        print(_("voice: %s = %s") % (key, typed_value))
+        return 0
+
+    def handle_pair(self, args):
+        """Process the pair command (extract, review, diff, scan, config)."""
+        import json as _json
+        from .pair_programming import (
+            analyze_diff, extract_code_blocks,
+            find_risks, format_review_text, load_pair_config, review_change,
+        )
+        action = args.pair_action
+
+        if action == 'extract':
+            try:
+                text = args.path.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            blocks = extract_code_blocks(text)
+            _ = _("pair: %s")  # keep the translation key referenced
+            if args.json:
+                print(_json.dumps([
+                    {"language": b.language, "file_path": b.file_path,
+                     "line_count": b.line_count, "start_line": b.start_line,
+                     "content": b.content}
+                    for b in blocks
+                ], ensure_ascii=False, indent=2))
+            else:
+                if not blocks:
+                    print(_("pair: no code blocks found"))
+                    return 0
+                for i, block in enumerate(blocks, 1):
+                    header = "Block {}".format(i)
+                    if block.language:
+                        header += " [{}]".format(block.language)
+                    if block.file_path:
+                        header += " ({})".format(block.file_path)
+                    header += " - {} lines".format(block.line_count)
+                    print(header)
+                    print("-" * min(len(header), 60))
+                    # Print first 10 lines as preview.
+                    lines = block.content.splitlines()
+                    for line in lines[:10]:
+                        print("  " + line)
+                    if len(lines) > 10:
+                        print("  ... ({} more lines)".format(len(lines) - 10))
+                    print()
+            return 0
+
+        if action == 'review':
+            try:
+                old_text = args.old.read_text(encoding="utf-8")
+                new_text = args.new.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            pair_config = load_pair_config(self.config)
+            result = review_change(old_text, new_text, pair_config)
+            _, diff_text = analyze_diff(old_text, new_text)
+            if args.json:
+                print(_json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(format_review_text(result, diff_text))
+            return 0 if result.passed else 1
+
+        if action == 'diff':
+            try:
+                old_text = args.old.read_text(encoding="utf-8")
+                new_text = args.new.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            _stats, diff_text = analyze_diff(old_text, new_text)
+            print(diff_text if diff_text else _("pair: no differences"))
+            return 0
+
+        if action == 'scan':
+            try:
+                code = args.path.read_text(encoding="utf-8")
+            except OSError as error:
+                print(_("pair: cannot read file: %s") % str(error))
+                return 1
+            findings = find_risks(code)
+            if args.json:
+                print(_json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2))
+            else:
+                if not findings:
+                    print(_("pair: no risks found"))
+                    return 0
+                for f in findings:
+                    print("[{}] line {}: {}".format(
+                        f.severity.upper(), f.line_number, f.description))
+            return 1 if any(f.severity == "high" for f in findings) else 0
+
+        if action == 'config':
+            pc = load_pair_config(self.config)
+            data = pc.to_dict()
+            if not args.key:
+                for key in sorted(data):
+                    print("{:<24s} {}".format(key, data[key]))
+                return 0
+            if args.key in data:
+                print("{}: {}".format(args.key, data[args.key]))
+                return 0
+            print(_("pair: unknown config key '%s'") % args.key)
+            return 1
+
+        print(_("pair: unknown action '%s'") % action)
+        return 1
+
+    def handle_monitors(self, args):
+        """Process the monitors command (list, profiles, add, remove, use, active, resolve)."""
+        from .display_profiles import (
+            DisplayProfile, DisplayProfileError,
+            WindowGeometry, detect_monitors, describe_resolution,
+            format_monitor_table, format_profile_table,
+            geometry_from_config, profiles_from_config,
+            save_profiles_to_config,
+            select_profile_for_monitors,
+        )
+        action = args.monitors_action
+
+        if action == 'list':
+            monitors = detect_monitors()
+            print(format_monitor_table(monitors))
+            return 0
+
+        if action == 'profiles':
+            ps = profiles_from_config(self.config)
+            print(format_profile_table(ps))
+            return 0
+
+        if action == 'add':
+            ps = profiles_from_config(self.config)
+            try:
+                profile = DisplayProfile(
+                    name=args.name,
+                    monitor_index=args.monitor,
+                    geometry=WindowGeometry(args.x, args.y, args.width, args.height),
+                    dock_mode=args.dock,
+                    dock_edge=args.edge,
+                )
+                ps.add(profile)
+            except DisplayProfileError as error:
+                print(_("monitors: %s") % str(error))
+                return 1
+            save_profiles_to_config(ps, self.config)
+            print(_("monitors: profile '%s' saved") % args.name)
+            return 0
+
+        if action == 'remove':
+            ps = profiles_from_config(self.config)
+            if not ps.remove(args.name):
+                print(_("monitors: profile '%s' not found") % args.name)
+                return 1
+            save_profiles_to_config(ps, self.config)
+            print(_("monitors: profile '%s' removed") % args.name)
+            return 0
+
+        if action == 'use':
+            ps = profiles_from_config(self.config)
+            if args.name not in ps.profiles:
+                print(_("monitors: profile '%s' not found") % args.name)
+                return 1
+            ps.active_profile = args.name
+            save_profiles_to_config(ps, self.config)
+            print(_("monitors: active profile set to '%s'") % args.name)
+            return 0
+
+        if action == 'active':
+            ps = profiles_from_config(self.config)
+            profile = ps.get(ps.active_profile)
+            if profile is None:
+                print(_("monitors: no active profile"))
+                return 1
+            print(_("monitors: active profile '%s' (monitor %d)") % (profile.name, profile.monitor_index))
+            print("  geometry: {}x{}+{}+{}".format(
+                profile.geometry.width, profile.geometry.height,
+                profile.geometry.x, profile.geometry.y))
+            print("  dock: {} ({})".format(profile.dock_mode, profile.dock_edge))
+            return 0
+
+        if action == 'resolve':
+            monitors = detect_monitors()
+            ps = profiles_from_config(self.config)
+            if args.profile:
+                profile = ps.get(args.profile)
+                if profile is None:
+                    print(_("monitors: profile '%s' not found") % args.profile)
+                    return 1
+            else:
+                profile = select_profile_for_monitors(ps, monitors)
+            geometry = geometry_from_config(self.config)
+            if profile is not None:
+                geometry = profile.geometry
+            print(describe_resolution(geometry, monitors, profile))
+            return 0
+
+        print(_("monitors: unknown action '%s'") % action)
+        return 1
 
     def handle_config(self, args):
         """Process the config command."""

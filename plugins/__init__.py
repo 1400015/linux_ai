@@ -29,3 +29,8 @@
 #   é chamado com api_key=None e base_url=None (e não exige chave).
 # - Para streaming, atribua `_stream_<nome>`; a assinatura é a mesma.
 # - Sem o nome em plugins.enabled, o ficheiro fica inerte.
+# - Erros devem ser levantados como AIProviderError (de src.ai_client),
+#   nunca devolvidos como texto do modelo.
+# - Nunca registe URLs com query strings de segredos; use redact_url().
+#
+# Contrato completo: docs/plugins-api.md

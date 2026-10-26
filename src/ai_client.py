@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
+from typing import Any, Callable, Dict, Iterator, List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from .storage import JsonWriteCommittedError, update_json
 from .bounded_http import (
@@ -24,6 +24,16 @@ from .stream_events import (
 from .provider_modes import (
     ASSISTANCE_MODES, LocalModelError, ProviderStatus, discover_local_models,
     make_local_request, model_is_installed, validate_local_url, validate_model_name,
+)
+from .local_backends import (
+    LOCAL_BACKENDS,
+    build_chat_payload,
+    chat_path,
+    extract_chat_text,
+    extract_chat_usage,
+    extract_error_message,
+    is_stream_done,
+    iter_native_chat_events,
 )
 from requests import Response
 from requests.exceptions import RequestException, Timeout
@@ -175,6 +185,22 @@ def _bounded_provider_lines(response, cancel_event=None):
         raise AIResponseLimitError(str(error)) from error
 
 
+def _bounded_native_events(response, cancel_event=None):
+    """Bounded NDJSON parser for native local backends (Ollama/LM Studio).
+
+    Same limits and cancellation semantics as the SSE path; the only
+    difference is the framing (one JSON object per line, no ``data:`` prefix).
+    """
+    try:
+        yield from iter_native_chat_events(response, _request_event(cancel_event))
+    except StreamReadCancelled as error:
+        raise AIRequestCancelled(str(error)) from error
+    except StreamLimitError as error:
+        raise AIResponseLimitError(str(error)) from error
+    except LocalModelError as error:
+        raise AIProviderError(str(error)) from error
+
+
 def _remaining_stream_seconds():
     _check_cancelled()
     deadline = getattr(_REQUEST_CONTEXT, 'deadline', None)
@@ -232,7 +258,7 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 # Politica de retry para falhas de rede/transientes
-NETWORK_RETRY = dict(
+NETWORK_RETRY: Dict[str, Any] = dict(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception(_is_transient),
@@ -267,9 +293,9 @@ def _error_body_snippet(response, cancel_event=None):
         # invoke arbitrary .text properties merely to log an HTTP failure.
         return ''
     body = bytearray()
-    chunks = iter_chunks(response, MAX_ERROR_BODY_BYTES,
-                         min(MAX_ERROR_BODY_SECONDS, _remaining_stream_seconds()),
-                         event, chunk_size=1024)
+    chunks: Iterator[bytes] = iter_chunks(response, MAX_ERROR_BODY_BYTES,
+                                         min(MAX_ERROR_BODY_SECONDS, _remaining_stream_seconds()),
+                                         event, chunk_size=1024)
     try:
         for chunk in chunks:
             body.extend(chunk)
@@ -281,7 +307,8 @@ def _error_body_snippet(response, cancel_event=None):
         # A diagnostic timeout never initiates a second read.
         body.clear()
     finally:
-        chunks.close()
+        if hasattr(chunks, 'close'):
+            chunks.close()
     _check_cancelled(event)
     return _safe_provider_error(body.decode('utf-8', errors='replace'))
 
@@ -290,9 +317,9 @@ def _cache_bounded_json_response(response, timeout, cancel_event=None):
     """Keep existing response.json adapters while bounding real HTTP bodies."""
     if not isinstance(response, Response):
         return  # Explicit response shims/plugins retain their own contract.
-    chunks = iter_chunks(response, MAX_STREAM_BYTES,
-                         min(float(timeout), _remaining_stream_seconds()),
-                         _request_event(cancel_event))
+    chunks: Iterator[bytes] = iter_chunks(response, MAX_STREAM_BYTES,
+                                          min(float(timeout), _remaining_stream_seconds()),
+                                          _request_event(cancel_event))
     try:
         body = b''.join(chunks)
     except HTTPReadCancelled:
@@ -302,7 +329,8 @@ def _cache_bounded_json_response(response, timeout, cancel_event=None):
     except HTTPReadError:
         raise AIProviderError('Provider JSON response could not be read') from None
     finally:
-        chunks.close()
+        if hasattr(chunks, 'close'):
+            chunks.close()
     _check_cancelled(cancel_event)
     response._content = body
     response._content_consumed = True
@@ -498,7 +526,7 @@ class AIClient:
                 strict = self._strict_local(settings)
                 validate_local_url(settings["base_url"], strict)
                 validate_model_name(settings["model"], strict)
-                return settings["backend"] in {"ollama", "openai"}
+                return settings["backend"] in LOCAL_BACKENDS
             except LocalModelError:
                 return False
         if not api_config:
@@ -1068,7 +1096,10 @@ class AIClient:
         if stream:
             payload['stream'] = True
         options = self._get_api_config(selected)
-        headers = {'Authorization': 'Bearer ' + self._get_api_key(selected),
+        api_key = self._get_api_key(selected)
+        if api_key is None:
+            raise AIImageRequestError("Configure the OpenRouter API key before attaching an image")
+        headers = {'Authorization': 'Bearer ' + api_key,
                    'HTTP-Referer': 'https://github.com/1400015/linux_ai', 'X-Title': 'Linux AI Assistant'}
         return payload, headers, options.get('timeout', self.DEFAULT_TIMEOUT)
 
@@ -1494,8 +1525,8 @@ class AIClient:
         The UI history gives no such guarantees — a failed/cancelled turn
         can leave two `user` in a row (o pedido morria com 400).
         """
-        system_parts = []
-        converted = []
+        system_parts: List[str] = []
+        converted: List[Dict[str, str]] = []
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")
@@ -1689,7 +1720,11 @@ class AIClient:
 
     def _chat_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
                         base_url: str, temperature: float, max_tokens: int, timeout: int) -> Optional[str]:
-        """Communicate with a local model (Ollama, etc)"""
+        """Communicate with a local model (Ollama, LM Studio, OpenAI-compatible)."""
+        backend = self._local_settings().get("backend", "ollama")
+        if backend in ("ollama-native", "lmstudio"):
+            return self._chat_local_native(backend, messages, model, base_url,
+                                           temperature, max_tokens, timeout)
         url = f"{base_url}/chat/completions"
         payload = self._openai_style_payload(model, messages, temperature, max_tokens)
         headers = self._openai_style_headers("local_llm", api_key)
@@ -1700,6 +1735,43 @@ class AIClient:
         except AIProviderError as e:
             logger.error("Local model error: %s", redact_url(str(e)))
             return None
+
+    def _chat_local_native(self, backend: str, messages: List[Dict[str, str]], model: str,
+                           base_url: str, temperature: float, max_tokens: int,
+                           timeout: int) -> Optional[str]:
+        """Non-streaming chat against a native local backend (Ollama/LM Studio)."""
+        url = base_url + chat_path(backend)
+        try:
+            payload = build_chat_payload(backend, model, messages, temperature,
+                                         max_tokens, stream=False)
+        except LocalModelError as error:
+            logger.error("Local model error: %s", error)
+            return None
+        headers = {"Content-Type": "application/json"}
+        try:
+            response = self._make_request(url, payload, headers, timeout)
+            try:
+                data = response.json()
+            finally:
+                close_response(response)
+            self._record_usage("local_llm", data)
+            if backend == "ollama-native":
+                message = data.get("message") or {}
+                content = message.get("content")
+                return content if isinstance(content, str) else ""
+            if backend == "lmstudio":
+                choices = data.get("choices") or []
+                if choices:
+                    content = (choices[0].get("message") or {}).get("content")
+                    return content if isinstance(content, str) else ""
+                return ""
+            return ""
+        except AIProviderError:
+            raise
+        except json.JSONDecodeError as e:
+            raise AIProviderError(f"Invalid JSON from local model: {redact_url(str(e))}") from e
+        except Exception as e:
+            raise AIProviderError(f"local model error: {redact_url(str(e))}") from e
 
     def stream_chat(self, messages: List[Dict[str, str]], provider: Optional[str] = None, model: Optional[str] = None,
                     temperature: float = 0.7, max_tokens: int = 2000,
@@ -1876,9 +1948,60 @@ class AIClient:
     def _stream_local_llm(self, messages: List[Dict[str, str]], model: str, api_key: str,
                           base_url: str, temperature: float, max_tokens: int, timeout: int):
         """Stream with a local model."""
+        backend = self._local_settings().get("backend", "ollama")
+        if backend in ("ollama-native", "lmstudio"):
+            yield from self._stream_local_native(backend, messages, model, base_url,
+                                                 temperature, max_tokens, timeout)
+            return
         url = f"{base_url}/chat/completions"
         payload = self._openai_style_payload(model, messages, temperature, max_tokens,
                                              stream=True)
         headers = self._openai_style_headers("local_llm", api_key)
         yield from self._stream_openai_style("local_llm", url, payload,
                                              headers, timeout, messages)
+
+    def _stream_local_native(self, backend: str, messages: List[Dict[str, str]], model: str,
+                             base_url: str, temperature: float, max_tokens: int,
+                             timeout: int):
+        """Stream from a native local backend (Ollama native API, LM Studio).
+
+        Both stream NDJSON (one JSON object per line, no ``data:`` prefix).
+        The bounded line reader enforces the same byte/event/second limits
+        and cancellation as the SSE path.
+        """
+        url = base_url + chat_path(backend)
+        try:
+            payload = build_chat_payload(backend, model, messages, temperature,
+                                         max_tokens, stream=True)
+        except LocalModelError as error:
+            raise AIProviderError(str(error)) from error
+        headers = {"Content-Type": "application/json"}
+        usage_events: List[Dict] = []
+        received: List[str] = []
+        try:
+            response = self._make_request(url, payload, headers, timeout, stream=True)
+            try:
+                for event in _bounded_native_events(response):
+                    error_message = extract_error_message(event)
+                    if error_message:
+                        raise AIProviderError(
+                            "Local model stream error: " + _safe_provider_error(error_message))
+                    usage = extract_chat_usage(backend, event)
+                    if usage is not None:
+                        usage_events.append(usage)
+                    chunk = extract_chat_text(backend, event)
+                    if chunk:
+                        received.append(chunk)
+                        yield chunk
+                    if is_stream_done(backend, event):
+                        break
+            finally:
+                close_response(response)
+                self._finish_stream_usage("local_llm", usage_events, messages,
+                                          "".join(received))
+        except AIProviderError:
+            raise
+        except Exception as e:
+            raise AIProviderError(
+                f"local model stream error: {redact_url(str(e))}"
+            ) from e

@@ -90,6 +90,26 @@ As novas gravações cifradas usam `fernet:v1:<token>`. A leitura mantém compat
 
 Uma falha criptográfica bloqueia a gravação da credencial; não grava texto simples como fallback. Se já houver credenciais cifradas e a `.encryption_key` desaparecer, a aplicação não gera uma substituta. Restaura a chave correspondente a partir de uma cópia privada antes de editar, migrar ou desativar a encriptação. Não anexes JSON, `.env` ou `.encryption_key` a relatórios de ensaios.
 
+## Modelos locais (backends)
+
+O campo **Local backend** em **Settings → API** seleciona o protocolo usado para falar com o servidor local:
+
+| Backend | Protocolo | Endpoint de chat | Endpoint de descoberta |
+| --- | --- | --- | --- |
+| Ollama (OpenAI-compatible) | OpenAI `/v1` (predefinido) | `/v1/chat/completions` | `/v1/models` |
+| OpenAI-compatible | OpenAI `/v1` (genérico: vLLM, llama.cpp, text-gen-webui) | `/v1/chat/completions` | `/v1/models` |
+| Ollama (native API) | API nativa do Ollama | `/api/chat` | `/api/tags` |
+| LM Studio | API nativa do LM Studio | `/api/v0/chat` | `/api/v0/models` |
+
+Notas por backend:
+
+- **Ollama (OpenAI-compatible)**: o URL é normalizado para terminar em `/v1`. É o comportamento histórico e mantém-se o predefinido.
+- **OpenAI-compatible**: qualquer servidor que exponha `/v1/chat/completions` e `/v1/models`.
+- **Ollama (native API)**: usa `/api/chat` e `/api/tags` diretamente, sem o shim `/v1`. Se colar o URL com `/v1`, a aplicação remove-o ao guardar. O streaming é NDJSON (um objeto JSON por linha), com usage real no evento final (`prompt_eval_count` / `eval_count`).
+- **LM Studio**: usa `/api/v0/chat` e `/api/v0/models`. Os identificadores de modelo incluem o prefixo do editor (ex.: `publisher/model-name`) e devem corresponder exatamente. O streaming é NDJSON com formato de delta compatível com OpenAI.
+
+Todos os backends locais estão sujeitos às mesmas regras de segurança: URL loopback em modo local/strict, sem redirecionamentos, sem proxy, limites de tamanho/tempo na descoberta e no streaming, e rejeição de modelos remotos (cloud) em modo local. A inference nunca sai do servidor configurado.
+
 ## Modelos remotos
 
 O campo **Remote model** aceita um identificador manual. **List models** faz um pedido explícito em background ao fornecedor selecionado. Se não houver sobreposição de ambiente, usa a chave escrita no rascunho; a consulta não a guarda. Uma variável de ambiente ativa mantém a sua prioridade. A resposta acrescenta opções ao seletor sem substituir o texto introduzido; a escolha só é guardada em **OK**. Alterar a chave durante a consulta cancela o pedido e descarta o resultado antigo.

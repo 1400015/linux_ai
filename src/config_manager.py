@@ -218,6 +218,49 @@ class ConfigManager:
         "assistance": {
             "mode": "auto"
         },
+        "pomodoro": {
+            "enabled": False,
+            "work_seconds": 1500,
+            "short_break_seconds": 300,
+            "long_break_seconds": 900,
+            "cycles_before_long_break": 4
+        },
+        "local_api": {
+            "enabled": False,
+            "port": 7621,
+            "token": ""
+        },
+        "shortcuts": {
+            "bindings": {}
+        },
+        "voice": {
+            "enabled": False,
+            "backend": "vosk",
+            "language": "pt",
+            "sample_rate": 16000,
+            "max_duration_seconds": 60,
+            "vosk_model_path": "",
+            "whisper_model": "base",
+            "whisper_device": "cpu",
+            "api_base_url": "https://openrouter.ai/api/v1",
+            "api_model": "openai/whisper-1",
+            "api_timeout": 60,
+            "system_command": "",
+            "system_timeout": 60
+        },
+        "pair": {
+            "enabled": True,
+            "auto_review": True,
+            "max_diff_lines": 2000,
+            "show_line_numbers": True,
+            "highlight_risks": True,
+            "default_language": ""
+        },
+        "monitors": {
+            "active_profile": "default",
+            "profiles": {},
+            "auto_detect": True
+        },
         "features": {
             "screen_capture": True,
             "ocr_enabled": True,
@@ -291,6 +334,49 @@ class ConfigManager:
         },
         "assistance": {
             "mode": str
+        },
+        "pomodoro": {
+            "enabled": bool,
+            "work_seconds": int,
+            "short_break_seconds": int,
+            "long_break_seconds": int,
+            "cycles_before_long_break": int
+        },
+        "local_api": {
+            "enabled": bool,
+            "port": int,
+            "token": str
+        },
+        "shortcuts": {
+            "bindings": dict
+        },
+        "voice": {
+            "enabled": bool,
+            "backend": str,
+            "language": str,
+            "sample_rate": int,
+            "max_duration_seconds": int,
+            "vosk_model_path": str,
+            "whisper_model": str,
+            "whisper_device": str,
+            "api_base_url": str,
+            "api_model": str,
+            "api_timeout": int,
+            "system_command": str,
+            "system_timeout": int
+        },
+        "pair": {
+            "enabled": bool,
+            "auto_review": bool,
+            "max_diff_lines": int,
+            "show_line_numbers": bool,
+            "highlight_risks": bool,
+            "default_language": str
+        },
+        "monitors": {
+            "active_profile": str,
+            "profiles": dict,
+            "auto_detect": bool
         },
         "features": {
             "screen_capture": bool,
@@ -710,12 +796,12 @@ class ConfigManager:
                                       strict_local: bool, backend: str):
         if mode not in ASSISTANCE_MODES:
             raise ValueError("Assistance mode must be auto, offline, local or remote")
-        if backend not in {"ollama", "openai"} or not isinstance(strict_local, bool):
+        from .local_backends import LOCAL_BACKENDS, normalize_base_url
+        if backend not in LOCAL_BACKENDS or not isinstance(strict_local, bool):
             raise ValueError("Invalid local model settings")
         effective_strict = strict_local or mode == "local"
         normalized = validate_local_url(base_url, effective_strict)
-        if backend == "ollama" and not normalized.endswith("/v1"):
-            normalized += "/v1"
+        normalized = normalize_base_url(normalized, backend)
         selected = validate_model_name(model, effective_strict)
         return normalized, selected
 

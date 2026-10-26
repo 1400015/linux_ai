@@ -341,5 +341,183 @@ class TestProviderModes(unittest.TestCase):
                 self.client.list_local_models(timeout=value)
 
 
+class NativeLocalServer(LocalServer):
+    """HTTP fixture that speaks a native (non-OpenAI) local protocol.
+
+    - GET /api/tags -> {"models": [...]} (Ollama native)
+    - GET /api/v0/models -> {"data": [...]} (LM Studio)
+    - POST /api/chat -> NDJSON stream (Ollama native)
+    - POST /api/v0/chat -> NDJSON stream (LM Studio)
+    Non-streaming POST returns a single JSON object.
+    """
+
+    def __init__(self, backend):
+        self.backend = backend
+        super().__init__()
+        fixture = self
+        original_handler = self.server.RequestHandlerClass
+
+        class NativeHandler(original_handler):
+            def do_GET(self):
+                fixture.calls.append(("GET", self.path, None))
+                if fixture.backend == "ollama-native" and self.path == "/api/tags":
+                    body = json.dumps({"models": fixture.models}).encode()
+                elif fixture.backend == "lmstudio" and self.path == "/api/v0/models":
+                    body = json.dumps({"object": "list",
+                                       "data": [{"id": m["name"]} for m in fixture.models]}).encode()
+                else:
+                    body = fixture.response or b"{}"
+                self._reply(body)
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                payload = json.loads(body)
+                fixture.calls.append(("POST", self.path, payload))
+                if fixture.backend == "ollama-native":
+                    if payload.get("stream"):
+                        lines = [
+                            {"message": {"role": "assistant", "content": "local "}, "done": False},
+                            {"message": {"role": "assistant", "content": "answer"}, "done": False},
+                            {"done": True, "prompt_eval_count": 4, "eval_count": 2},
+                        ]
+                        data = b"".join(json.dumps(line).encode() + b"\n" for line in lines)
+                        self._reply(data, "application/x-ndjson")
+                    else:
+                        self._reply(json.dumps(
+                            {"message": {"role": "assistant", "content": "local answer"},
+                             "done": True}).encode())
+                elif fixture.backend == "lmstudio":
+                    if payload.get("stream"):
+                        lines = [
+                            {"choices": [{"delta": {"content": "lm "}}]},
+                            {"choices": [{"delta": {"content": "answer"}}]},
+                            {"choices": [{"delta": {}, "finish_reason": "stop"}],
+                             "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}},
+                        ]
+                        data = b"".join(json.dumps(line).encode() + b"\n" for line in lines)
+                        self._reply(data, "application/x-ndjson")
+                    else:
+                        self._reply(json.dumps(
+                            {"choices": [{"message": {"content": "lm answer"}}]}).encode())
+
+        self.server.RequestHandlerClass = NativeHandler
+
+
+class TestNativeBackends(unittest.TestCase):
+    """Integration: AIClient against native Ollama/LM Studio protocols."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        self.config = ConfigManager(str(Path(self.directory.name) / "config.json"))
+        self.addCleanup(self.config.flush)
+        with patch("src.ai_client.Path.home", return_value=Path(self.directory.name)):
+            self.client = AIClient(self.config)
+        self.addCleanup(self.client.flush_usage)
+        self.addCleanup(self.client.session.close)
+
+    def start_native_server(self, backend):
+        fixture = NativeLocalServer(backend)
+        self.addCleanup(fixture.close)
+        # Native backends keep the bare server root (no /v1).
+        root = fixture.url[:-3] if fixture.url.endswith("/v1") else fixture.url
+        self.config.set_local_model_settings(root, "llama3.2:latest", backend=backend)
+        return fixture
+
+    def test_ollama_native_discovery_uses_api_tags(self):
+        fixture = self.start_native_server("ollama-native")
+        self.assertEqual(self.client.test_local_connection().state, "ready")
+        self.assertEqual(fixture.calls[0], ("GET", "/api/tags", None))
+
+    def test_ollama_native_base_url_has_no_v1(self):
+        self.start_native_server("ollama-native")
+        settings = self.config.get_local_model_settings()
+        self.assertFalse(settings["base_url"].endswith("/v1"))
+
+    def test_ollama_native_strips_v1_if_pasted(self):
+        fixture = NativeLocalServer("ollama-native")
+        self.addCleanup(fixture.close)
+        self.config.set_local_model_settings(fixture.url, "llama3.2:latest",
+                                            backend="ollama-native")
+        settings = self.config.get_local_model_settings()
+        self.assertFalse(settings["base_url"].endswith("/v1"))
+
+    def test_ollama_native_chat_non_streaming(self):
+        fixture = self.start_native_server("ollama-native")
+        self.config.set_assistance_mode("local")
+        result = self.client.chat([{"role": "user", "content": "hello"}])
+        self.assertEqual(result, "local answer")
+        post = [c for c in fixture.calls if c[0] == "POST"]
+        self.assertEqual(post[0][1], "/api/chat")
+        self.assertFalse(post[0][2]["stream"])
+        self.assertEqual(post[0][2]["model"], "llama3.2:latest")
+
+    def test_ollama_native_stream_chat(self):
+        fixture = self.start_native_server("ollama-native")
+        self.config.set_assistance_mode("local")
+        chunks = list(self.client.stream_chat([{"role": "user", "content": "hello"}]))
+        self.assertEqual("".join(chunks), "local answer")
+        post = [c for c in fixture.calls if c[0] == "POST"]
+        self.assertTrue(post[0][2]["stream"])
+        # Usage recorded from the final done event.
+        usage = self.client.get_token_usage("local_llm")
+        self.assertGreaterEqual(usage.get("total", 0), 6)
+
+    def test_lmstudio_discovery_uses_api_v0_models(self):
+        fixture = self.start_native_server("lmstudio")
+        self.assertEqual(self.client.test_local_connection().state, "ready")
+        self.assertEqual(fixture.calls[0], ("GET", "/api/v0/models", None))
+
+    def test_lmstudio_chat_non_streaming(self):
+        fixture = self.start_native_server("lmstudio")
+        self.config.set_assistance_mode("local")
+        result = self.client.chat([{"role": "user", "content": "hello"}])
+        self.assertEqual(result, "lm answer")
+        post = [c for c in fixture.calls if c[0] == "POST"]
+        self.assertEqual(post[0][1], "/api/v0/chat")
+
+    def test_lmstudio_stream_chat(self):
+        self.start_native_server("lmstudio")
+        self.config.set_assistance_mode("local")
+        chunks = list(self.client.stream_chat([{"role": "user", "content": "hello"}]))
+        self.assertEqual("".join(chunks), "lm answer")
+
+    def test_lmstudio_model_with_publisher_prefix(self):
+        fixture = self.start_native_server("lmstudio")
+        fixture.models = [{"name": "publisher/model-name"}]
+        self.config.set_local_model_settings(
+            self.config.get_local_model_settings()["base_url"],
+            "publisher/model-name", backend="lmstudio")
+        self.assertEqual(self.client.test_local_connection().state, "ready")
+
+    def test_unknown_backend_rejected(self):
+        with self.assertRaises(ValueError):
+            self.config.set_local_model_settings("http://127.0.0.1:1234", "m",
+                                                backend="bogus")
+
+    def test_native_backend_model_missing(self):
+        self.start_native_server("ollama-native")
+        self.config.set("api.providers.local_llm.model", "not-installed:latest")
+        self.assertEqual(self.client.test_local_connection().state, "model_missing")
+
+    def test_native_stream_error_event_raises(self):
+        fixture = self.start_native_server("ollama-native")
+        self.config.set_assistance_mode("local")
+        class ErrorHandler(fixture.server.RequestHandlerClass):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                payload = json.loads(body)
+                fixture.calls.append(("POST", self.path, payload))
+                line = json.dumps({"error": "model not found"}).encode() + b"\n"
+                self._reply(line, "application/x-ndjson")
+
+        fixture.server.RequestHandlerClass = ErrorHandler
+        with self.assertRaises(AIProviderError):
+            list(self.client.stream_chat([{"role": "user", "content": "hello"}]))
+
+
 if __name__ == "__main__":
     unittest.main()

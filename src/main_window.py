@@ -1,5 +1,4 @@
 import os
-import time
 import threading
 from typing import Optional, Dict
 
@@ -29,7 +28,6 @@ from .ai_client import AIClient, AIProviderError, AIRequestCancelled, AIResponse
 from .chat_view import ChatView
 from .history_store import HistoryStore, MAX_HISTORY_MESSAGES, MAX_MESSAGE_CHARS
 from .i18n import _, get_language
-from .assistant_context import build_system_message
 from .conversation_dialog import show_conversations
 from .app_settings_dialogs import build_settings_dialog, populate_themes_list
 from . import theme_store
@@ -40,7 +38,15 @@ from .change_dialog import show_file_changes
 from .diagnostic_dialog import show_diagnostic_report
 from .trial_dialog import show_trials
 from .provider_settings import MODE_LABELS, STATUS_LABELS
-from .document_context import display_document_context, with_document_context
+from .chat_controller import (
+    StreamCoalescer,
+    build_context_message,
+    build_full_history,
+    build_request_messages,
+    check_credential_shadow,
+)
+from .stats_aggregator import aggregate_usage
+from .document_context import display_document_context
 from .document_store import DocumentStore
 from .document_review import review_document_context
 from .request_preparation import RequestPreparationError, prepare_request
@@ -48,11 +54,7 @@ from .request_state import begin_capture, begin_chat, abandon, ensure_request_st
 from .image_dialog import pick_image, review_image
 from .image_attachments import prepare_image
 from .theme_style import (
-    MAX_CONTEXT_CHARS,
-    MAX_CONTEXT_MESSAGES,
-    STREAM_FLUSH_INTERVAL,
     safe_color,
-    safe_number,
     app_style_css,
     valid_chat_style,
 )
@@ -318,34 +320,51 @@ class MainWindow(Gtk.Window):
                 logger.error("Error showing notification: %s", e)
 
     def _setup_keybindings(self):
-        """Set up keyboard shortcuts"""
+        """Set up keyboard shortcuts from the configurable keybinding set."""
+        from .keybindings import load_from_config
+        kbs = load_from_config(self.config)
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
 
-        # Ctrl+Enter also sends (plain Enter already activates the entry)
-        key, mod = Gtk.accelerator_parse("<Control>Return")
-        self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        # Action -> (widget, signal) or callable for accel_group.connect.
+        # send is special: it targets the input entry's "activate" signal.
+        accel = kbs.get("send")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                self.input_entry.add_accelerator("activate", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
 
-        # Escape to clear input
-        key, mod = Gtk.accelerator_parse("Escape")
-        accel_group.connect(key, mod,
-                          Gtk.AccelFlags.VISIBLE, self.on_clear_input)
+        # clear_input -> on_clear_input
+        accel = kbs.get("clear_input")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE, self.on_clear_input)
 
-        # Ctrl+E to toggle expert mode
-        key, mod = Gtk.accelerator_parse("<Control>e")
-        self.expert_btn.add_accelerator("clicked", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
+        # toggle_expert -> expert_btn "clicked"
+        accel = kbs.get("toggle_expert")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                self.expert_btn.add_accelerator("clicked", accel_group, key, mod, Gtk.AccelFlags.VISIBLE)
 
-        # Ctrl+Q to close
-        key, mod = Gtk.accelerator_parse("<Control>q")
-        accel_group.connect(key, mod,
-                          Gtk.AccelFlags.VISIBLE, lambda *args: self.on_close_clicked())
+        # close_window -> on_close_clicked
+        accel = kbs.get("close_window")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE,
+                                    lambda *args: self.on_close_clicked())
 
-        # Ctrl+S to capture screen
-        key, mod = Gtk.accelerator_parse("<Control>s")
-        accel_group.connect(key, mod,
-                          Gtk.AccelFlags.VISIBLE, lambda *args: self.on_capture_screen_clicked(None))
+        # capture_screen -> on_capture_screen_clicked
+        accel = kbs.get("capture_screen")
+        if accel:
+            key, mod = Gtk.accelerator_parse(accel)
+            if key:
+                accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE,
+                                    lambda *args: self.on_capture_screen_clicked(None))
 
-        logger.info("Keyboard shortcuts configured")
+        logger.info("Keyboard shortcuts configured (%d bindings)", len(kbs.bindings))
 
     def on_clear_input(self, *args):
         """Clear input when Escape is pressed"""
@@ -1012,19 +1031,20 @@ class MainWindow(Gtk.Window):
         self._show_stats_dialog()
 
     def _show_stats_dialog(self):
-        """Show statistics dialog"""
+        """Show statistics dialog with aggregated usage data."""
         dialog = Gtk.Dialog(
             title=_("Statistics - Linux AI Assistant"),
             parent=self,
             flags=0,
             buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
         )
-        dialog.set_default_size(400, 300)
+        dialog.set_default_size(480, 360)
 
         content = dialog.get_content_area()
 
-        # Get statistics
+        # Aggregate usage via the GTK-free stats_aggregator module.
         token_usage = self.ai_client.get_token_usage()
+        summary = aggregate_usage(token_usage)
 
         # Create box vertical
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -1036,28 +1056,55 @@ class MainWindow(Gtk.Window):
         title.set_use_markup(True)
         box.pack_start(title, False, False, 0)
 
+        # Summary line
+        if summary.providers:
+            summary_text = _("Total: {total} tokens ({input} in / {output} out) across {count} provider(s)").format(
+                total=summary.total_tokens,
+                input=summary.total_input,
+                output=summary.total_output,
+                count=summary.provider_count,
+            )
+        else:
+            summary_text = _("No usage recorded yet.")
+        summary_label = Gtk.Label(label=summary_text)
+        summary_label.set_halign(Gtk.Align.START)
+        box.pack_start(summary_label, False, False, 0)
+
+        if summary.most_used_provider:
+            most_used_label = Gtk.Label(
+                label=_("Most used: {provider} ({share:.0%})").format(
+                    provider=summary.most_used_provider,
+                    share=summary.provider_share(summary.most_used_provider),
+                )
+            )
+            most_used_label.set_halign(Gtk.Align.START)
+            box.pack_start(most_used_label, False, False, 0)
+
         # Tokens by provider. The labels are kept so the reset button can
         # refresh them in place instead of leaving stale numbers on screen.
         token_labels = []
-        for provider, usage in token_usage.items():
+        for stats in summary.providers:
             provider_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
 
-            provider_label = Gtk.Label(label=f"{provider}:")
+            provider_label = Gtk.Label(label=f"{stats.provider}:")
             provider_label.set_halign(Gtk.Align.START)
             provider_box.pack_start(provider_label, False, False, 0)
 
-            tokens_label = Gtk.Label(label=f"Input: {usage.get('input', 0)}, Output: {usage.get('output', 0)}, Total: {usage.get('total', 0)}")
+            tokens_label = Gtk.Label(
+                label=f"Input: {stats.input_tokens}, Output: {stats.output_tokens}, Total: {stats.total_tokens}"
+            )
             tokens_label.set_halign(Gtk.Align.END)
             provider_box.pack_end(tokens_label, True, True, 0)
 
             box.pack_start(provider_box, False, False, 0)
-            token_labels.append((provider, tokens_label))
+            token_labels.append((stats.provider, tokens_label))
 
         # Button to reset statistics
         def _reset_stats(btn):
             self.ai_client.reset_token_usage()
             for _provider, tokens_label in token_labels:
                 tokens_label.set_text("Input: 0, Output: 0, Total: 0")
+            summary_label.set_text(_("No usage recorded yet."))
         reset_btn = Gtk.Button(label=_("Reset Statistics"))
         reset_btn.connect("clicked", _reset_stats)
         reset_btn.set_halign(Gtk.Align.CENTER)
@@ -1275,38 +1322,11 @@ class MainWindow(Gtk.Window):
     def _build_request_messages(self):
         """Build the message list for the API.
 
-        It removes `timestamp` (which only exists in the on-disk history) and
-        limits the context to the configured budget, so a long conversation
-        does not send 1000 messages on every turn.
+        Delegates to :func:`chat_controller.build_request_messages`, which
+        removes `timestamp` (only present in on-disk history) and trims to
+        the configured ``context.max_messages`` / ``context.max_chars`` budget.
         """
-        messages = [{"role": m["role"], "content": m["content"]}
-                    for m in self.conversation_history
-                    if m.get("role") and m.get("content")]
-
-        max_messages = safe_number(
-            self.config.get("context.max_messages"), MAX_CONTEXT_MESSAGES,
-            int, minimum=2, maximum=500,
-        )
-        max_chars = safe_number(
-            self.config.get("context.max_chars"), MAX_CONTEXT_CHARS,
-            int, minimum=1000, maximum=400000,
-        )
-
-        if len(messages) > max_messages:
-            logger.debug(
-                "Context truncated from %s to %s messages", len(messages), max_messages
-            )
-            messages = messages[-max_messages:]
-
-        total = sum(len(m["content"]) for m in messages)
-        # Floor of 1 (not 2): with exactly two messages over budget the old
-        # loop never popped, so the character limit was silently ignored.
-        while len(messages) > 1 and total > max_chars:
-            removed = messages.pop(0)
-            total -= len(removed["content"])
-            logger.debug("Context truncated by character budget")
-
-        return messages
+        return build_request_messages(self.conversation_history, self.config.get)
 
     def _save_message_to_history(self, role: str, content: str):
         """Enfileira a mensagem no HistoryStore (writer background)."""
@@ -1328,9 +1348,11 @@ class MainWindow(Gtk.Window):
             del self.conversation_history[:-MAX_HISTORY_MESSAGES]
 
     def _get_context_message(self) -> Optional[Dict[str, str]]:
-        query = next((item['content'] for item in reversed(self.conversation_history)
-                      if item['role'] == 'user'), '')
-        return build_system_message(self.expert_mode, self.offline.distro, query, get_language(), getattr(self, 'system_context', None))
+        return build_context_message(
+            self.expert_mode, self.offline.distro,
+            self.conversation_history, get_language(),
+            getattr(self, 'system_context', None),
+        )
 
     def _get_system_info_for_context(self) -> str:
         """Get system information for context."""
@@ -1419,9 +1441,7 @@ class MainWindow(Gtk.Window):
         # ler conversation_history/expert_mode/config sem sincronização.
         context = self._get_context_message()
         messages = self._build_request_messages()
-        full_history = ([context] + messages) if context else messages
-        if document_context:
-            full_history = with_document_context(full_history, document_context)
+        full_history = build_full_history(context, messages, document_context)
 
         # Per-request state: fresh id + cancel event. A worker that is
         # still draining after a cancel can no longer touch this request.
@@ -1457,9 +1477,9 @@ class MainWindow(Gtk.Window):
         response_text = ""
         # Coalescing de chunks: acumula no worker e faz flush à UI no
         # máximo ~12x/segundo (STREAM_FLUSH_INTERVAL), em vez de um idle
-        # por chunk (milhares por resposta rápida).
-        pending_chunks = []
-        last_flush = 0.0
+        # por chunk (milhares por resposta rápida). A lógica vive em
+        # StreamCoalescer (GTK-free, testável headless).
+        coalescer = StreamCoalescer()
 
         try:
             actions = getattr(self, 'actions', None)
@@ -1487,27 +1507,25 @@ class MainWindow(Gtk.Window):
                 # Keep the diagnostic on this request's selected provider.
                 # An empty override may come from the process environment;
                 # only assignments this manager loaded can be removed here.
-                try:
-                    shadow_provider = route['provider'] if route is not None else self.ai_client.active_provider()
-                    if shadow_provider and self.config.stored_key_shadowed_by_empty_env(shadow_provider):
-                        shadow_var = self.config.api_key_env_var(shadow_provider)
-                        warning = _(
-                            "The stored key for {provider} is disabled by the empty "
-                            "{var} environment variable."
-                        ).format(provider=shadow_provider, var=shadow_var)
-                        if self.config.can_remove_empty_api_key_override(shadow_provider):
-                            warning += ' ' + _(
-                                "Open Settings → API and choose '{button}' to remove "
-                                "the empty assignment from .env."
-                            ).format(button=_("Use stored key (remove empty override from .env)"))
-                        else:
-                            warning += ' ' + _(
-                                "Remove or fill this variable at its source, then restart the application."
-                            )
-                        GLib.idle_add(
-                            self._add_system_message_if_active, request_id, cancel_event, warning)
-                except Exception:
-                    pass
+                shadow_provider = route['provider'] if route is not None else self.ai_client.active_provider()
+                config = getattr(self, 'config', None)
+                shadow = check_credential_shadow(config, shadow_provider) if config is not None else None
+                if shadow is not None:
+                    warning = _(
+                        "The stored key for {provider} is disabled by the empty "
+                        "{var} environment variable."
+                    ).format(provider=shadow.provider, var=shadow.env_var)
+                    if shadow.can_remove:
+                        warning += ' ' + _(
+                            "Open Settings \u2192 API and choose '{button}' to remove "
+                            "the empty assignment from .env."
+                        ).format(button=_("Use stored key (remove empty override from .env)"))
+                    else:
+                        warning += ' ' + _(
+                            "Remove or fill this variable at its source, then restart the application."
+                        )
+                    GLib.idle_add(
+                        self._add_system_message_if_active, request_id, cancel_event, warning)
                 offline_reply = offline.handle(message, get_language())
             else:
                 try:
@@ -1527,18 +1545,15 @@ class MainWindow(Gtk.Window):
                         for chunk in stream:
                             if cancel_event.is_set():
                                 break
-                            if len(response_text) + len(chunk) > MAX_MESSAGE_CHARS:
+                            try:
+                                flushed = coalescer.add(chunk)
+                            except ValueError:
                                 raise AIResponseLimitError(
                                     _("AI response exceeds the local history limit. The incomplete response was not saved; ask for a shorter response.")
-                                )
-                            response_text += chunk
-                            pending_chunks.append(chunk)
-                            now = time.monotonic()
-                            if now - last_flush >= STREAM_FLUSH_INTERVAL:
-                                GLib.idle_add(self._update_ai_message, request_id,
-                                              "".join(pending_chunks), True)
-                                pending_chunks = []
-                                last_flush = now
+                                ) from None
+                            response_text = coalescer.total
+                            if flushed:
+                                GLib.idle_add(self._update_ai_message, request_id, flushed, True)
                     finally:
                         close = getattr(stream, 'close', None)
                         if callable(close):
@@ -1568,7 +1583,7 @@ class MainWindow(Gtk.Window):
                         "Provider unavailable (%s); using the offline assistant", e
                     )
                     if not cancel_event.is_set():
-                        pending_chunks.clear()
+                        coalescer.clear()
                         response_text = ""
                         offline_reply = offline.handle(message, get_language())
 
@@ -1580,14 +1595,13 @@ class MainWindow(Gtk.Window):
                                       _("The model is unavailable. Local document matches:") + '\n\n' + display_document_context(document_context))
                         return
                     offline_reply = offline.handle(message, get_language())
-                if pending_chunks and offline_reply is None and not cancel_event.is_set():
+                if coalescer.pending and offline_reply is None and not cancel_event.is_set():
                     GLib.idle_add(self._update_ai_message, request_id,
-                                  "".join(pending_chunks), True)
-                    pending_chunks = []
+                                  coalescer.flush(), True)
 
             action = None
             if offline_reply is not None:
-                pending_chunks.clear()
+                coalescer.clear()
                 response_text = offline_reply.text
                 GLib.idle_add(self._replace_ai_reply, request_id, cancel_event, response_text)
                 action = offline_reply

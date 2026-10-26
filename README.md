@@ -279,6 +279,23 @@ sandbox starts the app through `scripts/flatpak-launch.sh`, which puts that
 directory on `PYTHONPATH` before running `python -m src.app`. Note that OCR
 needs the `tesseract` binary, which the current runtime does not provide.
 
+### Docker (headless CLI)
+
+A Docker image for the **CLI** (no GTK GUI) is provided in `docker/`. Build
+from the repository root and run:
+
+```bash
+docker build -f docker/Dockerfile -t linux-ai-assistant:cli .
+docker run --rm \
+  -v "$HOME/.config/linux_ai_assistant:/home/assistant/.config/linux_ai_assistant" \
+  linux-ai-assistant:cli chat "What is my kernel version?"
+```
+
+The container runs as a non-root user and persists config/history through
+the mounted volume. See [docker/README.md](docker/README.md) for local-LLM
+usage (Ollama/LM Studio), sync bundles, benchmarks and security notes, and
+`docker/docker-compose.yml` for a ready-made CLI + Ollama stack.
+
 ## Configuration
 
 ### API Keys
@@ -669,6 +686,10 @@ config key are loaded:
 
 The bundled `plugins/example_provider.py` is inert until you add it there.
 Failures surface as `AIProviderError` exceptions — never as chat text.
+
+For the full plugin contract (function signatures, error handling, streaming,
+image requests, logging rules and a publication checklist), see
+[docs/plugins-api.md](docs/plugins-api.md).
 
 ### Adding New Allowed Commands
 

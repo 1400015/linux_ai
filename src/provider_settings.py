@@ -45,9 +45,10 @@ class ProviderSettings(Gtk.Box):
         self.model = Gtk.ComboBoxText.new_with_entry()
         self.model.get_child().set_text(settings['model'])
         self.pack_start(self.model, False, False, 0)
+        from .local_backends import BACKEND_LABELS, LOCAL_BACKENDS
         self.backend = Gtk.ComboBoxText()
-        self.backend.append('ollama', 'Ollama')
-        self.backend.append('openai', 'OpenAI-compatible')
+        for backend_id in LOCAL_BACKENDS:
+            self.backend.append(backend_id, BACKEND_LABELS.get(backend_id, backend_id))
         self.backend.set_active_id(settings.get('backend', 'ollama'))
         self.pack_start(self.backend, False, False, 0)
         self.strict = Gtk.CheckButton(label=_("Strict local mode (loopback server and local models)"))

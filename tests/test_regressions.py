@@ -414,10 +414,22 @@ class TestConfigSaveDebounce(unittest.TestCase):
 
 class TestContextTrimming(unittest.TestCase):
     def test_timestamps_are_not_sent_to_the_provider(self):
-        source_path = ROOT / "src" / "main_window.py"
-        source = source_path.read_text(encoding="utf-8")
-        self.assertIn("_build_request_messages", source)
-        self.assertIn('"role": m["role"], "content": m["content"]', source)
+        # The message-building logic moved to chat_controller.build_request_messages
+        # (GTK-free). Verify the extraction preserves the contract: timestamps
+        # are stripped and only role/content are kept.
+        from src.chat_controller import build_request_messages
+
+        history = [
+            {"role": "user", "content": "hi", "timestamp": 1234.5},
+            {"role": "assistant", "content": "hello", "timestamp": 1235.0},
+        ]
+        def config_get(key, default=None):
+            return default
+
+        messages = build_request_messages(history, config_get)
+        for message in messages:
+            self.assertNotIn("timestamp", message)
+            self.assertEqual(set(message.keys()), {"role", "content"})
 
     def test_history_normalisation_drops_timestamp(self):
         from src.history_store import HistoryStore
