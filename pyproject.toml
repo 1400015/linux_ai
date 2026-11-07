@@ -35,7 +35,7 @@ encryption = ["cryptography>=42.0.2"]
 secret-service = ["secretstorage>=3.3,<4"]
 dev = [
     "ruff>=0.5",
-    "mypy==2.4.0; python_version >= '3.10'",
+    "mypy==2.4.1; python_version >= '3.10'",
 ]
 
 [project.urls]
